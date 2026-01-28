@@ -1,0 +1,26 @@
+# Test coverage
+luacov.stats.out
+luacov.report.out
+
+# Tests
+tmp_delete_subdir
+
+# Export output
+exported/
+
+# Logs
+*.log
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Lua bytecode
+*.luac

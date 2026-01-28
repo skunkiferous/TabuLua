@@ -1,0 +1,11 @@
+---[[[
+---return "First"
+---]]]
+Old1
+---[[[end]]]
+Middle
+---[[[
+---return "Second"
+---]]]
+Old2
+---[[[end]]]

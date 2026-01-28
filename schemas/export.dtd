@@ -1,0 +1,42 @@
+<!--
+  DTD for the XML export format used by the Lua game data exporter.
+  This format preserves Lua type information with typed XML elements.
+
+  Usage: Add this to the XML prolog:
+    <!DOCTYPE file SYSTEM "export.dtd">
+
+  Or validate externally using the DTD file.
+-->
+
+<!-- Root element: contains one header row followed by zero or more data rows -->
+<!ELEMENT file (header, row*)>
+
+<!-- Header row: contains column type specifications as string values -->
+<!ELEMENT header (null | true | false | string | integer | number | function | table)*>
+
+<!-- Data row: contains typed values corresponding to header columns -->
+<!ELEMENT row (null | true | false | string | integer | number | function | table)*>
+
+<!-- Primitive value elements -->
+<!ELEMENT null EMPTY>
+<!ELEMENT true EMPTY>
+<!ELEMENT false EMPTY>
+<!ELEMENT function EMPTY>
+
+<!-- String element: can be empty (for empty string) or contain text -->
+<!ELEMENT string (#PCDATA)>
+
+<!-- Integer element: contains an integer value as text -->
+<!ELEMENT integer (#PCDATA)>
+
+<!-- Number element: contains a float value as text (including special values: nan, inf, -inf) -->
+<!ELEMENT number (#PCDATA)>
+
+<!-- Table element: contains sequence elements and/or key-value pairs -->
+<!ELEMENT table (null | true | false | string | integer | number | function | table | key_value)*>
+
+<!-- Key-value pair: contains exactly two value elements (key, then value) -->
+<!ELEMENT key_value (
+  (null | true | false | string | integer | number | function | table),
+  (null | true | false | string | integer | number | function | table)
+)>

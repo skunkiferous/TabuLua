@@ -1,0 +1,7 @@
+Header
+---[[[
+---return string.upper("generated")
+---]]]
+old content
+---[[[end]]]
+Footer

@@ -1,0 +1,7 @@
+Header
+---[[[
+---return "Generated content"
+---]]]
+Old content
+---[[[end]]]
+Footer

@@ -1,0 +1,18 @@
+FROM nickblah/luajit:2.1-luarocks-alpine
+
+# Install build dependencies
+RUN apk add --no-cache build-base linux-headers git
+
+# Install Lua dependencies
+# Note: compat53 provides Lua 5.3 compatibility (utf8, table.move, etc.)
+RUN luarocks install compat53 && \
+    luarocks install busted && \
+    luarocks install semver && \
+    luarocks install lua-messagepack && \
+    luarocks install lualogging && \
+    luarocks install tableshape && \
+    luarocks install lpeg && \
+    luarocks install --server=https://luarocks.org/dev ltcn && \
+    luarocks install https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
+
+WORKDIR /app

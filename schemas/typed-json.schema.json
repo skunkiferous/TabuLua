@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "typed-json.schema.json",
+  "title": "Typed JSON Export Format",
+  "description": "Schema for the typed-JSON export format used by the Lua game data exporter. This format preserves Lua type information, particularly distinguishing integers from floats.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/row"
+  },
+  "$defs": {
+    "row": {
+      "description": "A row in the exported data (header row or data row)",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/typed_value"
+      }
+    },
+    "typed_value": {
+      "description": "A typed value that preserves Lua type information",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string" },
+        { "type": "boolean" },
+        { "$ref": "#/$defs/plain_number" },
+        { "$ref": "#/$defs/typed_integer" },
+        { "$ref": "#/$defs/typed_special_float" },
+        { "$ref": "#/$defs/typed_table" }
+      ]
+    },
+    "plain_number": {
+      "description": "A plain JSON number (used for non-integer floats)",
+      "type": "number"
+    },
+    "typed_integer": {
+      "description": "An integer wrapped as {\"int\": \"N\"} to preserve integer type",
+      "type": "object",
+      "properties": {
+        "int": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        }
+      },
+      "required": ["int"],
+      "additionalProperties": false
+    },
+    "typed_special_float": {
+      "description": "Special float values (nan, inf, -inf) that cannot be represented in standard JSON",
+      "type": "object",
+      "properties": {
+        "float": {
+          "type": "string",
+          "enum": ["nan", "inf", "-inf"]
+        }
+      },
+      "required": ["float"],
+      "additionalProperties": false
+    },
+    "typed_table": {
+      "description": "A Lua table encoded as [size, elem1, ..., elemN, [key1,val1], ...]. The first element is the sequence size (plain integer). Sequence elements follow, then key-value pairs as 2-element arrays.",
+      "type": "array",
+      "prefixItems": [
+        {
+          "description": "Sequence size (number of sequential elements starting at index 1)",
+          "type": "integer",
+          "minimum": 0
+        }
+      ],
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/typed_value" },
+          { "$ref": "#/$defs/key_value_pair" }
+        ]
+      }
+    },
+    "key_value_pair": {
+      "description": "A key-value pair represented as a 2-element array [key, value]",
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/typed_value" },
+        { "$ref": "#/$defs/typed_value" }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}

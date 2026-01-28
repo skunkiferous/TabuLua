@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!--
+    XML Schema for the XML export format used by the Lua game data exporter.
+    This format preserves Lua type information with typed XML elements.
+
+    Usage: Validate XML files against this schema using any XSD validator.
+  -->
+
+  <!-- Root element -->
+  <xs:element name="file" type="fileType"/>
+
+  <xs:complexType name="fileType">
+    <xs:sequence>
+      <xs:element name="header" type="rowType"/>
+      <xs:element name="row" type="rowType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Row type: sequence of typed values -->
+  <xs:complexType name="rowType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="null" type="emptyType"/>
+      <xs:element name="true" type="emptyType"/>
+      <xs:element name="false" type="emptyType"/>
+      <xs:element name="function" type="emptyType"/>
+      <xs:element name="string" type="stringType"/>
+      <xs:element name="integer" type="integerType"/>
+      <xs:element name="number" type="numberType"/>
+      <xs:element name="table" type="tableType"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <!-- Empty element type (for null, true, false, function) -->
+  <xs:complexType name="emptyType"/>
+
+  <!-- String type: can be empty or contain text -->
+  <xs:simpleType name="stringType">
+    <xs:restriction base="xs:string"/>
+  </xs:simpleType>
+
+  <!-- Integer type: integer value as text -->
+  <xs:simpleType name="integerType">
+    <xs:restriction base="xs:integer"/>
+  </xs:simpleType>
+
+  <!-- Number type: float value including special values nan, inf, -inf -->
+  <xs:simpleType name="numberType">
+    <xs:union>
+      <xs:simpleType>
+        <xs:restriction base="xs:double"/>
+      </xs:simpleType>
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="nan"/>
+          <xs:enumeration value="inf"/>
+          <xs:enumeration value="-inf"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:union>
+  </xs:simpleType>
+
+  <!-- Table type: contains values and/or key-value pairs -->
+  <xs:complexType name="tableType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="null" type="emptyType"/>
+      <xs:element name="true" type="emptyType"/>
+      <xs:element name="false" type="emptyType"/>
+      <xs:element name="function" type="emptyType"/>
+      <xs:element name="string" type="stringType"/>
+      <xs:element name="integer" type="integerType"/>
+      <xs:element name="number" type="numberType"/>
+      <xs:element name="table" type="tableType"/>
+      <xs:element name="key_value" type="keyValueType"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <!-- Key-value pair type: exactly two value elements -->
+  <xs:complexType name="keyValueType">
+    <xs:sequence>
+      <xs:choice>
+        <xs:element name="null" type="emptyType"/>
+        <xs:element name="true" type="emptyType"/>
+        <xs:element name="false" type="emptyType"/>
+        <xs:element name="function" type="emptyType"/>
+        <xs:element name="string" type="stringType"/>
+        <xs:element name="integer" type="integerType"/>
+        <xs:element name="number" type="numberType"/>
+        <xs:element name="table" type="tableType"/>
+      </xs:choice>
+      <xs:choice>
+        <xs:element name="null" type="emptyType"/>
+        <xs:element name="true" type="emptyType"/>
+        <xs:element name="false" type="emptyType"/>
+        <xs:element name="function" type="emptyType"/>
+        <xs:element name="string" type="stringType"/>
+        <xs:element name="integer" type="integerType"/>
+        <xs:element name="number" type="numberType"/>
+        <xs:element name="table" type="tableType"/>
+      </xs:choice>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>

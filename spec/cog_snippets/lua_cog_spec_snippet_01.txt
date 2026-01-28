@@ -1,0 +1,7 @@
+First line
+---[[[
+---return "test"
+---]]]
+Old content
+---[[[end]]]
+Last line

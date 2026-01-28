@@ -1,0 +1,520 @@
+-- Module name
+local NAME = "files_desc"
+
+-- Module logger
+local logger = require( "named_logger").getLogger(NAME)
+
+-- Module versioning
+local semver = require("semver")
+
+-- Module version
+local VERSION = semver(0, 1, 0)
+
+-- Returns the module version
+local function getVersion()
+    return tostring(VERSION)
+end
+
+-- Files that need "post-processing" because they define things that need "registering"
+local POST_PROCESS_PARENTS = {Type=true, enum=true}
+
+local read_only = require("read_only")
+local readOnly = read_only.readOnly
+local table_utils = require("table_utils")
+local filterSeq = table_utils.filterSeq
+local longestMatchingPrefix = table_utils.longestMatchingPrefix
+local appendSeq = table_utils.appendSeq
+local clearSeq = table_utils.clearSeq
+
+local file_util = require("file_util")
+local getParentPath = file_util.getParentPath
+local sortFilesBreadthFirst = file_util.sortFilesBreadthFirst
+local readFile = file_util.readFile
+
+local lua_cog = require("lua_cog")
+
+local raw_tsv = require("raw_tsv")
+local stringToRawTSV = raw_tsv.stringToRawTSV
+
+local tsv_model = require("tsv_model")
+local processTSV = tsv_model.processTSV
+local TRANSPOSED_TSV_EXT = tsv_model.TRANSPOSED_TSV_EXT
+
+local parsers = require("parsers")
+local parseType = parsers.parseType
+local recordFieldTypes = parsers.recordFieldTypes
+
+-- File containing priorities/load-order, in lowercase
+local FILES_DESC = "files.tsv"
+
+-- Expected columns of the "files descriptor" files
+local FILE_NAME_COL = "fileName:string"
+local TYPE_NAME_COL = "typeName:type_spec"
+local SUPER_TYPE_COL = "superType:superType"
+local BASE_TYPE_COL = "baseType:boolean"
+local PUBLISH_CONTEXT_COL = "publishContext:name|nil"
+local PUBLISH_COLUMN_COL = "publishColumn:name|nil"
+local LOAD_ORDER_COL = "loadOrder:number"
+local DESCRIPTION_COL = "description:text"
+
+-- Returns true, if this is a process-first meta-data file
+local function isFilesDescriptor(file)
+    return file:lower():sub(-#FILES_DESC) == FILES_DESC
+end
+
+-- Finds, and removes, the metadata files that define the priority
+local function extractFilesDescriptors(files)
+    return filterSeq(files, isFilesDescriptor)
+end
+
+-- Matches packages (package_id=>package{.path}]) and their descriptor files
+local function matchDescriptorFiles(packages, descriptorFilesNames, log)
+    log = log or logger
+    local paths = {}
+    local path2pkg_id = {}
+    for package_id, package in pairs(packages) do
+        local path = getParentPath(package.path):lower()
+        paths[#paths+1] = path
+        path2pkg_id[path] = package_id
+    end
+    local result = {}
+    local fail = false
+    for _, file in ipairs(descriptorFilesNames) do
+        local parent = getParentPath(file):lower()
+        local package_id = path2pkg_id[parent]
+        if package_id then
+            result[file] = package_id
+        else
+            -- Hopefully, file descriptor belongs to subdirectory of a package
+            local matching = longestMatchingPrefix(paths, parent)
+            if #matching > 0 then
+                result[file] = path2pkg_id[matching]
+            else
+                log:error("File descriptor " .. file .. " does not belong to any package")
+                fail = true
+            end
+        end
+    end
+    if fail then
+        return nil
+    end
+    return result
+end
+
+-- Order files descriptors, based on package dependencies
+-- Within a single package, files are sorted in breadth-first order,
+-- but, the order of files descriptors within a package should not matter
+local function orderFilesDescByPackageOrder(package_order, desc_file2pkg_id)
+    local desc_files_order = {}
+    for _, package_id in ipairs(package_order) do
+        local pkg_files = {}
+        for file, package_id2 in pairs(desc_file2pkg_id) do
+            if package_id == package_id2 then
+                pkg_files[#pkg_files+1] = file
+            end
+        end
+        sortFilesBreadthFirst(pkg_files)
+        appendSeq(desc_files_order, pkg_files)
+    end
+    return desc_files_order
+end
+
+-- Loads a file descriptor as TSV
+local function genLoadDescriptorFile()
+    local ldfParserFinder = parseType
+        -- Only for loadDescriptorFile ...
+    local ldfExprEval = tsv_model.expressionEvaluatorGenerator({})
+
+    -- Loads a file descriptor as TSV
+    local result = function(file, raw_files, loadEnv, badVal)
+        logger:info("Processing descriptor file: " .. file)
+        local content, err = readFile(file)
+        if not content then
+            badVal(nil, "File " .. file .. " could not be read: " .. err)
+            return nil, err
+        end
+        raw_files[file] = content
+        content = lua_cog.processContentBV(file, content, loadEnv, badVal)
+        local rawtsv = stringToRawTSV(content)
+        return processTSV(tsv_model.defaultOptionsExtractor, ldfExprEval, ldfParserFinder,
+            file, rawtsv, badVal, nil, false)
+    end
+
+    return result
+end
+
+-- Loads a file descriptor as TSV
+local loadDescriptorFile = genLoadDescriptorFile()
+
+-- Warn if column is missing
+local function warnMissingColumn(file_name, col_idx, col_name, log)
+    if col_idx == -1 then
+        log = log or logger
+        log:warn("Missing column '" .. col_name .. "' in " .. file_name)
+    end
+end
+
+-- Parse files descriptions header
+local function parseFilesDescHeader(file_name, file, log)
+    local header = file[1]
+    local fileNameIdx = -1
+    local typeNameIdx = -1
+    local superTypeIdx = -1
+    local baseTypeIdx = -1
+    local publishContextIdx = -1
+    local publishColumnIdx = -1
+    local loadOrderIdx = -1
+    for idx, col in ipairs(header) do
+        col = tostring(col)
+        if col == FILE_NAME_COL then
+            fileNameIdx = idx
+        elseif col == TYPE_NAME_COL then
+            typeNameIdx = idx
+        elseif col == SUPER_TYPE_COL then
+            superTypeIdx = idx
+        elseif col == BASE_TYPE_COL then
+            baseTypeIdx = idx
+        elseif col == PUBLISH_CONTEXT_COL then
+            publishContextIdx = idx
+        elseif col == PUBLISH_COLUMN_COL then
+            publishColumnIdx = idx
+        elseif col == LOAD_ORDER_COL then
+            loadOrderIdx = idx
+        elseif col== DESCRIPTION_COL then
+            -- For the user only; ignore ...
+        else
+            logger:warn("Column ignored: "..col)
+        end
+    end
+    warnMissingColumn(file_name, fileNameIdx, "fileName", log)
+    warnMissingColumn(file_name, typeNameIdx, "typeName", log)
+    warnMissingColumn(file_name, superTypeIdx, "superType", log)
+    warnMissingColumn(file_name, baseTypeIdx, "baseType", log)
+    warnMissingColumn(file_name, publishContextIdx, "publishContext", log)
+    warnMissingColumn(file_name, publishColumnIdx, "publishColumn", log)
+    warnMissingColumn(file_name, loadOrderIdx, "loadOrder", log)
+    return fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
+        publishColumnIdx, loadOrderIdx
+end
+
+-- Check the file name matches the type name
+local function checkTypeName(extends, fileDesc, fileName, typeName, superType, log)
+    if typeName then
+        log = log or logger
+        local idx = fileName:find("/[^/]*$")
+        local fileNameWithoutPath = (idx and fileName:sub(idx + 1)) or fileName
+        -- Handle compound extension ".transposed.tsv" as a single extension
+        local fileNameWithoutExt
+        if fileNameWithoutPath:sub(-#TRANSPOSED_TSV_EXT) == TRANSPOSED_TSV_EXT then
+            fileNameWithoutExt = fileNameWithoutPath:sub(1, -#TRANSPOSED_TSV_EXT - 1)
+        else
+            idx = (fileNameWithoutPath:reverse()):find("%.")
+            fileNameWithoutExt = fileNameWithoutPath:sub(1, -idx-1)
+        end
+        if typeName:lower() ~= fileNameWithoutExt:lower() then
+            log:warn("typeName '" .. typeName
+                .. "' in " .. fileDesc
+                .. " should match fileName '" .. fileName
+                .. "' without extension")
+        end
+        if superType and #superType > 0 then
+            if typeName:lower() == superType:lower() then
+                log:warn("typeName '" .. typeName
+                    .. "' is same as superType '" .. superType
+                    .. "' in " .. fileDesc)
+            else
+                extends[typeName] = superType
+            end
+        end
+    end
+end
+
+-- Check the file base type
+local function checkBaseType(fileDesc, fileName, baseType, superType, log)
+    if baseType then
+        log = log or logger
+        if baseType ~= "true" and baseType ~= "false" then
+            log:warn("baseType '" .. baseType
+                .. "' in " .. fileDesc
+                .. " should be 'true' or 'false'")
+        elseif baseType == "true" and superType ~= "" and superType ~= nil
+            and superType ~= "enum" then
+            log:warn("superType '" .. superType .. "' of file '"
+                .. fileName .. "' in " .. fileDesc
+                .. " should be '' or baseType should be 'false'")
+        end
+    end
+end
+
+-- Collect data to later validate file and type names reuse
+local function trackFileAndTypeNames(lcFileNames, lcTypeNames, lcfn, tn, file_name)
+    local fnDefined = lcFileNames[lcfn] or {}
+    fnDefined[#fnDefined+1] = file_name
+    lcFileNames[lcfn] = fnDefined
+    if tn then
+        local tnDefined = lcTypeNames[tn:lower()] or {}
+        tnDefined[#tnDefined+1] = file_name
+        lcTypeNames[tn:lower()] = tnDefined
+    end
+end
+
+-- Options object for processFilesDesc
+-- @field prios table: Map of lowercase filename to priority
+-- @field prio_offset number: Offset to add to priorities
+-- @field extends table: Map of type name to super type
+-- @field lcFileNames table: Map of lowercase filename to list of descriptor files
+-- @field lcTypeNames table: Map of lowercase type name to list of descriptor files
+-- @field lcFn2Type table: Map of lowercase filename to type name
+-- @field lcFn2Ctx table: Map of lowercase filename to publish context
+-- @field lcFn2Col table: Map of lowercase filename to publish column
+-- @field fn2Idx table: Map of descriptor file to column indices
+-- @field log logger: Logger instance
+
+-- Process the content of a descriptor file
+-- @param file_name string: Path to the descriptor file
+-- @param file table: Parsed TSV content
+-- @param max_prio number: Current maximum priority
+-- @param opts table: Options object (see above)
+-- @return number: Updated maximum priority
+local function processFilesDesc(file_name, file, max_prio, opts)
+    local prios = opts.prios
+    local prio_offset = opts.prio_offset
+    local extends = opts.extends
+    local lcFileNames = opts.lcFileNames
+    local lcTypeNames = opts.lcTypeNames
+    local lcFn2Type = opts.lcFn2Type
+    local lcFn2Ctx = opts.lcFn2Ctx
+    local lcFn2Col = opts.lcFn2Col
+    local fn2Idx = opts.fn2Idx
+    local log = opts.log
+
+    local fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx, publishColumnIdx,
+        loadOrderIdx = parseFilesDescHeader(file_name, file, log)
+    fn2Idx[file_name] = {fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
+        publishColumnIdx, loadOrderIdx}
+    if fileNameIdx ~= -1 and loadOrderIdx ~= -1 then
+        for i, row in ipairs(file) do
+            -- Ignore empty rows and header
+            if i > 1 and type(row) == "table" then
+                local fn = row[fileNameIdx].parsed
+                local lcfn = fn:lower()
+                local prio = tonumber(row[loadOrderIdx].parsed) or 0
+                local tn = row[typeNameIdx].parsed
+                local st = row[superTypeIdx].parsed
+                local bt = tostring(row[baseTypeIdx].parsed)
+
+                prio = prio + prio_offset
+                prios[lcfn] = prio
+                if prio > max_prio then
+                    max_prio = prio
+                end
+                trackFileAndTypeNames(lcFileNames, lcTypeNames, lcfn, tn, file_name)
+                checkTypeName(extends, file_name, fn, tn, st, log)
+                checkBaseType(file_name, fn, bt, st, log)
+                lcFn2Type[lcfn] = tn
+                lcFn2Ctx[lcfn] = row[publishContextIdx].parsed
+                if lcFn2Ctx[lcfn] == '' then
+                    lcFn2Ctx[lcfn] = nil
+                end
+                lcFn2Col[lcfn] = row[publishColumnIdx].parsed
+                if lcFn2Col[lcfn] == '' then
+                    lcFn2Col[lcfn] = nil
+                end
+            end
+        end
+    end
+    return max_prio
+end
+
+-- Detect post processing needed
+local function detectPostProcessingNeeded(extends, post_proc_files, file_name, typeName, log)
+    log = log or logger
+    local tn = typeName
+    while tn and #tn > 0 do
+        if POST_PROCESS_PARENTS[tn] then
+            post_proc_files[file_name] = typeName
+            log:info("Found " .. tn .. " file: " .. file_name)
+            break
+        end
+        tn = extends[tn]
+    end
+end
+
+-- Reprocess all files of one mod, after first processing
+local function reprocessFilesDesc(mod_files, post_proc_files, extends, log, fn2Idx)
+    for _, file in ipairs(mod_files) do
+        local fileNameIdx, typeNameIdx = table.unpack(fn2Idx[file[1].__source])
+        for i, row in ipairs(file) do
+            -- Ignore empty rows and header
+            if i > 1 and type(row) == "table" then
+                local fn = row[fileNameIdx].parsed
+                local tn = row[typeNameIdx].parsed
+                detectPostProcessingNeeded(extends, post_proc_files,
+                fn, tn, log)
+            end
+        end
+    end
+end
+
+-- Validates that sibling sub-types have consistent field types.
+-- When two types extend the same parent (are siblings), any fields with the same name
+-- must have the same type. This prevents ambiguity when working with the type hierarchy.
+-- @param extends table: Map of type name to parent type name (child -> parent)
+-- @param lcTypeNames table: Map of lowercase type name to list of descriptor file paths
+-- @param badVal table: Error reporting object
+local function validateSiblingFieldTypes(extends, lcTypeNames, badVal)
+    -- Build parent -> children mapping (invert the extends table)
+    local children = {}
+    for childType, parentType in pairs(extends) do
+        if not children[parentType] then
+            children[parentType] = {}
+        end
+        children[parentType][#children[parentType] + 1] = childType
+    end
+
+    -- For each parent with multiple children, check field consistency
+    for parentType, childTypes in pairs(children) do
+        if #childTypes > 1 then
+            -- Collect all fields from all children (and their descendants)
+            -- fieldName -> { typeName -> fieldType }
+            local fieldsByName = {}
+
+            for _, childType in ipairs(childTypes) do
+                local fieldTypes = recordFieldTypes(childType)
+                if fieldTypes then
+                    for fieldName, fieldType in pairs(fieldTypes) do
+                        if not fieldsByName[fieldName] then
+                            fieldsByName[fieldName] = {}
+                        end
+                        fieldsByName[fieldName][childType] = fieldType
+                    end
+                end
+            end
+
+            -- Check for conflicts: same field name with different types
+            for fieldName, typeMap in pairs(fieldsByName) do
+                local firstType = nil
+                local firstTypeName = nil
+                for typeName, fieldType in pairs(typeMap) do
+                    if firstType == nil then
+                        firstType = fieldType
+                        firstTypeName = typeName
+                    elseif firstType ~= fieldType then
+                        -- Found a conflict!
+                        badVal.source_name = "type hierarchy"
+                        badVal.line_no = 0
+                        badVal(fieldName, "field has different types in sibling sub-types of '"
+                            .. parentType .. "': " .. firstTypeName .. " has '" .. firstType
+                            .. "' but " .. typeName .. " has '" .. fieldType .. "'")
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Validates file and type names reuse
+local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
+    log = log or logger
+    for fn, fd in pairs(lcFileNames) do
+        if #fd > 1 then
+            log:warn("Multiple files with name '" .. fn
+                .. "' in " .. table.concat(fd, ", "))
+        end
+    end
+    for tn, fd in pairs(lcTypeNames) do
+        if #fd > 1 then
+            log:warn("Multiple types with name '" .. tn
+                .. "' in " .. table.concat(fd, ", "))
+        end
+    end
+end
+
+-- Load all descriptor files, in the order of priority
+local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
+    post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col, raw_files, loadEnv, badVal)
+    local desc_files = {}
+    local max_prio = -math.huge
+    local cur_mod = nil
+    local fail = false
+    local mod_files = {}
+    local lcFileNames = {}
+    local lcTypeNames = {}
+    local log = badVal.logger
+    local fn2Idx = {}
+
+    -- Options object for processFilesDesc
+    local opts = {
+        prios = prios,
+        prio_offset = 0,
+        extends = extends,
+        lcFileNames = lcFileNames,
+        lcTypeNames = lcTypeNames,
+        lcFn2Type = lcFn2Type,
+        lcFn2Ctx = lcFn2Ctx,
+        lcFn2Col = lcFn2Col,
+        fn2Idx = fn2Idx,
+        log = log,
+    }
+
+    for _, file_name in ipairs(desc_files_order) do
+        local file = loadDescriptorFile(file_name, raw_files, loadEnv, badVal)
+        if file then
+            local file_mod = desc_file2mod_id[file_name]
+            if cur_mod ~= file_mod then
+                reprocessFilesDesc(mod_files, post_proc_files,
+                    extends, log, fn2Idx)
+                clearSeq(mod_files)
+                if cur_mod then
+                    opts.prio_offset = max_prio + 1
+                end
+                max_prio = -math.huge
+                cur_mod = file_mod
+            end
+            desc_files[#desc_files+1] = file
+            max_prio = processFilesDesc(file_name, file, max_prio, opts)
+            mod_files[#mod_files+1] = file
+        else
+            fail = true
+        end
+    end
+    if #mod_files > 0 then
+        reprocessFilesDesc(mod_files, post_proc_files,
+            extends, log, fn2Idx)
+    end
+    validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
+    validateSiblingFieldTypes(extends, lcTypeNames, badVal)
+    if fail then
+        return nil
+    end
+    return desc_files
+end
+
+-- Provides a tostring() function for the API
+local function apiToString()
+    return NAME .. " version " .. tostring(VERSION)
+end
+
+-- The public, versioned, API of this module
+local API = {
+    extractFilesDescriptors = extractFilesDescriptors,
+    getVersion = getVersion,
+    isFilesDescriptor = isFilesDescriptor,
+    matchDescriptorFiles = matchDescriptorFiles,
+    orderFilesDescByPackageOrder = orderFilesDescByPackageOrder,
+    loadDescriptorFile = loadDescriptorFile,
+    loadDescriptorFiles = loadDescriptorFiles,
+}
+
+-- Enables the module to be called as a function
+local function apiCall(_, operation, ...)
+    if operation == "version" then
+        return VERSION
+    elseif API[operation] then
+        return API[operation](...)
+    else
+        error("Unknown operation: " .. tostring(operation), 2)
+    end
+end
+
+return readOnly(API, {__tostring = apiToString, __call = apiCall, __type = NAME})
