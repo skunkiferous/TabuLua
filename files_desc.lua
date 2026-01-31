@@ -56,6 +56,11 @@ local PUBLISH_CONTEXT_COL = "publishContext:name|nil"
 local PUBLISH_COLUMN_COL = "publishColumn:name|nil"
 local LOAD_ORDER_COL = "loadOrder:number"
 local DESCRIPTION_COL = "description:text"
+-- File joining columns
+local JOIN_INTO_COL = "joinInto:name|nil"
+local JOIN_COLUMN_COL = "joinColumn:name|nil"
+local EXPORT_COL = "export:boolean|nil"
+local JOINED_TYPE_NAME_COL = "joinedTypeName:type_spec|nil"
 
 -- Returns true, if this is a process-first meta-data file
 local function isFilesDescriptor(file)
@@ -164,6 +169,10 @@ local function parseFilesDescHeader(file_name, file, log)
     local publishContextIdx = -1
     local publishColumnIdx = -1
     local loadOrderIdx = -1
+    local joinIntoIdx = -1
+    local joinColumnIdx = -1
+    local exportIdx = -1
+    local joinedTypeNameIdx = -1
     for idx, col in ipairs(header) do
         col = tostring(col)
         if col == FILE_NAME_COL then
@@ -180,6 +189,14 @@ local function parseFilesDescHeader(file_name, file, log)
             publishColumnIdx = idx
         elseif col == LOAD_ORDER_COL then
             loadOrderIdx = idx
+        elseif col == JOIN_INTO_COL then
+            joinIntoIdx = idx
+        elseif col == JOIN_COLUMN_COL then
+            joinColumnIdx = idx
+        elseif col == EXPORT_COL then
+            exportIdx = idx
+        elseif col == JOINED_TYPE_NAME_COL then
+            joinedTypeNameIdx = idx
         elseif col== DESCRIPTION_COL then
             -- For the user only; ignore ...
         else
@@ -193,8 +210,9 @@ local function parseFilesDescHeader(file_name, file, log)
     warnMissingColumn(file_name, publishContextIdx, "publishContext", log)
     warnMissingColumn(file_name, publishColumnIdx, "publishColumn", log)
     warnMissingColumn(file_name, loadOrderIdx, "loadOrder", log)
+    -- Note: join columns are optional, so we don't warn if missing
     return fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
-        publishColumnIdx, loadOrderIdx
+        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx
 end
 
 -- Check the file name matches the type name
@@ -267,6 +285,10 @@ end
 -- @field lcFn2Type table: Map of lowercase filename to type name
 -- @field lcFn2Ctx table: Map of lowercase filename to publish context
 -- @field lcFn2Col table: Map of lowercase filename to publish column
+-- @field lcFn2JoinInto table: Map of lowercase filename to join target filename
+-- @field lcFn2JoinColumn table: Map of lowercase filename to join column name
+-- @field lcFn2Export table: Map of lowercase filename to export flag (boolean|nil)
+-- @field lcFn2JoinedTypeName table: Map of lowercase filename to joined type name
 -- @field fn2Idx table: Map of descriptor file to column indices
 -- @field log logger: Logger instance
 
@@ -285,13 +307,18 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcFn2Type = opts.lcFn2Type
     local lcFn2Ctx = opts.lcFn2Ctx
     local lcFn2Col = opts.lcFn2Col
+    local lcFn2JoinInto = opts.lcFn2JoinInto
+    local lcFn2JoinColumn = opts.lcFn2JoinColumn
+    local lcFn2Export = opts.lcFn2Export
+    local lcFn2JoinedTypeName = opts.lcFn2JoinedTypeName
     local fn2Idx = opts.fn2Idx
     local log = opts.log
 
     local fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx, publishColumnIdx,
-        loadOrderIdx = parseFilesDescHeader(file_name, file, log)
+        loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx =
+        parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = {fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
-        publishColumnIdx, loadOrderIdx}
+        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx}
     if fileNameIdx ~= -1 and loadOrderIdx ~= -1 then
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
@@ -319,6 +346,31 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                 lcFn2Col[lcfn] = row[publishColumnIdx].parsed
                 if lcFn2Col[lcfn] == '' then
                     lcFn2Col[lcfn] = nil
+                end
+                -- Handle file joining columns
+                if joinIntoIdx ~= -1 then
+                    local joinInto = row[joinIntoIdx] and row[joinIntoIdx].parsed
+                    if joinInto and joinInto ~= '' then
+                        lcFn2JoinInto[lcfn] = joinInto:lower()
+                    end
+                end
+                if joinColumnIdx ~= -1 then
+                    local joinColumn = row[joinColumnIdx] and row[joinColumnIdx].parsed
+                    if joinColumn and joinColumn ~= '' then
+                        lcFn2JoinColumn[lcfn] = joinColumn
+                    end
+                end
+                if exportIdx ~= -1 then
+                    local exportVal = row[exportIdx] and row[exportIdx].parsed
+                    if exportVal ~= nil and exportVal ~= '' then
+                        lcFn2Export[lcfn] = exportVal
+                    end
+                end
+                if joinedTypeNameIdx ~= -1 then
+                    local joinedTypeName = row[joinedTypeNameIdx] and row[joinedTypeNameIdx].parsed
+                    if joinedTypeName and joinedTypeName ~= '' then
+                        lcFn2JoinedTypeName[lcfn] = joinedTypeName
+                    end
                 end
             end
         end
@@ -413,6 +465,34 @@ local function validateSiblingFieldTypes(extends, lcTypeNames, badVal)
     end
 end
 
+-- Validates file join configurations
+-- - No chained joins (secondary files joining into other secondary files)
+-- - No circular dependencies
+-- - Join targets must exist
+-- @param lcFn2JoinInto table: Map of lowercase filename to join target
+-- @param lcFileNames table: Map of lowercase filename to list of descriptor files
+-- @param badVal table: Error reporting object
+local function validateFileJoins(lcFn2JoinInto, lcFileNames, badVal)
+    -- Check each file with a joinInto
+    for lcfn, joinTarget in pairs(lcFn2JoinInto) do
+        -- Check that join target exists
+        if not lcFileNames[joinTarget] then
+            badVal.source_name = "file joining"
+            badVal.line_no = 0
+            badVal(lcfn, "joinInto target '" .. joinTarget .. "' does not exist")
+        end
+
+        -- Check for chained joins (join target should not itself have a joinInto)
+        if lcFn2JoinInto[joinTarget] then
+            badVal.source_name = "file joining"
+            badVal.line_no = 0
+            badVal(lcfn, "chained joins not allowed: '" .. lcfn ..
+                "' joins into '" .. joinTarget ..
+                "' which joins into '" .. lcFn2JoinInto[joinTarget] .. "'")
+        end
+    end
+end
+
 -- Validates file and type names reuse
 local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     log = log or logger
@@ -432,7 +512,9 @@ end
 
 -- Load all descriptor files, in the order of priority
 local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
-    post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col, raw_files, loadEnv, badVal)
+    post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+    lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+    raw_files, loadEnv, badVal)
     local desc_files = {}
     local max_prio = -math.huge
     local cur_mod = nil
@@ -453,6 +535,10 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2Type = lcFn2Type,
         lcFn2Ctx = lcFn2Ctx,
         lcFn2Col = lcFn2Col,
+        lcFn2JoinInto = lcFn2JoinInto,
+        lcFn2JoinColumn = lcFn2JoinColumn,
+        lcFn2Export = lcFn2Export,
+        lcFn2JoinedTypeName = lcFn2JoinedTypeName,
         fn2Idx = fn2Idx,
         log = log,
     }
@@ -484,6 +570,7 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     end
     validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     validateSiblingFieldTypes(extends, lcTypeNames, badVal)
+    validateFileJoins(lcFn2JoinInto, lcFileNames, badVal)
     if fail then
         return nil
     end

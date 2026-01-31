@@ -403,6 +403,11 @@ local function processFiles(directories, exporters, exportParams)
                     end
                 end
                 epCopy.exportDir = exportDir
+                -- Register joined types before generating schema so they appear in it
+                local joinedTypeCount = exporter.registerJoinedTypes(result)
+                if joinedTypeCount > 0 then
+                    logger:info("Pre-registered " .. joinedTypeCount .. " joined type(s) for schema")
+                end
                 exporter.exportSchema(exportDir, result, badVal)
                 for _, exp in ipairs(exporters) do
                     -- Support both plain functions and {fn, subdir, tableSerializer} tables

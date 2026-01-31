@@ -43,6 +43,10 @@ local serializeMessagePack = serialization.serializeMessagePack
 local parsers = require("parsers")
 local extendsOrRestrict = parsers.extendsOrRestrict
 local parseType = parsers.parseType
+local registerAlias = parsers.registerAlias
+
+local error_reporting = require("error_reporting")
+local badValGen = error_reporting.badValGen
 
 local raw_tsv = require("raw_tsv")
 
@@ -55,6 +59,12 @@ local isName = predicates.isName
 local exploded_columns = require("exploded_columns")
 local assembleExplodedValue = exploded_columns.assembleExplodedValue
 local generateCollapsedColumnSpec = exploded_columns.generateCollapsedColumnSpec
+
+local file_joining = require("file_joining")
+local shouldExport = file_joining.shouldExport
+local groupSecondaryFiles = file_joining.groupSecondaryFiles
+local findFilePath = file_joining.findFilePath
+local joinFiles = file_joining.joinFiles
 
 -- Lua base types
 local base_types = {"boolean", "integer", "number", "string", "table"}
@@ -87,6 +97,124 @@ local function writeExportFile(path, content)
     return true
 end
 
+-- Column names used for file joining metadata (to be excluded from exported Files.tsv)
+local JOIN_COLUMNS = {
+    joinInto = true,
+    joinColumn = true,
+    export = true,
+    joinedTypeName = true,
+}
+
+-- Transforms Files.tsv for export by:
+-- 1. Removing join-related columns from header
+-- 2. Filtering out secondary files (files with joinInto set)
+-- 3. Replacing typeName with joinedTypeName where appropriate
+-- Returns transformed header, data rows, and column index mapping
+local function transformFilesDescForExport(tsv, joinMeta)
+    local originalHeader = tsv[1]
+
+    -- Build new header without join columns, tracking column mappings
+    local newHeader = {}
+    local colMapping = {}  -- maps new col index -> original col index
+    local typeNameIdx = nil
+    local joinedTypeNameIdx = nil
+
+    for i, col in ipairs(originalHeader) do
+        if col.name == "typeName" then
+            typeNameIdx = i
+        end
+        if col.name == "joinedTypeName" then
+            joinedTypeNameIdx = i
+        end
+        if not JOIN_COLUMNS[col.name] then
+            newHeader[#newHeader + 1] = col
+            colMapping[#newHeader] = i
+        end
+    end
+
+    -- Build filtered rows
+    local newRows = {}
+    for rowIdx, row in ipairs(tsv) do
+        if rowIdx > 1 and type(row) == "table" then
+            -- Get the filename to check if it's a secondary file
+            local fileName = row[1] and row[1].parsed
+            local lcfn = fileName and fileName:lower() or ""
+
+            -- Skip secondary files (those with joinInto set)
+            if joinMeta and joinMeta.lcFn2JoinInto[lcfn] then
+                -- This is a secondary file, skip it
+            else
+                -- Build new row with remapped columns
+                local newRow = {}
+                for newIdx, origIdx in ipairs(colMapping) do
+                    local cell = row[origIdx]
+                    -- Special handling for typeName column: use joinedTypeName if available
+                    if origIdx == typeNameIdx and joinedTypeNameIdx then
+                        local joinedTypeName = row[joinedTypeNameIdx]
+                        if joinedTypeName and joinedTypeName.parsed and joinedTypeName.parsed ~= "" then
+                            -- Create a modified cell with joinedTypeName value
+                            newRow[newIdx] = {
+                                parsed = joinedTypeName.parsed,
+                                value = joinedTypeName.value,
+                                reformatted = joinedTypeName.reformatted,
+                            }
+                        else
+                            newRow[newIdx] = cell
+                        end
+                    else
+                        newRow[newIdx] = cell
+                    end
+                end
+                newRows[#newRows + 1] = newRow
+            end
+        end
+    end
+
+    return newHeader, newRows, colMapping
+end
+
+-- Checks if a file path corresponds to a Files.tsv descriptor file
+local function isFilesDescriptor(file_name)
+    local lower = file_name:lower()
+    return lower:match("/files%.tsv$") or lower:match("\\files%.tsv$") or lower == "files.tsv"
+end
+
+-- Builds a type specification string from a header (array of column definitions)
+-- Each column should have 'name' and 'type_spec' fields
+local function buildTypeSpecFromHeader(header)
+    local parts = {}
+    for _, col in ipairs(header) do
+        if col.name and col.type_spec then
+            parts[#parts + 1] = col.name .. ":" .. col.type_spec
+        end
+    end
+    if #parts == 0 then
+        return nil
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- Registers a joined type in the type system
+-- Returns true on success, false on failure
+local function registerJoinedType(joinedTypeName, joinedHeader)
+    if not joinedTypeName or joinedTypeName == "" then
+        return false
+    end
+    local typeSpec = buildTypeSpecFromHeader(joinedHeader)
+    if not typeSpec then
+        logger:warn("Could not build type spec for joined type: " .. joinedTypeName)
+        return false
+    end
+    local badVal = badValGen()
+    if registerAlias(badVal, joinedTypeName, typeSpec) then
+        logger:info("Registered joined type: " .. joinedTypeName .. " = " .. typeSpec)
+        return true
+    else
+        logger:warn("Failed to register joined type: " .. joinedTypeName)
+        return false
+    end
+end
+
 -- Maps "our types" to SQLite types. This is a *cache*; it will be extended with every new column type
 -- we encounters.
 local sql_types = {
@@ -104,6 +232,7 @@ local sql_types = {
 local function exportTSV(process_files, exportParams, serializer)
     local tsv_files = process_files.tsv_files
     local raw_files = process_files.raw_files
+    local joinMeta = process_files.joinMeta
     local baseExportDir = exportParams.exportDir
     local formatSubdir = exportParams.formatSubdir or ""
     local exportDir = formatSubdir ~= "" and pathJoin(baseExportDir, formatSubdir) or baseExportDir
@@ -117,8 +246,21 @@ local function exportTSV(process_files, exportParams, serializer)
     -- Default to true: export exploded columns as separate flat columns
     local exportExploded = exportParams.exportExploded
     if exportExploded == nil then exportExploded = true end
+
+    -- Build map of primary files to their secondary files for joining
+    local secondaryGroups = joinMeta and groupSecondaryFiles(joinMeta) or {}
+
     local dirChecked = {}
     for file_name, content in pairs(raw_files) do
+        -- Check if this file should be exported
+        local lcfn = file_name:lower()
+        -- Extract just the filename without path for lookup
+        local idx = lcfn:find("/[^/]*$") or lcfn:find("\\[^\\]*$")
+        local lcfnKey = idx and lcfn:sub(idx + 1) or lcfn
+        if joinMeta and not shouldExport(lcfnKey, joinMeta) then
+            logger:info("Skipping export of secondary file: " .. file_name)
+            goto continue
+        end
         local is_tsv = hasExtension(file_name, "tsv")
         local new_name = pathJoin(exportDir, file_name)
         if is_tsv and fileExt ~= "tsv" then
@@ -132,7 +274,61 @@ local function exportTSV(process_files, exportParams, serializer)
             if tsv == nil then
                 logger:error("Failed to find TSV for " .. file_name)
             else
-                local header = tsv[1]
+                -- Check if this is a primary file with secondary files to join
+                local secondaryLcfns = secondaryGroups[lcfnKey]
+                local joinedRows, joinedHeader = nil, nil
+                if secondaryLcfns and #secondaryLcfns > 0 then
+                    -- Build list of secondary TSV data for joining
+                    local secondaryTsvList = {}
+                    for _, secLcfn in ipairs(secondaryLcfns) do
+                        local secPath = findFilePath(secLcfn, tsv_files)
+                        if secPath and tsv_files[secPath] then
+                            local joinColumn = joinMeta.lcFn2JoinColumn[secLcfn]
+                            secondaryTsvList[#secondaryTsvList + 1] = {
+                                tsv = tsv_files[secPath],
+                                joinColumn = joinColumn,
+                                sourceName = secPath,
+                            }
+                        else
+                            logger:warn("Secondary file not found: " .. secLcfn)
+                        end
+                    end
+                    if #secondaryTsvList > 0 then
+                        -- Create a minimal badVal for error reporting
+                        local badVal = {
+                            source_name = file_name,
+                            line_no = 0,
+                            errors = 0,
+                        }
+                        setmetatable(badVal, {__call = function(self, val, msg)
+                            logger:error(self.source_name .. ": " .. tostring(msg) .. " (" .. tostring(val) .. ")")
+                            self.errors = self.errors + 1
+                        end})
+                        joinedRows, joinedHeader = joinFiles(tsv, secondaryTsvList, badVal)
+                        if joinedRows then
+                            logger:info("Joined " .. #secondaryTsvList .. " secondary file(s) into " .. file_name)
+                            -- Register the joined type if joinedTypeName is specified
+                            local joinedTypeName = joinMeta.lcFn2JoinedTypeName[lcfnKey]
+                            if joinedTypeName then
+                                registerJoinedType(joinedTypeName, joinedHeader)
+                            end
+                        end
+                    end
+                end
+
+                -- Special handling for Files.tsv: transform for export
+                local transformedHeader, transformedRows = nil, nil
+                if isFilesDescriptor(file_name) and joinMeta then
+                    transformedHeader, transformedRows = transformFilesDescForExport(tsv, joinMeta)
+                    if transformedHeader then
+                        logger:info("Transformed Files.tsv for export: removed join columns and secondary files")
+                    end
+                end
+
+                local header = transformedHeader or joinedHeader or tsv[1]
+                local dataRows = transformedRows or joinedRows or tsv
+                local useJoinedData = joinedRows ~= nil
+                local useTransformedData = transformedRows ~= nil
                 local cnt = {}
 
                 -- Build export column info based on exportExploded setting
@@ -183,44 +379,62 @@ local function exportTSV(process_files, exportParams, serializer)
                     table.insert(cnt, filePrefix)
                 end
 
-                for i, row in ipairs(tsv) do
-                    if type(row) == "table" then
-                        if i > 1 then
-                            table.insert(cnt, lineSep)
+                -- Helper function to export a single row
+                local function exportRow(rowIdx, row, isHeader)
+                    if type(linePrefix) == "function" then
+                        table.insert(cnt, linePrefix(rowIdx, header))
+                    else
+                        table.insert(cnt, linePrefix)
+                    end
+                    local first_col = true
+                    for _, ec in ipairs(export_cols) do
+                        if not first_col then
+                            table.insert(cnt, colSep)
                         end
-                        if type(linePrefix) == "function" then
-                            table.insert(cnt, linePrefix(i, header))
-                        else
-                            table.insert(cnt, linePrefix)
-                        end
-                        local first_col = true
-                        for _, ec in ipairs(export_cols) do
-                            if not first_col then
-                                table.insert(cnt, colSep)
-                            end
-                            first_col = false
-                            local col = header[ec.col_idx]
-                            if ec.is_root then
-                                -- Collapsed export: serialize the assembled composite
-                                if i == 1 then
-                                    -- Header row: output collapsed column spec (serialize it like other header values)
-                                    local collapsed_spec = generateCollapsedColumnSpec(ec.root_name, ec.structure)
-                                    table.insert(cnt, serializer(i, col, collapsed_spec, ec))
-                                else
-                                    -- Data row: assemble and serialize the composite value
-                                    local assembled = assembleExplodedValue(row, ec.structure)
-                                    table.insert(cnt, serializer(i, col, assembled, ec))
-                                end
+                        first_col = false
+                        local col = header[ec.col_idx]
+                        if ec.is_root then
+                            -- Collapsed export: serialize the assembled composite
+                            if isHeader then
+                                -- Header row: output collapsed column spec
+                                local collapsed_spec = generateCollapsedColumnSpec(ec.root_name, ec.structure)
+                                table.insert(cnt, serializer(rowIdx, col, collapsed_spec, ec))
                             else
-                                -- Normal export
-                                local cell = row[ec.col_idx]
-                                table.insert(cnt, serializer(i, col, cell.parsed, ec))
+                                -- Data row: assemble and serialize the composite value
+                                local assembled = assembleExplodedValue(row, ec.structure)
+                                table.insert(cnt, serializer(rowIdx, col, assembled, ec))
                             end
-                        end
-                        if type(lineSuffix) == "function" then
-                            table.insert(cnt, lineSuffix(i, header))
                         else
-                            table.insert(cnt, lineSuffix)
+                            -- Normal export
+                            local cell = row[ec.col_idx]
+                            table.insert(cnt, serializer(rowIdx, col, cell.parsed, ec))
+                        end
+                    end
+                    if type(lineSuffix) == "function" then
+                        table.insert(cnt, lineSuffix(rowIdx, header))
+                    else
+                        table.insert(cnt, lineSuffix)
+                    end
+                end
+
+                if useJoinedData or useTransformedData then
+                    -- Export header row first (header is separate from data rows)
+                    exportRow(1, header, true)
+                    -- Export data rows
+                    for i, row in ipairs(dataRows) do
+                        if type(row) == "table" then
+                            table.insert(cnt, lineSep)
+                            exportRow(i + 1, row, false)
+                        end
+                    end
+                else
+                    -- Original behavior: iterate over tsv which includes header
+                    for i, row in ipairs(tsv) do
+                        if type(row) == "table" then
+                            if i > 1 then
+                                table.insert(cnt, lineSep)
+                            end
+                            exportRow(i, row, i == 1)
                         end
                     end
                 end
@@ -231,6 +445,7 @@ local function exportTSV(process_files, exportParams, serializer)
         if not writeExportFile(new_name, content) then
             return false
         end
+        ::continue::
     end
     return true
 end
@@ -560,6 +775,57 @@ local function exportSchema(exportDir, processedFiles, badVal)
     return true
 end
 
+--- Pre-registers all joined types so they appear in the schema.
+--- This should be called before exportSchema to ensure joined types are available.
+--- @param processedFiles table Result from manifest_loader.processFiles()
+--- @return number The number of joined types registered
+local function registerJoinedTypes(processedFiles)
+    local tsv_files = processedFiles.tsv_files
+    local joinMeta = processedFiles.joinMeta
+    if not joinMeta then
+        return 0
+    end
+
+    local secondaryGroups = groupSecondaryFiles(joinMeta)
+    local count = 0
+
+    for primaryLcfn, secondaryLcfns in pairs(secondaryGroups) do
+        local joinedTypeName = joinMeta.lcFn2JoinedTypeName[primaryLcfn]
+        if joinedTypeName and #secondaryLcfns > 0 then
+            -- Find the primary file
+            local primaryPath = findFilePath(primaryLcfn, tsv_files)
+            if primaryPath and tsv_files[primaryPath] then
+                local primaryTsv = tsv_files[primaryPath]
+                -- Build list of secondary TSV data for joining
+                local secondaryTsvList = {}
+                for _, secLcfn in ipairs(secondaryLcfns) do
+                    local secPath = findFilePath(secLcfn, tsv_files)
+                    if secPath and tsv_files[secPath] then
+                        local joinColumn = joinMeta.lcFn2JoinColumn[secLcfn]
+                        secondaryTsvList[#secondaryTsvList + 1] = {
+                            tsv = tsv_files[secPath],
+                            joinColumn = joinColumn,
+                            sourceName = secPath,
+                        }
+                    end
+                end
+                if #secondaryTsvList > 0 then
+                    -- Perform join to get the merged header
+                    local badVal = badValGen()
+                    local _, joinedHeader = joinFiles(primaryTsv, secondaryTsvList, badVal)
+                    if joinedHeader then
+                        if registerJoinedType(joinedTypeName, joinedHeader) then
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return count
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -578,6 +844,7 @@ local API = {
     exportSchema = exportSchema,
     exportSQL = exportSQL,
     exportXML = exportXML,
+    registerJoinedTypes = registerJoinedTypes,
 }
 
 -- Enables the module to be called as a function

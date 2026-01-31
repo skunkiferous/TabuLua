@@ -301,7 +301,8 @@ function M.get_union_parser(types, fields_parsers)
         local new_parser = function (badVal, value, context)
             --<type1>|<type2>|...
             -- We don't want to give priority to anything that can match '', like tables ...
-            if canBeNil and value == '' then
+            -- Handle both nil and empty string for optional (union with nil) types
+            if canBeNil and (value == nil or value == '') then
                 return nil, ''
             end
             for i, p in ipairs(fields_parsers) do

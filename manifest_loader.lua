@@ -385,7 +385,7 @@ local function findAllTypes(extends, typesSet, enumsSet)
 end
 
 -- Process files once the order has been established
--- Returns the TSV files
+-- Returns the TSV files and join metadata
 local function processOrderedFiles(badVal, files, file2dir, desc_files_order, desc_file2pkg_id,
     raw_files, loadEnv)
     local priorities = {}
@@ -396,8 +396,15 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2Type = {}
     local lcFn2Ctx = {}
     local lcFn2Col = {}
+    -- File joining metadata
+    local lcFn2JoinInto = {}
+    local lcFn2JoinColumn = {}
+    local lcFn2Export = {}
+    local lcFn2JoinedTypeName = {}
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
-        post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col, raw_files, loadEnv, badVal)
+        post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        raw_files, loadEnv, badVal)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
         return
@@ -411,7 +418,14 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col, typesSet, enumsSet, extends,
     raw_files, loadEnv, badVal)
-    return tsv_files
+    -- Build join metadata for exporter
+    local joinMeta = {
+        lcFn2JoinInto = lcFn2JoinInto,
+        lcFn2JoinColumn = lcFn2JoinColumn,
+        lcFn2Export = lcFn2Export,
+        lcFn2JoinedTypeName = lcFn2JoinedTypeName,
+    }
+    return tsv_files, joinMeta
 end
 
 -- Initializes badVal if not provided
@@ -512,14 +526,20 @@ local function processFiles(directories, badVal)
         return nil
     end
 
-    local tsv_files = processOrderedFiles(badVal, files, file2dir,
+    local tsv_files, joinMeta = processOrderedFiles(badVal, files, file2dir,
         desc_files_order, desc_file2pkg_id,
         raw_files, loadEnv)
 
     loadRemainingFiles(files, raw_files)
     mergeManifestFiles(tsv_files, manifest_tsv_files)
 
-    return {raw_files = raw_files, tsv_files = tsv_files, package_order = package_order, packages = packages}
+    return {
+        raw_files = raw_files,
+        tsv_files = tsv_files,
+        package_order = package_order,
+        packages = packages,
+        joinMeta = joinMeta,
+    }
 end
 
 -- Provides a tostring() function for the API

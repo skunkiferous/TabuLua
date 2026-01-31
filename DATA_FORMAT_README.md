@@ -374,6 +374,10 @@ The header alone does not give all information about the "type" of a file. The `
 | `publishColumn` | `name\|nil` | The optional column of the file that is "published" |
 | `loadOrder` | `number` | A number defining the processing order (affects computed expressions) |
 | `description` | `text` | The optional description of the file |
+| `joinInto` | `name\|nil` | The fileName of the primary file this file joins into |
+| `joinColumn` | `name\|nil` | The column name used for joining (defaults to first column if nil) |
+| `export` | `boolean\|nil` | Whether to export this file independently (defaults based on joinInto) |
+| `joinedTypeName` | `type_spec\|nil` | The type name for the joined result |
 
 ### Publishing Data
 
@@ -384,6 +388,63 @@ A data file can define values which are "published" for the purpose of computing
 - Otherwise, if `publishContext` is defined, the row key is mapped to the whole row
 
 It is important that files be processed in an order that guarantees required data is already processed before dependent files.
+
+### File Joining
+
+File joining allows secondary files to be merged into a primary file at export time, using a shared key column. This is useful for:
+
+1. **Multi-Language Translations**: Keep translation files separate for parallel editing while producing a unified export.
+2. **Wide Table Management**: Split wide tables with many exploded columns into multiple files for easier editing.
+3. **Collaborative Editing**: Allow different team members to work on separate aspects of the data without merge conflicts.
+
+#### Join Configuration
+
+Configure file joining in `Files.tsv`:
+
+- **`joinInto`**: Specifies the primary file this secondary file joins into
+- **`joinColumn`**: The column used for matching rows (defaults to first column)
+- **`export`**: Whether to export this file independently (defaults to `false` for secondary files)
+- **`joinedTypeName`**: Optional type name for the joined result
+
+#### Example: Translations
+
+**Primary file** (`Items.tsv`):
+```tsv
+id:name	baseValue:integer	weight:number
+sword	100	2.5
+shield	75	5.0
+```
+
+**Secondary file** (`Items.en.tsv`):
+```tsv
+id:name	description:markdown
+sword	A sharp blade for combat.
+shield	A sturdy defense tool.
+```
+
+**Files.tsv configuration**:
+```tsv
+fileName:string	typeName:type_spec	...	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil
+Items.tsv	Item	...
+Items.en.tsv	Item.en	...	Items.tsv	id
+```
+
+**Exported result** (when `Items.tsv` is exported):
+The export includes columns from both files, merged by the `id` column.
+
+#### Join Semantics
+
+- **LEFT JOIN**: All rows from the primary file are included; matching rows from secondary files add their columns
+- **Column Conflicts**: Duplicate column names (except the join column) are errors
+- **Unmatched Rows**: Rows in secondary files without a match in the primary file are reported as errors
+- **Missing Matches**: If a primary row has no match in a secondary file, those columns are `nil`
+- **No Chaining**: Secondary files cannot join into other secondary files (only into primary files)
+
+#### Naming Convention
+
+Recommended naming patterns for secondary files:
+- `<Primary>.<purpose>.tsv` for feature splits (e.g., `Items.drops.tsv`)
+- `<Primary>.<locale>.tsv` for translations (e.g., `Items.en.tsv`, `Items.de.tsv`)
 
 ## Package Manifest (Manifest.transposed.tsv)
 

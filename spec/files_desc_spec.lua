@@ -31,7 +31,7 @@ end
 -- Create test file content
 local function create_files_desc_content(files)
   local lines = {
-    "fileName:string\ttypeName:type_spec\tsuperType:superType\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text"
+    "fileName:string\ttypeName:type_spec\tsuperType:superType\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tjoinInto:name|nil\tjoinColumn:name|nil\texport:boolean|nil\tjoinedTypeName:type_spec|nil"
   }
   for _, file in ipairs(files) do
     table.insert(lines, table.concat(file, "\t"))
@@ -275,8 +275,13 @@ describe("files_desc", function()
       local raw_files = {}
       local badVal = mockBadVal(log_messages)
 
-      local result = files_desc.loadDescriptorFiles(desc_files_order, prios, 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
+      local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.same({}, log_messages)
@@ -306,8 +311,13 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.same({}, log_messages)
@@ -338,8 +348,13 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -367,13 +382,60 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
       assert.equals("myContext", lcFn2Ctx["test5.tsv"])
       assert.equals("myColumn", lcFn2Col["test5.tsv"])
+    end)
+
+    it("should handle file joining columns", function()
+      local file_path = path_join(temp_dir, "files.tsv")
+      -- Primary file with joinedTypeName, secondary file with joinInto and joinColumn
+      local content = create_files_desc_content({
+        {"Primary.tsv", "Primary", "", "true", "", "", "1", "Primary file", "", "", "", "PrimaryWithJoined"},
+        {"Secondary.tsv", "Secondary", "", "false", "", "", "2", "Secondary file", "Primary.tsv", "id", "false", ""}
+      })
+      assert.is_true(file_util.writeFile(file_path, content))
+
+      local desc_files_order = {file_path}
+      local prios = {}
+      local desc_file2mod_id = {[file_path] = "mod1"}
+      local post_proc_files = {}
+      local extends = {}
+      local lcFn2Type = {}
+      local lcFn2Ctx = {}
+      local lcFn2Col = {}
+      local log_messages = {}
+      local raw_files = {}
+      local badVal = mockBadVal(log_messages)
+      badVal.logger = nullLogger
+
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
+      local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
+        desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        raw_files, {}, badVal)
+
+      assert.is_not_nil(result)
+      -- Verify join configuration for secondary file
+      assert.equals("primary.tsv", lcFn2JoinInto["secondary.tsv"])
+      assert.equals("id", lcFn2JoinColumn["secondary.tsv"])
+      assert.equals(false, lcFn2Export["secondary.tsv"])
+      -- Verify joinedTypeName for primary file
+      assert.equals("PrimaryWithJoined", lcFn2JoinedTypeName["primary.tsv"])
+      -- Primary file should not have joinInto
+      assert.is_nil(lcFn2JoinInto["primary.tsv"])
     end)
 
     it("should handle Type parent for post-processing detection", function()
@@ -396,8 +458,13 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -444,8 +511,13 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -489,8 +561,13 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       -- The validation should catch that TestDog and TestCat have 'weight' with different types
@@ -528,8 +605,13 @@ describe("files_desc", function()
       local badVal = mockBadVal(log_messages)
       badVal.logger = nullLogger
 
+      local lcFn2JoinInto = {}
+      local lcFn2JoinColumn = {}
+      local lcFn2Export = {}
+      local lcFn2JoinedTypeName = {}
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
+        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         raw_files, {}, badVal)
 
       assert.is_nil(result)

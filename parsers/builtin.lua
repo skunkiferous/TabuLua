@@ -160,6 +160,10 @@ end
 -- It should never be used otherwise. Note: 'nil' is a keyword
 state.PARSERS["nil"] = function (badVal, value, context)
     if utils.expectTSV(context) then
+        -- In TSV context, nil (missing column) or empty string both represent nil
+        if value == nil then
+            return nil, ""
+        end
         if type(value) ~= "string" then
             utils.log(badVal, 'nil', value,
                 "context was 'tsv', was expecting a string")
