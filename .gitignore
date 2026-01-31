@@ -24,3 +24,6 @@ Thumbs.db
 
 # Lua bytecode
 *.luac
+test_errors.txt
+test_results.txt
+.claude/settings.local.json

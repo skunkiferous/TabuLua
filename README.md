@@ -304,13 +304,13 @@ The easiest way to use TabuLua is via the `reformatter.lua` CLI tool:
 
 ```bash
 # Validate and reformat files in-place
-lua reformatter.lua data/ demo/
+lua reformatter.lua demo/ demo/
 
 # Export to JSON
-lua reformatter.lua --json data/
+lua reformatter.lua --json demo/
 
 # Export to multiple formats
-lua reformatter.lua --json --lua --xml --export-dir=output data/
+lua reformatter.lua --json --lua --xml --export-dir=output demo/
 
 # See all options
 lua reformatter.lua

@@ -102,55 +102,55 @@ exported/
 
 ### Basic reformatting (no export)
 ```bash
-lua reformatter.lua data/
+lua reformatter.lua demo/
 ```
-Processes all TSV files in `data/` and reformats them in-place if changes are detected.
+Processes all TSV files in `demo/` and reformats them in-place if changes are detected.
 
 ### Export to JSON (natural format)
 ```bash
-lua reformatter.lua --file=json data/
+lua reformatter.lua --file=json demo/
 ```
 Reformats files and exports as JSON to `exported/json-json-natural/`.
 
 ### Export to JSON with type preservation
 ```bash
-lua reformatter.lua --file=json --data=json-typed data/
+lua reformatter.lua --file=json --data=json-typed demo/
 ```
 Exports as JSON (typed format) to `exported/json-json-typed/`.
 
 ### Export as TSV with Lua literals
 ```bash
-lua reformatter.lua --file=tsv --data=lua data/
+lua reformatter.lua --file=tsv --data=lua demo/
 ```
 Exports as TSV with Lua literals to `exported/tsv-lua/`.
 
 ### Export to multiple formats
 ```bash
-lua reformatter.lua --file=lua --file=json data/
+lua reformatter.lua --file=lua --file=json demo/
 ```
 Exports to both `exported/lua-lua/` and `exported/json-json-natural/` simultaneously.
 
 ### Custom export directory with SQL
 ```bash
-lua reformatter.lua --file=sql --data=json-natural --export-dir=db data/
+lua reformatter.lua --file=sql --data=json-natural --export-dir=db demo/
 ```
 Exports as SQL with JSON columns to `db/sql-json-natural/`.
 
 ### Multiple source directories
 ```bash
-lua reformatter.lua --file=json data/ mods/ plugins/
+lua reformatter.lua --file=json demo/ mods/ plugins/
 ```
 Processes files from multiple directories, all exported to `exported/json-json-natural/`.
 
 ### Clean export directory before exporting
 ```bash
-lua reformatter.lua --clean --file=json data/
+lua reformatter.lua --clean --file=json demo/
 ```
 Empties the export directory before exporting new files.
 
 ### Compact binary export
 ```bash
-lua reformatter.lua --file=mpk --export-dir=bin data/
+lua reformatter.lua --file=mpk --export-dir=bin demo/
 ```
 Exports to `bin/mpk-mpk/` in compact MessagePack format.
 

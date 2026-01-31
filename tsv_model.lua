@@ -29,7 +29,6 @@ local isFullSeq = predicates.isFullSeq
 local isBasic = predicates.isBasic
 local isCallable = predicates.isCallable
 local isIdentifier = predicates.isIdentifier
-local isExplodedColumnName = predicates.isExplodedColumnName
 
 local raw_tsv_module = require("raw_tsv")
 local isRawTSV = raw_tsv_module.isRawTSV
@@ -44,6 +43,10 @@ local parsers = require("parsers")
 local exploded_columns = require("exploded_columns")
 local analyzeExplodedColumns = exploded_columns.analyzeExplodedColumns
 local assembleExplodedValue = exploded_columns.assembleExplodedValue
+local isExplodedColumnName = exploded_columns.isExplodedColumnName
+local isExplodedCollectionName = exploded_columns.isExplodedCollectionName
+local parseExplodedCollectionName = exploded_columns.parseExplodedCollectionName
+local validateExplodedCollections = exploded_columns.validateExplodedCollections
 
 -- Expression evaluation quota. Expression that use more operation than this will fail.
 local EXPRESSION_MAX_OPERATIONS = 10000
@@ -120,14 +123,24 @@ local function newHeaderColumn(params, col_idx, column)
     end
     badVal.col_name = col_name
 
-    -- Validate column name is a valid identifier or exploded column name
+    -- Validate column name is a valid identifier, exploded path, or collection column
     local valid_name = isIdentifier(col_name)
     local is_exploded = false
     local exploded_path = nil
+    local is_collection = false
+    local collection_info = nil
 
     if not valid_name then
+        -- Check for collection notation first (e.g., "items[1]" or "stats[1]=")
+        if isExplodedCollectionName(col_name) then
+            valid_name = true
+            is_exploded = true
+            is_collection = true
+            collection_info = parseExplodedCollectionName(col_name)
+            -- Build exploded_path from base_path
+            exploded_path = split(collection_info.base_path, ".")
         -- Check if it's a valid exploded column name (e.g., "location.level" or "position._1")
-        if isExplodedColumnName(col_name) then
+        elseif isExplodedColumnName(col_name) then
             valid_name = true
             is_exploded = true
             exploded_path = split(col_name, ".")
@@ -196,9 +209,14 @@ local function newHeaderColumn(params, col_idx, column)
     -- valid_name is true if the column name is a valid identifier (or exploded path)
     result.valid_name = valid_name
     -- is_exploded is true if the column name contains dots (e.g., "location.level")
+    -- or uses collection notation (e.g., "items[1]")
     result.is_exploded = is_exploded
     -- exploded_path is the split path segments (e.g., {"location", "level"})
     result.exploded_path = exploded_path
+    -- is_collection is true if the column uses bracket notation (e.g., "items[1]")
+    result.is_collection = is_collection
+    -- collection_info contains {base_path, index, is_map_value} for collection columns
+    result.collection_info = collection_info
 
     -- Registers optional column subscribers
     registerColumnSubscribers(params, col_name, result)
@@ -380,6 +398,14 @@ local function newHeader(options_extractor, expr_eval, parser_finder, source_nam
         else
             header[col.name] = col
         end
+    end
+
+    -- Validate exploded collection columns (arrays/maps) for consistency
+    local valid, err = validateExplodedCollections(header)
+    if not valid then
+        badVal(nil, err)
+        badVal.col_types[#badVal.col_types] = ''
+        return nil
     end
 
     -- Analyze exploded columns first so we can build the type spec correctly

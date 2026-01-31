@@ -73,16 +73,6 @@ local function isIdentifier(s)
     return type(s) == "string" and (string.match(s, "^[%a_][%w_]*$") and true or false)
 end
 
---- Checks if a value is a valid exploded column name (dot-separated path).
---- An exploded column name is a valid "name" (dot-separated identifiers) that
---- contains at least one dot. Tuple indices like _1, _2 are valid identifiers.
---- Examples: "location.level", "position._1", "data.nested._2"
---- @param s any The value to check
---- @return boolean True if s is a valid exploded column name, false otherwise
-local function isExplodedColumnName(s)
-    return isName(s) and not isIdentifier(s)
-end
-
 --- Checks if a value is a basic Lua type (number, string, boolean, or nil).
 --- @param v any The value to check
 --- @return boolean True if v is number, string, boolean, or nil; false otherwise
@@ -474,7 +464,6 @@ local API = {
     isComparable=isComparable,
     isDefault=isDefault,
     isFalse=isFalse,
-    isExplodedColumnName=isExplodedColumnName,
     isFileName=isFileName,
     isFullSeq=isFullSeq,
     isIdentifier=isIdentifier,

@@ -463,7 +463,7 @@ local function getParentPath(path)
     if normalized == nil then
         return nil
     end
-    return string.match(normalized,UNIX_PARENT_DIR) or ""
+    return string.match(normalized,UNIX_PARENT_DIR)
 end
 
 -- Take a file path, and split it into its "components"

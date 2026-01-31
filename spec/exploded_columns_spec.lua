@@ -168,6 +168,260 @@ describe("exploded_columns", function()
     end)
   end)
 
+  describe("validateExplodedCollections", function()
+    it("should return true for headers without collections", function()
+      local header = {
+        [1] = { idx = 1, name = "id", is_collection = false },
+        [2] = { idx = 2, name = "name", is_collection = false },
+      }
+      local valid, err = exploded_columns.validateExplodedCollections(header)
+      assert.is_true(valid)
+      assert.is_nil(err)
+    end)
+
+    it("should return true for valid consecutive array indices", function()
+      local header = {
+        [1] = { idx = 1, name = "id", is_collection = false },
+        [2] = { idx = 2, name = "items[1]", type = "string", is_collection = true,
+                collection_info = { base_path = "items", index = 1, is_map_value = false } },
+        [3] = { idx = 3, name = "items[2]", type = "string", is_collection = true,
+                collection_info = { base_path = "items", index = 2, is_map_value = false } },
+      }
+      local valid, err = exploded_columns.validateExplodedCollections(header)
+      assert.is_true(valid)
+      assert.is_nil(err)
+    end)
+
+    it("should reject gaps in array indices", function()
+      local header = {
+        [1] = { idx = 1, name = "items[1]", type = "string", is_collection = true,
+                collection_info = { base_path = "items", index = 1, is_map_value = false } },
+        [2] = { idx = 2, name = "items[3]", type = "string", is_collection = true,
+                collection_info = { base_path = "items", index = 3, is_map_value = false } },
+      }
+      local valid, err = exploded_columns.validateExplodedCollections(header)
+      assert.is_false(valid)
+      assert.matches("missing index 2", err)
+    end)
+
+    it("should return true for valid map columns", function()
+      local header = {
+        [1] = { idx = 1, name = "stats[1]", type = "name", is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = false } },
+        [2] = { idx = 2, name = "stats[1]=", type = "integer", is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = true } },
+        [3] = { idx = 3, name = "stats[2]", type = "name", is_collection = true,
+                collection_info = { base_path = "stats", index = 2, is_map_value = false } },
+        [4] = { idx = 4, name = "stats[2]=", type = "integer", is_collection = true,
+                collection_info = { base_path = "stats", index = 2, is_map_value = true } },
+      }
+      local valid, err = exploded_columns.validateExplodedCollections(header)
+      assert.is_true(valid)
+      assert.is_nil(err)
+    end)
+
+    it("should reject maps with missing value columns", function()
+      local header = {
+        [1] = { idx = 1, name = "stats[1]", type = "name", is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = false } },
+        [2] = { idx = 2, name = "stats[1]=", type = "integer", is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = true } },
+        [3] = { idx = 3, name = "stats[2]", type = "name", is_collection = true,
+                collection_info = { base_path = "stats", index = 2, is_map_value = false } },
+        -- Missing stats[2]=
+      }
+      local valid, err = exploded_columns.validateExplodedCollections(header)
+      assert.is_false(valid)
+      assert.matches("missing value column", err)
+    end)
+
+    it("should reject maps with missing key columns", function()
+      local header = {
+        [1] = { idx = 1, name = "stats[1]=", type = "integer", is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = true } },
+      }
+      local valid, err = exploded_columns.validateExplodedCollections(header)
+      assert.is_false(valid)
+      assert.matches("missing key column", err)
+    end)
+  end)
+
+  describe("analyzeExplodedColumns for arrays", function()
+    it("should analyze simple array columns", function()
+      local header = {
+        [1] = { idx = 1, name = "id", type = "integer", is_exploded = false },
+        [2] = { idx = 2, name = "tags[1]", type = "string", is_exploded = true,
+                exploded_path = {"tags"}, is_collection = true,
+                collection_info = { base_path = "tags", index = 1, is_map_value = false } },
+        [3] = { idx = 3, name = "tags[2]", type = "string", is_exploded = true,
+                exploded_path = {"tags"}, is_collection = true,
+                collection_info = { base_path = "tags", index = 2, is_map_value = false } },
+      }
+      local exploded = exploded_columns.analyzeExplodedColumns(header)
+      assert.is_not_nil(exploded)
+      assert.is_not_nil(exploded.tags)
+      assert.equals("array", exploded.tags.type)
+      assert.equals("{string}", exploded.tags.type_spec)
+      assert.equals(2, exploded.tags.max_index)
+      assert.equals(2, exploded.tags.element_columns[1])
+      assert.equals(3, exploded.tags.element_columns[2])
+    end)
+  end)
+
+  describe("analyzeExplodedColumns for maps", function()
+    it("should analyze simple map columns", function()
+      local header = {
+        [1] = { idx = 1, name = "id", type = "integer", is_exploded = false },
+        [2] = { idx = 2, name = "stats[1]", type = "name", is_exploded = true,
+                exploded_path = {"stats"}, is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = false } },
+        [3] = { idx = 3, name = "stats[1]=", type = "integer", is_exploded = true,
+                exploded_path = {"stats"}, is_collection = true,
+                collection_info = { base_path = "stats", index = 1, is_map_value = true } },
+        [4] = { idx = 4, name = "stats[2]", type = "name", is_exploded = true,
+                exploded_path = {"stats"}, is_collection = true,
+                collection_info = { base_path = "stats", index = 2, is_map_value = false } },
+        [5] = { idx = 5, name = "stats[2]=", type = "integer", is_exploded = true,
+                exploded_path = {"stats"}, is_collection = true,
+                collection_info = { base_path = "stats", index = 2, is_map_value = true } },
+      }
+      local exploded = exploded_columns.analyzeExplodedColumns(header)
+      assert.is_not_nil(exploded)
+      assert.is_not_nil(exploded.stats)
+      assert.equals("map", exploded.stats.type)
+      assert.equals("{name:integer}", exploded.stats.type_spec)
+      assert.equals(2, exploded.stats.max_index)
+    end)
+  end)
+
+  describe("assembleExplodedValue for arrays", function()
+    it("should assemble array from element columns", function()
+      local row = {{parsed=1}, {parsed="fire"}, {parsed="rare"}, {parsed="weapon"}}
+      local structure = {
+        type = "array",
+        element_type = "string",
+        max_index = 3,
+        element_columns = {[1]=2, [2]=3, [3]=4}
+      }
+      local result = exploded_columns.assembleExplodedValue(row, structure)
+      assert.is_not_nil(result)
+      result = unwrap(result)
+      assert.same({"fire", "rare", "weapon"}, result)
+    end)
+
+    it("should preserve nil elements in arrays", function()
+      local row = {{parsed="a"}, nil, {parsed="c"}}
+      local structure = {
+        type = "array",
+        max_index = 3,
+        element_columns = {[1]=1, [2]=2, [3]=3}
+      }
+      local result = exploded_columns.assembleExplodedValue(row, structure)
+      result = unwrap(result)
+      assert.same({"a", nil, "c"}, result)
+    end)
+  end)
+
+  describe("assembleExplodedValue for maps", function()
+    it("should assemble map from key/value columns", function()
+      local row = {{parsed=1}, {parsed="attack"}, {parsed=50}, {parsed="defense"}, {parsed=30}}
+      local structure = {
+        type = "map",
+        key_type = "name",
+        value_type = "integer",
+        max_index = 2,
+        key_columns = {[1]=2, [2]=4},
+        value_columns = {[1]=3, [2]=5}
+      }
+      local result = exploded_columns.assembleExplodedValue(row, structure)
+      assert.is_not_nil(result)
+      result = unwrap(result)
+      assert.same({attack=50, defense=30}, result)
+    end)
+
+    it("should skip entries with nil keys", function()
+      local row = {{parsed="attack"}, {parsed=50}, nil, {parsed=30}}
+      local structure = {
+        type = "map",
+        max_index = 2,
+        key_columns = {[1]=1, [2]=3},
+        value_columns = {[1]=2, [2]=4}
+      }
+      local result = exploded_columns.assembleExplodedValue(row, structure)
+      result = unwrap(result)
+      assert.same({attack=50}, result)
+    end)
+  end)
+
+  describe("isExplodedCollectionName", function()
+    it("returns true for valid array column names", function()
+      assert.is_true(exploded_columns.isExplodedCollectionName("items[1]"))
+      assert.is_true(exploded_columns.isExplodedCollectionName("items[2]"))
+      assert.is_true(exploded_columns.isExplodedCollectionName("items[123]"))
+    end)
+
+    it("returns true for valid map value column names", function()
+      assert.is_true(exploded_columns.isExplodedCollectionName("stats[1]="))
+      assert.is_true(exploded_columns.isExplodedCollectionName("stats[2]="))
+    end)
+
+    it("returns true for nested collection names", function()
+      assert.is_true(exploded_columns.isExplodedCollectionName("player.inventory[1]"))
+      assert.is_true(exploded_columns.isExplodedCollectionName("player.stats[1]="))
+    end)
+
+    it("returns false for invalid indices", function()
+      assert.is_false(exploded_columns.isExplodedCollectionName("items[0]"))
+      assert.is_false(exploded_columns.isExplodedCollectionName("items[-1]"))
+      assert.is_false(exploded_columns.isExplodedCollectionName("items[abc]"))
+      assert.is_false(exploded_columns.isExplodedCollectionName("items[]"))
+    end)
+
+    it("returns false for invalid base paths", function()
+      assert.is_false(exploded_columns.isExplodedCollectionName("[1]"))
+      assert.is_false(exploded_columns.isExplodedCollectionName("123[1]"))
+    end)
+
+    it("returns false for non-strings", function()
+      assert.is_false(exploded_columns.isExplodedCollectionName(nil))
+      assert.is_false(exploded_columns.isExplodedCollectionName(123))
+      assert.is_false(exploded_columns.isExplodedCollectionName({}))
+    end)
+  end)
+
+  describe("parseExplodedCollectionName", function()
+    it("parses valid array column names", function()
+      local info = exploded_columns.parseExplodedCollectionName("items[1]")
+      assert.is_not_nil(info)
+      assert.equals("items", info.base_path)
+      assert.equals(1, info.index)
+      assert.is_false(info.is_map_value)
+    end)
+
+    it("parses valid map value column names", function()
+      local info = exploded_columns.parseExplodedCollectionName("stats[2]=")
+      assert.is_not_nil(info)
+      assert.equals("stats", info.base_path)
+      assert.equals(2, info.index)
+      assert.is_true(info.is_map_value)
+    end)
+
+    it("parses nested collection names", function()
+      local info = exploded_columns.parseExplodedCollectionName("player.inventory[3]")
+      assert.is_not_nil(info)
+      assert.equals("player.inventory", info.base_path)
+      assert.equals(3, info.index)
+      assert.is_false(info.is_map_value)
+    end)
+
+    it("returns nil for invalid collection names", function()
+      assert.is_nil(exploded_columns.parseExplodedCollectionName("items[0]"))
+      assert.is_nil(exploded_columns.parseExplodedCollectionName("[1]"))
+      assert.is_nil(exploded_columns.parseExplodedCollectionName("items"))
+      assert.is_nil(exploded_columns.parseExplodedCollectionName(nil))
+    end)
+  end)
+
   describe("module API", function()
     describe("getVersion", function()
       it("should return a version string", function()
