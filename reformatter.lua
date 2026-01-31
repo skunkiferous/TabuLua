@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 1, 0)
+local VERSION = semver(0, 2, 0)
 
 -- Module name
 local NAME = "reformatter"
@@ -436,6 +436,7 @@ end
 local isMainScript = arg and arg[0] and arg[0]:match("reformatter")
 if isMainScript then
     -- Main execution
+    logger:info("reformatter version: " .. getVersion())
     if #arg == 0 then
         print(generateUsage())
         os.exit(1)

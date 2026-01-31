@@ -11,6 +11,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [error_reporting](#error_reporting) | Error collection and reporting system | serialization |
 | [exporter](#exporter) | Exports parsed data to multiple formats | file_util, named_logger, parsers, raw_tsv, read_only, serialization, tsv_model |
 | [exploded_columns](#exploded_columns) | Handles exploded/collapsed column structures | read_only, table_utils |
+| [file_joining](#file_joining) | Joins related TSV files by key columns | read_only, table_utils |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
 | [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model |
@@ -100,6 +101,15 @@ Analyzes and handles "exploded" columns in TSV files where nested structures (re
 Tests exported files by re-importing them and comparing against original source data. Validates that export/import round-trips preserve data correctly across all supported formats.
 
 **Dependencies:** error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip
+
+---
+
+### file_joining
+**File:** [file_joining.lua](file_joining.lua)
+
+Joins related TSV files by key columns, enabling localization and data extension patterns. Secondary files (e.g., `Item.de.tsv`) are joined to primary files (e.g., `Item.tsv`) by matching rows on a join column (typically the first column/ID). Supports language-specific overrides and modular data organization.
+
+**Dependencies:** read_only, table_utils
 
 ---
 
