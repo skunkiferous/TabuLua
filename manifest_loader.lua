@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 3, 0)
+local VERSION = semver(0, 4, 0)
 
 -- Module name
 local NAME = "manifest_loader"

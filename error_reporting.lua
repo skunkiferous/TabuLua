@@ -9,7 +9,7 @@ local logger = named_logger.getLogger(NAME)
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 3, 0)
+local VERSION = semver(0, 4, 0)
 
 -- Dependencies
 local serialization = require("serialization")
