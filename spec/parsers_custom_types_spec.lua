@@ -382,7 +382,8 @@ describe("parsers - registerTypesFromSpec", function()
     it("should register type with string pattern expression", function()
       local log_messages = {}
       local badVal = mockBadVal(log_messages)
-      local specs = {{ name = "ctCoords", parent = "string", validate = "value:match('^%-?%d+,%-?%d+$')" }}
+      -- Note: match() returns string, so we convert to boolean with ~= nil
+      local specs = {{ name = "ctCoords", parent = "string", validate = "value:match('^%-?%d+,%-?%d+$') ~= nil" }}
       assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
 
       local parser = parsers.parseType(badVal, "ctCoords")
@@ -514,6 +515,122 @@ describe("parsers - registerTypesFromSpec", function()
       -- Invalid: zero or negative
       assert.is_nil(parser(badVal, "0", "tsv"))
       assert.is_nil(parser(badVal, "-1", "tsv"))
+    end)
+
+    it("should support custom error messages via string return", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{
+        name = "ctPositiveWithMsg",
+        parent = "integer",
+        validate = "value > 0 or 'must be positive, got ' .. value"
+      }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctPositiveWithMsg")
+      assert.is_not_nil(parser)
+
+      -- Valid values
+      assert.equals(1, parser(badVal, "1", "tsv"))
+      assert.equals(100, parser(badVal, "100", "tsv"))
+
+      -- Invalid value - should log custom error message
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+      assert.is_nil(parser(badVal, "0", "tsv"))
+      assert.is_true(#log_messages > 0)
+      -- Check that the custom error message is used
+      local found_custom_msg = false
+      for _, msg in ipairs(log_messages) do
+        if msg:find("must be positive") then
+          found_custom_msg = true
+          break
+        end
+      end
+      assert.is_true(found_custom_msg, "Expected custom error message")
+    end)
+
+    it("should support custom error messages via number return", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Return error code as number
+      local specs = {{
+        name = "ctRangeWithCode",
+        parent = "integer",
+        validate = "value >= 1 and value <= 10 or 400"
+      }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctRangeWithCode")
+      assert.is_not_nil(parser)
+
+      -- Valid values
+      assert.equals(1, parser(badVal, "1", "tsv"))
+      assert.equals(5, parser(badVal, "5", "tsv"))
+      assert.equals(10, parser(badVal, "10", "tsv"))
+
+      -- Invalid value - should log error code
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+      assert.is_nil(parser(badVal, "0", "tsv"))
+      assert.is_true(#log_messages > 0)
+      local found_code = false
+      for _, msg in ipairs(log_messages) do
+        if msg:find("400") then
+          found_code = true
+          break
+        end
+      end
+      assert.is_true(found_code, "Expected error code in message")
+    end)
+
+    it("should treat empty string as valid", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Expression that returns "" for valid
+      local specs = {{
+        name = "ctEmptyStringValid",
+        parent = "integer",
+        validate = "value > 0 and '' or 'invalid'"
+      }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctEmptyStringValid")
+      assert.is_not_nil(parser)
+
+      -- Valid value - returns ""
+      assert.equals(1, parser(badVal, "1", "tsv"))
+
+      -- Invalid value - returns "invalid"
+      assert.is_nil(parser(badVal, "0", "tsv"))
+    end)
+
+    it("should use default message for false return", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{
+        name = "ctFalseDefault",
+        parent = "integer",
+        validate = "value > 0"
+      }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctFalseDefault")
+      assert.is_not_nil(parser)
+
+      -- Invalid value - should use default message
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+      assert.is_nil(parser(badVal, "0", "tsv"))
+      assert.is_true(#log_messages > 0)
+      local found_default = false
+      for _, msg in ipairs(log_messages) do
+        if msg:find("validation failed") then
+          found_default = true
+          break
+        end
+      end
+      assert.is_true(found_default, "Expected default error message")
     end)
   end)
 

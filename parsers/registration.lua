@@ -21,6 +21,7 @@ local regex_utils = require("regex_utils")
 local table_utils = require("table_utils")
 local comparators = require("comparators")
 local sandbox = require("sandbox")
+local serialization = require("serialization")
 
 local error_reporting = require("error_reporting")
 local nullBadVal = error_reporting.nullBadVal
@@ -732,12 +733,47 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
             return nil, reformatted
         end
 
-        if not result then
+        -- Interpret the result:
+        -- true or "" (empty string) -> valid
+        -- false or nil -> invalid with default error message
+        -- non-empty string -> invalid with custom error message
+        -- number -> invalid with number as error message
+        -- anything else -> invalid, serialize to get error message
+        if result == true or result == "" then
+            -- Valid
+            return parsed, reformatted
+        elseif result == false or result == nil then
+            -- Invalid with default message
             utils.log(badVal2, newParserName, value, "validation failed")
             return nil, reformatted
+        else
+            -- Invalid with custom error message
+            local errorMsg
+            local resultType = type(result)
+            if resultType == "string" then
+                errorMsg = result
+            elseif resultType == "number" then
+                errorMsg = tostring(result)
+            else
+                -- Use serialize for complex types, but sandbox it for safety
+                local serialize_env = {value = result}
+                local serialize_code = "return require('serialization').serialize(value)"
+                local serialize_opt = {quota = VALIDATE_EXPR_MAX_OPERATIONS, env = serialize_env}
+                local ser_ok, ser_protected = pcall(sandbox.protect, serialize_code, serialize_opt)
+                if ser_ok then
+                    local ser_exec_ok, ser_result = pcall(ser_protected)
+                    if ser_exec_ok and type(ser_result) == "string" then
+                        errorMsg = ser_result
+                    else
+                        errorMsg = tostring(result)
+                    end
+                else
+                    errorMsg = tostring(result)
+                end
+            end
+            utils.log(badVal2, newParserName, value, errorMsg)
+            return nil, reformatted
         end
-
-        return parsed, reformatted
     end
 
     -- Register the new parser

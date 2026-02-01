@@ -618,7 +618,18 @@ If no constraints are specified, the custom type becomes a simple alias to the p
 
 #### Expression-Based Validators
 
-The `validate` field allows custom validation logic using a Lua expression. The expression is evaluated in a sandboxed environment with the parsed value available as `value`. The expression must return a truthy value for valid inputs.
+The `validate` field allows custom validation logic using a Lua expression. The expression is evaluated in a sandboxed environment with the parsed value available as `value`.
+
+**Return Value Interpretation:**
+
+| Return Value | Result |
+|--------------|--------|
+| `true` | Valid |
+| `""` (empty string) | Valid |
+| `false` or `nil` | Invalid (default error message) |
+| Non-empty string | Invalid (string used as custom error message) |
+| Number | Invalid (number converted to string as error message) |
+| Other | Invalid (value serialized as error message) |
 
 **Available in the expression environment:**
 
@@ -640,14 +651,23 @@ The `validate` field allows custom validation logic using a Lua expression. The 
 # Divisible by 5
 {name="mult5",parent="integer",validate="value % 5 == 0"}
 
-# Coordinate string format
-{name="coords",parent="string",validate="value:match('^%-?%d+,%-?%d+$')"}
+# Coordinate string format (note: match returns string, so compare to nil)
+{name="coords",parent="string",validate="value:match('^%-?%d+,%-?%d+$') ~= nil"}
 
 # Using predicates
 {name="validId",parent="string",validate="predicates.isIdentifier(value)"}
 
 # Complex validation with math
 {name="perfectSquare",parent="integer",validate="value >= 0 and math.sqrt(value) == math.floor(math.sqrt(value))"}
+
+# Custom error message using Lua's "or" short-circuit
+{name="positiveInt",parent="integer",validate="value > 0 or 'must be positive'"}
+
+# Custom error message with value interpolation
+{name="rangeInt",parent="integer",validate="value >= 1 and value <= 100 or 'value ' .. value .. ' out of range [1,100]'"}
+
+# Pattern with custom error message
+{name="productCode",parent="string",validate="value:match('^[A-Z][A-Z][A-Z]%d%d$') ~= nil or 'must match XXX00 format'"}
 ```
 
 #### Example

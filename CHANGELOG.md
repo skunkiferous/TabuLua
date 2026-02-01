@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   - String constraints: `minLen`, `maxLen`, `pattern` for types extending `string`
   - Enum constraints: `values` for restricting enum types
   - Expression constraints: `validate` for custom Lua expression validation (sandboxed)
+  - Custom error messages: expressions can return strings/numbers as error messages
   - Types without constraints act as simple type aliases
 - New `registerTypesFromSpec()` function in parsers module for programmatic type registration
 - New `custom_type_def` built-in record type for manifest parsing
