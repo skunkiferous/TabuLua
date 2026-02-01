@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `custom_type_def` built-in record type for manifest parsing
 - Demo file `CustomTypes.tsv` demonstrating custom type validators
 - Comprehensive test suite for custom type registration
+- Sandbox API for code libraries exposing safe TabuLua functions:
+  - `predicates`: All predicate functions for validation (35+ functions)
+  - `stringUtils`: `trim`, `split`, `parseVersion`
+  - `tableUtils`: `keys`, `values`, `pairsCount`, `longestMatchingPrefix`, `sortCaseInsensitive`
+  - `equals`: Deep content equality comparison
 
 ### Changed
 

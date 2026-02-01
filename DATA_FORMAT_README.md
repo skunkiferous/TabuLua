@@ -334,6 +334,125 @@ Libraries run in a sandboxed environment with:
 - **No I/O access**: Cannot read files, access network, or use `require`
 - **Immutable exports**: Library exports are made read-only after loading
 
+### Sandbox API
+
+In addition to Lua built-ins, the sandbox exposes a subset of the TabuLua API for use in library code:
+
+#### predicates
+
+All predicate functions are available for validation. These are pure functions that return `true` or `false`.
+
+| Function | Description |
+|----------|-------------|
+| `isBasic(v)` | Value is number, string, boolean, or nil |
+| `isBoolean(v)` | Value is boolean |
+| `isNumber(v)` | Value is number |
+| `isInteger(v)` | Value is integer type |
+| `isIntegerValue(v)` | Value is number with integer value |
+| `isPositiveNumber(v)` | Value > 0 |
+| `isPositiveInteger(v)` | Value is positive integer |
+| `isNonZeroNumber(v)` | Value ~= 0 |
+| `isNonZeroInteger(v)` | Integer and value ~= 0 |
+| `isString(v)` | Value is string |
+| `isNonEmptyStr(v)` | String with length > 0 |
+| `isNonBlankStr(v)` | String with non-whitespace content |
+| `isBlankStr(s)` | Blank string |
+| `isTable(v)` | Value is table |
+| `isNonEmptyTable(v)` | Table with at least one key |
+| `isFullSeq(t)` | Table is valid sequence (no gaps) |
+| `isMixedTable(t)` | Table has both sequence and map parts |
+| `isCallable(v)` | Value is function or has `__call` |
+| `isDefault(v)` | Value is nil, false, 0, 0.0, "", or {} |
+| `isNonDefault(v)` | Value is not a default value |
+| `isTrue(v)` | Value is literally `true` |
+| `isFalse(v)` | Value is literally `false` |
+| `isComparable(v)` | Value is string or number |
+| `isIdentifier(s)` | Valid Lua identifier format |
+| `isName(s)` | Valid name (identifier or dot-separated identifiers) |
+| `isFileName(s)` | Valid file name |
+| `isPath(v)` | Valid Unix-style file path |
+| `isVersion(v)` | Valid semantic version string |
+| `isValidUTF8(s)` | Valid UTF-8 encoding |
+| `isValidASCII(s)` | ASCII-only characters |
+| `isValidRegex(p)` | Valid Lua pattern |
+| `isValidHttpUrl(u)` | Valid HTTP/HTTPS URL |
+| `isPercent(v)` | Valid percent format |
+| `isValueKeyword(v)` | String is Lua keyword ("nil", "false", "true") |
+
+**Example:**
+```lua
+local M = {}
+
+function M.isValidScore(v)
+    return predicates.isPositiveInteger(v) and v <= 100
+end
+
+return M
+```
+
+#### stringUtils
+
+Safe string utility functions.
+
+| Function | Description |
+|----------|-------------|
+| `trim(s)` | Remove leading/trailing whitespace |
+| `split(source, delimiter)` | Split string by delimiter into array |
+| `parseVersion(version)` | Parse semantic version string into components |
+
+**Example:**
+```lua
+local M = {}
+
+function M.parseCSV(line)
+    return stringUtils.split(line, ",")
+end
+
+return M
+```
+
+#### tableUtils
+
+Read-only table inspection functions.
+
+| Function | Description |
+|----------|-------------|
+| `keys(t)` | Return sorted keys of a table |
+| `values(t)` | Return values in sorted key order |
+| `pairsCount(t)` | Count key-value pairs |
+| `longestMatchingPrefix(seq, str)` | Find longest matching prefix in sequence |
+| `sortCaseInsensitive(a, b)` | Case-insensitive string comparator |
+
+**Example:**
+```lua
+local M = {}
+
+function M.hasMinimumFields(t, minCount)
+    return tableUtils.pairsCount(t) >= minCount
+end
+
+return M
+```
+
+#### equals
+
+Deep content equality comparison.
+
+| Function | Description |
+|----------|-------------|
+| `equals(a, b)` | Deep equality check for any values |
+
+**Example:**
+```lua
+local M = {}
+
+function M.sameConfig(a, b)
+    return equals(a, b)
+end
+
+return M
+```
+
 ### Using Libraries
 
 **In expressions:**

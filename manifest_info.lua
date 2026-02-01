@@ -33,6 +33,12 @@ local file_util = require("file_util")
 local getParentPath = file_util.getParentPath
 local isSamePath = file_util.isSamePath
 
+-- Safe modules to expose in sandbox
+local predicates = require("predicates")
+local string_utils = require("string_utils")
+local table_utils = require("table_utils")
+local comparators = require("comparators")
+
 -- File name representing a package manifest.
 local MANIFEST_FILENAME = "Manifest.transposed.tsv"
 
@@ -321,6 +327,7 @@ local function loadCodeLibrary(badVal, package_path, library_name, library_path)
 
     -- Create sandboxed environment with safe globals
     local lib_env = {
+        -- Lua built-ins
         math = math,
         string = string,
         table = table,
@@ -335,6 +342,28 @@ local function loadCodeLibrary(badVal, package_path, library_name, library_path)
         pcall = pcall,
         error = error,
         assert = assert,
+
+        -- Safe API: All predicates (pure validation functions)
+        predicates = predicates,
+
+        -- Safe API: String utilities (pure functions)
+        stringUtils = {
+            trim = string_utils.trim,
+            split = string_utils.split,
+            parseVersion = string_utils.parseVersion,
+        },
+
+        -- Safe API: Table utilities (read-only inspection)
+        tableUtils = {
+            keys = table_utils.keys,
+            values = table_utils.values,
+            pairsCount = table_utils.pairsCount,
+            longestMatchingPrefix = table_utils.longestMatchingPrefix,
+            sortCaseInsensitive = table_utils.sortCaseInsensitive,
+        },
+
+        -- Safe API: Deep equality comparison
+        equals = comparators.equals,
     }
 
     -- Execute in sandbox with quota
