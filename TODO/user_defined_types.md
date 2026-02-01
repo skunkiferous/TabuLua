@@ -129,7 +129,7 @@ end
 **Cons:**
 - Performance overhead (sandbox.protect called on every parse)
 - More complex error handling
-- Expression syntax may be limiting for complex validations
+- Expression syntax may be limiting for complex validations, unless we make the whole predicates module available to scripts
 
 ### Option 3: Predicate Combinators
 
@@ -192,6 +192,10 @@ If users need more flexibility later, Option 3 (Predicate Combinators) can be ad
 ## Open Questions
 
 - Should type registration happen before or after library loading?
+  => Well, loading the library should not require access to user types, I hope, so we can do it before.
 - How to handle type dependencies (one user type extending another user type)?
+  => We already have mechanisms that dictate order of modules and type registration. So we just built on that, and register new user-types in the order they are defined.
 - Should we support union types in the spec? (`{ extends = "string|nil", ... }`)
+  => Yes.
 - Error message customization for validation failures?
+  => I don't really know how to do that yet. Do you have any suggestions?

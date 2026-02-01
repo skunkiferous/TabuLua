@@ -1,0 +1,6 @@
+name:name	level:positiveInt	stock:quantity	discount:percentage	code:shortName	status:Status	description:text
+warrior	10	500	15.5	WAR01	Active	A strong melee fighter
+mage	5	250	20	MAG01	Active	A powerful spellcaster
+archer	8	100	10	ARC01	Inactive	A skilled ranged attacker
+healer	3	1000	25	HEA01	Active	A support class that heals allies
+tank	15	50	5	TNK01	Active	A defensive fighter with high health

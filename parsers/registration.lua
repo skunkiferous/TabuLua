@@ -645,6 +645,99 @@ function M.restrictUnion(badVal, unionType, allowedTypes, newName)
     end
 end
 
+-- Registers custom types from a data-driven specification.
+-- typeSpecs is a sequence of records with fields:
+--   name: string - the name of the new type
+--   parent: string - the parent type specification
+--   min: number|nil - minimum value (for number types)
+--   max: number|nil - maximum value (for number types)
+--   minLen: integer|nil - minimum string length (for string types)
+--   maxLen: integer|nil - maximum string length (for string types)
+--   pattern: string|nil - regex pattern (for string types)
+--   values: {string}|nil - allowed values (for enum types)
+-- Returns true if all types were registered successfully, false otherwise.
+function M.registerTypesFromSpec(badVal, typeSpecs)
+    if type(typeSpecs) ~= "table" then
+        utils.log(badVal, 'table', typeSpecs, 'typeSpecs must be a table')
+        return false
+    end
+
+    local success = true
+    for _, spec in ipairs(typeSpecs) do
+        local name = spec.name
+        local parent = spec.parent
+
+        if type(name) ~= "string" or name == "" then
+            utils.log(badVal, 'name', name, 'type name must be a non-empty string')
+            success = false
+        elseif type(parent) ~= "string" or parent == "" then
+            utils.log(badVal, 'type', parent, 'parent must be a non-empty type specification')
+            success = false
+        else
+            -- Determine what kind of restriction to apply based on the parent type and spec fields
+            local hasNumericConstraints = spec.min ~= nil or spec.max ~= nil
+            local hasStringConstraints = spec.minLen ~= nil or spec.maxLen ~= nil or spec.pattern ~= nil
+            local hasEnumConstraints = spec.values ~= nil
+
+            -- Count how many constraint types are specified
+            local constraintCount = 0
+            if hasNumericConstraints then constraintCount = constraintCount + 1 end
+            if hasStringConstraints then constraintCount = constraintCount + 1 end
+            if hasEnumConstraints then constraintCount = constraintCount + 1 end
+
+            if constraintCount == 0 then
+                -- No constraints - just register as an alias
+                if not M.registerAlias(badVal, name, parent) then
+                    success = false
+                end
+            elseif constraintCount > 1 then
+                utils.log(badVal, 'spec', name,
+                    'cannot mix numeric, string, and enum constraints in the same type definition')
+                success = false
+            elseif hasNumericConstraints then
+                -- Numeric type with range constraints
+                if not introspection.typeSameOrExtends(parent, "number") then
+                    utils.log(badVal, 'type', parent,
+                        'min/max constraints require a type that extends number')
+                    success = false
+                else
+                    local parser = M.restrictNumber(badVal, parent, spec.min, spec.max, name)
+                    if not parser then
+                        success = false
+                    end
+                end
+            elseif hasStringConstraints then
+                -- String type with length/pattern constraints
+                if not introspection.typeSameOrExtends(parent, "string") then
+                    utils.log(badVal, 'type', parent,
+                        'minLen/maxLen/pattern constraints require a type that extends string')
+                    success = false
+                else
+                    local parser = M.restrictString(badVal, parent, spec.minLen, spec.maxLen,
+                        spec.pattern, name)
+                    if not parser then
+                        success = false
+                    end
+                end
+            elseif hasEnumConstraints then
+                -- Enum type with restricted values
+                if not introspection.extendsOrRestrict(parent, "enum") then
+                    utils.log(badVal, 'type', parent,
+                        'values constraint requires a type that extends enum')
+                    success = false
+                else
+                    local parser = M.restrictEnum(badVal, parent, spec.values, name)
+                    if not parser then
+                        success = false
+                    end
+                end
+            end
+        end
+    end
+
+    return success
+end
+
 -- Returns a comparator for the given type specification, if valid.
 function M.getComparator(type_spec)
     local parsed = lpeg_parser.type_parser(type_spec)

@@ -41,6 +41,8 @@ local PACKAGE_ID_FIELD = "package_id"
 local PACKAGE_ID_TYPE = "package_id"
 local TYPE_ALIASES_FIELD = "type_aliases"
 local TYPE_ALIASES_TYPE = "{{name,type_spec}}|nil"
+local CUSTOM_TYPES_FIELD = "custom_types"
+local CUSTOM_TYPES_TYPE = "{custom_type_def}|nil"
 local CODE_LIBRARIES_FIELD = "code_libraries"
 local CODE_LIBRARIES_TYPE = "{{name,string}}|nil"
 
@@ -65,6 +67,8 @@ local MANIFEST_SPEC = [[{
     url:http|nil,
     # Defines type aliases, used in file headers
     type_aliases:{{name,type_spec}}|nil,
+    # Defines custom types with data-driven validators
+    custom_types:{custom_type_def}|nil,
     # Defines code libraries for expressions and COG
     code_libraries:{{name,string}}|nil,
     # Defines the package "dependencies"
@@ -78,8 +82,9 @@ local MANIFEST_SPEC = [[{
     load_after:{package_id}|nil
 }]]
 
--- Our own badVal
-local BAD_VAL = error_reporting.badValGen(logger)
+-- Our own badVal (uses module logger by default)
+local BAD_VAL = error_reporting.badValGen()
+BAD_VAL.logger = logger
 
 -- We define 'package_id' as an alias to 'name'
 parsers.registerAlias(BAD_VAL, "package_id", "name")
@@ -181,6 +186,11 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         manifest.type_aliases = readOnly(manifest.type_aliases)
     else
         manifest.type_aliases = nil
+    end
+    if manifest.custom_types and next(manifest.custom_types) then
+        manifest.custom_types = readOnly(manifest.custom_types)
+    else
+        manifest.custom_types = nil
     end
     if manifest.code_libraries and next(manifest.code_libraries) then
         manifest.code_libraries = readOnly(manifest.code_libraries)
@@ -311,6 +321,45 @@ local function registerAliases(badVal, manifest)
     end)
 end
 
+-- Register the package custom types (data-driven validators)
+local function registerCustomTypes(badVal, manifest)
+    badVal.col_idx = MANIFEST_DATA_COL_IDX
+    badVal.row_key = PACKAGE_ID_ROW_KEY
+    badVal.col_name = CUSTOM_TYPES_FIELD
+    return error_reporting.withColType(badVal, CUSTOM_TYPES_TYPE, function()
+        local custom_types = manifest.custom_types
+        if custom_types then
+            logger:info("Registering custom types for package " .. manifest.package_id)
+            -- Convert the tuple-based format to record-based format for registerTypesFromSpec
+            local typeSpecs = {}
+            for _, ct in ipairs(custom_types) do
+                -- ct is a tuple: {name, extends, min, max, minLen, maxLen, pattern, values}
+                -- or a record with named fields
+                local spec
+                if ct.name then
+                    -- Already in record format
+                    spec = ct
+                else
+                    -- Tuple format: convert to record
+                    spec = {
+                        name = ct[1],
+                        parent = ct[2],
+                        min = ct[3],
+                        max = ct[4],
+                        minLen = ct[5],
+                        maxLen = ct[6],
+                        pattern = ct[7],
+                        values = ct[8],
+                    }
+                end
+                typeSpecs[#typeSpecs + 1] = spec
+            end
+            return parsers.registerTypesFromSpec(badVal, typeSpecs)
+        end
+        return true
+    end)
+end
+
 -- Maximum operations allowed when loading a library
 local CODE_LIBRARY_MAX_OPERATIONS = 10000
 
@@ -415,6 +464,9 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
             packages[manifest.package_id] = manifest
             graph[manifest.package_id] = {}
             registerAliases(badVal, manifest)
+            if not registerCustomTypes(badVal, manifest) then
+                fail = true
+            end
             if not loadCodeLibraries(badVal, manifest, cog_env) then
                 fail = true
             end

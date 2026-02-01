@@ -96,6 +96,7 @@ local API = {
     -- Type registration
     registerAlias = registration.registerAlias,
     registerEnumParser = registration.registerEnumParser,
+    registerTypesFromSpec = registration.registerTypesFromSpec,
     restrictEnum = registration.restrictEnum,
     restrictNumber = registration.restrictNumber,
     restrictString = registration.restrictString,

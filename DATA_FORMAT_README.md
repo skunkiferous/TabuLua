@@ -462,5 +462,67 @@ Since the file has only a single data row and multiple values can be quite long,
 | `description` | `markdown` | Package description |
 | `url` | `http\|nil` | Source URL for this package |
 | `type_aliases` | `{{name,type_spec}}\|nil` | Type aliases usable in file headers |
+| `custom_types` | `{custom_type_def}\|nil` | Custom types with data-driven validators |
+| `code_libraries` | `{{name,string}}\|nil` | Code libraries for expressions and COG |
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
+
+### Custom Types
+
+Packages can define custom types with data-driven validators. Unlike type aliases (which are simple mappings), custom types extend a parent type with additional validation constraints.
+
+#### Custom Type Definition
+
+Each custom type is defined as a record with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `name` | The name of the custom type (required) |
+| `parent` | `type_spec` | The parent type to extend (required) |
+| `min` | `number\|nil` | Minimum value (for numeric types) |
+| `max` | `number\|nil` | Maximum value (for numeric types) |
+| `minLen` | `integer\|nil` | Minimum string length (for string types) |
+| `maxLen` | `integer\|nil` | Maximum string length (for string types) |
+| `pattern` | `string\|nil` | Lua pattern that strings must match (for string types) |
+| `values` | `{string}\|nil` | Allowed values (for enum types) |
+
+#### Constraint Types
+
+Custom types support three categories of constraints, which cannot be mixed:
+
+1. **Numeric constraints** (`min`, `max`): For types extending `number` or `integer`
+2. **String constraints** (`minLen`, `maxLen`, `pattern`): For types extending `string`
+3. **Enum constraints** (`values`): For types extending an enum type
+
+If no constraints are specified, the custom type becomes a simple alias to the parent type.
+
+#### Example
+
+In `Manifest.transposed.tsv`:
+
+```text
+custom_types:{custom_type_def}|nil  {name="positiveInt",parent="integer",min=1},{name="percentage",parent="number",min=0,max=100},{name="shortName",parent="string",minLen=1,maxLen=20}
+```
+
+This defines three custom types:
+
+- `positiveInt`: An integer that must be >= 1
+- `percentage`: A number between 0 and 100 (inclusive)
+- `shortName`: A string with 1 to 20 characters
+
+#### Using Custom Types
+
+Once defined, custom types can be used in file headers just like built-in types:
+
+```text
+id:name  level:positiveInt  score:percentage  label:shortName
+player1  5                  87.5              Hero
+```
+
+#### Type Registration Order
+
+Custom types are registered after the manifest is processed but before code libraries are loaded. This means:
+
+- Custom types can extend built-in types or types from dependency packages
+- Custom types from one package are available to dependent packages
+- Within a package, custom types are registered in declaration order, so later types can extend earlier ones

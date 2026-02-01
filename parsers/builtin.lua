@@ -655,6 +655,19 @@ function M.registerDerivedParsers()
     -- For some reason, my editor says -9223372036854775808 is not a valid Lua integer value
     local LONG_MIN = (-9223372036854775807) - 1
     registration.restrictNumber(ownBadVal, 'integer', LONG_MIN, 9223372036854775807, 'long')
+
+    -- Define the custom type definition record type used in manifest custom_types field.
+    -- Fields (alphabetically ordered for normalization):
+    --   max: number|nil - maximum value (for number types)
+    --   maxLen: integer|nil - maximum string length (for string types)
+    --   min: number|nil - minimum value (for number types)
+    --   minLen: integer|nil - minimum string length (for string types)
+    --   name: name - the name of the custom type
+    --   parent: type_spec - the parent type to extend/restrict
+    --   pattern: string|nil - regex pattern (for string types)
+    --   values: {string}|nil - allowed values (for enum types)
+    registration.registerAlias(ownBadVal, 'custom_type_def',
+        '{max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec,pattern:string|nil,values:{string}|nil}')
 end
 
 return M

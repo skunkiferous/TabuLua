@@ -7,3 +7,4 @@ Generated.tsv	Generated		true			400	Rows generated using cog code blocks
 Item.tsv	Item		true	Item		300	Demo items with various data types and table values				ItemWithDE
 Item.de.tsv	ItemDE		false			301	German translations for Item.tsv	Item.tsv	name		
 Status.tsv	Status	enum	true			50	Enum demonstrating status values				
+CustomTypes.tsv	CustomTypes		true			55	Demonstrates custom data-driven type validators				
