@@ -1,5 +1,18 @@
 # LuaJIT Compatibility Testing and Analysis
 
+## Prerequisites
+
+This document assumes the **Safe Integer Migration** has been completed. See [safe_integer_migration.md](safe_integer_migration.md) for details.
+
+The Safe Integer Migration changes:
+- `integer` type now means "any integer exactly representable as a double" (±2^53)
+- `long` type extends `number` directly (not `integer`) and supports full 64-bit range on Lua 5.3+
+- On LuaJIT, `long` values outside the safe range generate warnings about potential precision loss
+
+This document describes additional changes needed for full LuaJIT compatibility, including the `numbers.lua` abstraction module.
+
+---
+
 ## Quick Start: Testing with LuaJIT Docker
 
 ### Prerequisites
@@ -641,27 +654,12 @@ end
 
 #### 4.2 Integer Ranges in Parser Names
 
-Current issue:
-```
-Lua 5.3+: integer._R_GE_I_9223372036854775808_LE_I9223372036854775807
-LuaJIT:   integer._R_GE_F_9223372036854775808__LE_F9223372036854775808_
-```
+**Note:** This issue is addressed by the [Safe Integer Migration](safe_integer_migration.md), which redefines `integer` to use the safe range (±2^53) and makes `long` extend `number` directly instead of `integer`.
 
-**Fix**: Use safe integer bounds for `long` type in LuaJIT:
-
-```lua
--- In parsers/builtin.lua
-local LONG_MIN, LONG_MAX
-if numbers.IS_LUAJIT then
-    LONG_MIN = numbers.SAFE_INTEGER_MIN
-    LONG_MAX = numbers.SAFE_INTEGER_MAX
-else
-    LONG_MIN = math.mininteger
-    LONG_MAX = math.maxinteger
-end
-
-registration.restrictNumber(ownBadVal, 'integer', LONG_MIN, LONG_MAX, 'long')
-```
+After the Safe Integer Migration:
+- `integer` uses consistent bounds across all platforms: ±9,007,199,254,740,992
+- `long` extends `number` directly and has platform-specific behavior
+- Parser names are consistent because `integer` no longer uses `math.mininteger`/`math.maxinteger`
 
 #### 4.3 Expression Evaluation Results
 
@@ -738,17 +736,18 @@ end)
 
 ### Expected Outcome
 
-After implementing this plan:
+After implementing both the [Safe Integer Migration](safe_integer_migration.md) and this plan:
 
-| Metric | Before | After (Expected) |
-|--------|--------|------------------|
-| LuaJIT Errors | 74 | ~10-20 |
-| LuaJIT Failures | 19 | ~5-10 |
-| Cross-version consistency | Partial | High |
+| Metric | Before | After Safe Integer Migration | After numbers.lua |
+|--------|--------|------------------------------|-------------------|
+| LuaJIT Errors | 74 | ~30-40 | ~10-20 |
+| LuaJIT Failures | 19 | ~10-15 | ~5-10 |
+| Cross-version consistency | Partial | Good | High |
 
 The remaining issues will likely be:
+
 - Sandbox-related (not fixable without library changes)
-- Genuine feature differences (e.g., 64-bit integer precision)
+- Genuine feature differences (e.g., 64-bit integer precision for `long` type)
 
 ---
 
