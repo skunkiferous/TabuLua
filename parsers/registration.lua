@@ -18,6 +18,9 @@ local string_utils = require("string_utils")
 local stringToIdentifier = string_utils.stringToIdentifier
 
 local regex_utils = require("regex_utils")
+local table_utils = require("table_utils")
+local comparators = require("comparators")
+local sandbox = require("sandbox")
 
 local error_reporting = require("error_reporting")
 local nullBadVal = error_reporting.nullBadVal
@@ -645,6 +648,108 @@ function M.restrictUnion(badVal, unionType, allowedTypes, newName)
     end
 end
 
+-- Maximum operations allowed when evaluating a validate expression
+local VALIDATE_EXPR_MAX_OPERATIONS = 1000
+
+-- Restricts a type using a sandboxed expression validator.
+-- The expression is evaluated with 'value' bound to the parsed value.
+-- Returns the parser function if successful, nil otherwise.
+function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
+    local parent = parseType(badVal, parentName)
+    if not parent then return nil end
+
+    -- Validate that the expression compiles
+    local code = "return (" .. exprString .. ")"
+    local compile_env = {
+        value = 0,  -- Dummy value for compilation check
+        math = math,
+        string = string,
+        table = table,
+        pairs = pairs,
+        ipairs = ipairs,
+        type = type,
+        tostring = tostring,
+        tonumber = tonumber,
+        predicates = predicates,
+        stringUtils = {
+            trim = string_utils.trim,
+            split = string_utils.split,
+            parseVersion = string_utils.parseVersion,
+        },
+        tableUtils = {
+            keys = table_utils.keys,
+            values = table_utils.values,
+            pairsCount = table_utils.pairsCount,
+        },
+        equals = comparators.equals,
+    }
+    local compile_opt = {quota = 100, env = compile_env}
+    local compile_ok, compile_result = pcall(sandbox.protect, code, compile_opt)
+    if not compile_ok then
+        utils.log(badVal, newParserName, exprString, "failed to compile validate expression: " .. tostring(compile_result))
+        return nil
+    end
+
+    -- Create the new parser that validates using the expression
+    local newParser = function(badVal2, value, context)
+        local parsed, reformatted = generators.callParser(parent, badVal2, value, context)
+        if parsed == nil then return nil, reformatted end
+
+        -- Create sandboxed environment with the parsed value
+        local expr_env = {
+            value = parsed,
+            math = math,
+            string = string,
+            table = table,
+            pairs = pairs,
+            ipairs = ipairs,
+            type = type,
+            tostring = tostring,
+            tonumber = tonumber,
+            predicates = predicates,
+            stringUtils = {
+                trim = string_utils.trim,
+                split = string_utils.split,
+                parseVersion = string_utils.parseVersion,
+            },
+            tableUtils = {
+                keys = table_utils.keys,
+                values = table_utils.values,
+                pairsCount = table_utils.pairsCount,
+            },
+            equals = comparators.equals,
+        }
+        local opt = {quota = VALIDATE_EXPR_MAX_OPERATIONS, env = expr_env}
+        local ok, protected_func = pcall(sandbox.protect, code, opt)
+        if not ok then
+            utils.log(badVal2, newParserName, value, "validate expression error: " .. tostring(protected_func))
+            return nil, reformatted
+        end
+
+        local exec_ok, result = pcall(protected_func)
+        if not exec_ok then
+            utils.log(badVal2, newParserName, value, "validate expression failed: " .. tostring(result))
+            return nil, reformatted
+        end
+
+        if not result then
+            utils.log(badVal2, newParserName, value, "validation failed")
+            return nil, reformatted
+        end
+
+        return parsed, reformatted
+    end
+
+    -- Register the new parser
+    state.PARSERS[newParserName] = newParser
+
+    -- Register type relationship and comparator
+    generators.extendsOrRestrictsType(newParserName, parentName)
+    generators.registerComparator(newParserName, generators.getCompInternal(parentName))
+
+    return newParser
+end
+
 -- Registers custom types from a data-driven specification.
 -- typeSpecs is a sequence of records with fields:
 --   name: string - the name of the new type
@@ -654,6 +759,7 @@ end
 --   minLen: integer|nil - minimum string length (for string types)
 --   maxLen: integer|nil - maximum string length (for string types)
 --   pattern: string|nil - regex pattern (for string types)
+--   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
 --   values: {string}|nil - allowed values (for enum types)
 -- Returns true if all types were registered successfully, false otherwise.
 function M.registerTypesFromSpec(badVal, typeSpecs)
@@ -678,12 +784,14 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             local hasNumericConstraints = spec.min ~= nil or spec.max ~= nil
             local hasStringConstraints = spec.minLen ~= nil or spec.maxLen ~= nil or spec.pattern ~= nil
             local hasEnumConstraints = spec.values ~= nil
+            local hasExpressionConstraint = spec.validate ~= nil
 
             -- Count how many constraint types are specified
             local constraintCount = 0
             if hasNumericConstraints then constraintCount = constraintCount + 1 end
             if hasStringConstraints then constraintCount = constraintCount + 1 end
             if hasEnumConstraints then constraintCount = constraintCount + 1 end
+            if hasExpressionConstraint then constraintCount = constraintCount + 1 end
 
             if constraintCount == 0 then
                 -- No constraints - just register as an alias
@@ -692,8 +800,14 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                 end
             elseif constraintCount > 1 then
                 utils.log(badVal, 'spec', name,
-                    'cannot mix numeric, string, and enum constraints in the same type definition')
+                    'cannot mix constraint types (numeric, string, enum, expression) in the same type definition')
                 success = false
+            elseif hasExpressionConstraint then
+                -- Expression-based validator
+                local parser = M.restrictWithExpression(badVal, parent, name, spec.validate)
+                if not parser then
+                    success = false
+                end
             elseif hasNumericConstraints then
                 -- Numeric type with range constraints
                 if not introspection.typeSameOrExtends(parent, "number") then

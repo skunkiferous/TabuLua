@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   - Numeric constraints: `min`, `max` for types extending `number` or `integer`
   - String constraints: `minLen`, `maxLen`, `pattern` for types extending `string`
   - Enum constraints: `values` for restricting enum types
+  - Expression constraints: `validate` for custom Lua expression validation (sandboxed)
   - Types without constraints act as simple type aliases
 - New `registerTypesFromSpec()` function in parsers module for programmatic type registration
 - New `custom_type_def` built-in record type for manifest parsing

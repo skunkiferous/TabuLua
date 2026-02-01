@@ -602,17 +602,53 @@ Each custom type is defined as a record with the following fields:
 | `minLen` | `integer\|nil` | Minimum string length (for string types) |
 | `maxLen` | `integer\|nil` | Maximum string length (for string types) |
 | `pattern` | `string\|nil` | Lua pattern that strings must match (for string types) |
+| `validate` | `string\|nil` | Expression-based validator (see below) |
 | `values` | `{string}\|nil` | Allowed values (for enum types) |
 
 #### Constraint Types
 
-Custom types support three categories of constraints, which cannot be mixed:
+Custom types support four categories of constraints, which are **mutually exclusive** (cannot be mixed):
 
 1. **Numeric constraints** (`min`, `max`): For types extending `number` or `integer`
 2. **String constraints** (`minLen`, `maxLen`, `pattern`): For types extending `string`
 3. **Enum constraints** (`values`): For types extending an enum type
+4. **Expression constraints** (`validate`): For any parent type, using a Lua expression
 
 If no constraints are specified, the custom type becomes a simple alias to the parent type.
+
+#### Expression-Based Validators
+
+The `validate` field allows custom validation logic using a Lua expression. The expression is evaluated in a sandboxed environment with the parsed value available as `value`. The expression must return a truthy value for valid inputs.
+
+**Available in the expression environment:**
+
+- `value` - the parsed value being validated
+- `math` - Lua math library
+- `string` - Lua string library
+- `table` - Lua table library
+- `predicates` - all predicate functions (see [Sandbox API](#sandbox-api))
+- `stringUtils` - string utility functions
+- `tableUtils` - table utility functions
+- `equals` - deep equality comparison
+
+**Examples:**
+
+```text
+# Even integers only
+{name="evenInt",parent="integer",validate="value % 2 == 0"}
+
+# Divisible by 5
+{name="mult5",parent="integer",validate="value % 5 == 0"}
+
+# Coordinate string format
+{name="coords",parent="string",validate="value:match('^%-?%d+,%-?%d+$')"}
+
+# Using predicates
+{name="validId",parent="string",validate="predicates.isIdentifier(value)"}
+
+# Complex validation with math
+{name="perfectSquare",parent="integer",validate="value >= 0 and math.sqrt(value) == math.floor(math.sqrt(value))"}
+```
 
 #### Example
 

@@ -665,9 +665,10 @@ function M.registerDerivedParsers()
     --   name: name - the name of the custom type
     --   parent: type_spec - the parent type to extend/restrict
     --   pattern: string|nil - regex pattern (for string types)
+    --   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
     --   values: {string}|nil - allowed values (for enum types)
     registration.registerAlias(ownBadVal, 'custom_type_def',
-        '{max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec,pattern:string|nil,values:{string}|nil}')
+        '{max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec,pattern:string|nil,validate:string|nil,values:{string}|nil}')
 end
 
 return M

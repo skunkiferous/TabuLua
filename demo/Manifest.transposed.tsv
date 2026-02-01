@@ -9,7 +9,7 @@ description:markdown	Demonstration files showing all reformatter features includ
 # Defines the source of this package
 url:http|nil
 # Defines custom types with data-driven validators
-custom_types:{custom_type_def}|nil	{name="superType",parent="type_spec|nil"},{min=1,name="positiveInt",parent="integer"},{max=9999,min=0,name="quantity",parent="integer"},{max=100,min=0,name="percentage",parent="number"},{maxLen=20,minLen=1,name="shortName",parent="string"}
+custom_types:{custom_type_def}|nil	{name="superType",parent="type_spec|nil"},{min=1,name="positiveInt",parent="integer"},{max=9999,min=0,name="quantity",parent="integer"},{max=100,min=0,name="percentage",parent="number"},{maxLen=20,minLen=1,name="shortName",parent="string"},{name="evenLevel",parent="integer",validate="value >= 0 and value % 2 == 0"},{name="productCode",parent="string",validate="value:match('^[A-Z][A-Z][A-Z]%d%d$')"}
 # Defines code libraries for expressions and COG
 code_libraries:{{name,string}}|nil	{'mathLib','libs/mathUtils.lua'}
 # Defines the package "dependencies" {{Defines the "id" of a dependency,Defines the package "version requirement" of a dependency}}

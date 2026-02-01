@@ -337,4 +337,184 @@ describe("parsers - registerTypesFromSpec", function()
     end)
   end)
 
+  describe("expression-based validators", function()
+    it("should register type with simple expression validator", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctEvenInt", parent = "integer", validate = "value % 2 == 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      local parser = parsers.parseType(badVal, "ctEvenInt")
+      assert.is_not_nil(parser)
+
+      -- Valid values (even numbers)
+      assert.equals(0, parser(badVal, "0", "tsv"))
+      assert.equals(2, parser(badVal, "2", "tsv"))
+      assert.equals(100, parser(badVal, "100", "tsv"))
+      assert.equals(-4, parser(badVal, "-4", "tsv"))
+
+      -- Invalid values (odd numbers)
+      assert.is_nil(parser(badVal, "1", "tsv"))
+      assert.is_nil(parser(badVal, "3", "tsv"))
+      assert.is_nil(parser(badVal, "-7", "tsv"))
+    end)
+
+    it("should register type with comparison expression", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctPositiveExpr", parent = "number", validate = "value > 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctPositiveExpr")
+      assert.is_not_nil(parser)
+
+      -- Valid values
+      assert.equals(1, parser(badVal, "1", "tsv"))
+      assert.equals(0.5, parser(badVal, "0.5", "tsv"))
+      assert.equals(1000, parser(badVal, "1000", "tsv"))
+
+      -- Invalid values
+      assert.is_nil(parser(badVal, "0", "tsv"))
+      assert.is_nil(parser(badVal, "-1", "tsv"))
+    end)
+
+    it("should register type with string pattern expression", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctCoords", parent = "string", validate = "value:match('^%-?%d+,%-?%d+$')" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctCoords")
+      assert.is_not_nil(parser)
+
+      -- Valid coordinates
+      assert.equals("10,20", parser(badVal, "10,20", "tsv"))
+      assert.equals("-5,100", parser(badVal, "-5,100", "tsv"))
+      assert.equals("0,0", parser(badVal, "0,0", "tsv"))
+
+      -- Invalid coordinates
+      assert.is_nil(parser(badVal, "10", "tsv"))
+      assert.is_nil(parser(badVal, "a,b", "tsv"))
+      assert.is_nil(parser(badVal, "10,20,30", "tsv"))
+    end)
+
+    it("should provide access to math functions in expression", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctSqrtable", parent = "number", validate = "value >= 0 and math.sqrt(value) == math.floor(math.sqrt(value))" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctSqrtable")
+      assert.is_not_nil(parser)
+
+      -- Perfect squares
+      assert.equals(0, parser(badVal, "0", "tsv"))
+      assert.equals(1, parser(badVal, "1", "tsv"))
+      assert.equals(4, parser(badVal, "4", "tsv"))
+      assert.equals(9, parser(badVal, "9", "tsv"))
+      assert.equals(16, parser(badVal, "16", "tsv"))
+
+      -- Not perfect squares
+      assert.is_nil(parser(badVal, "2", "tsv"))
+      assert.is_nil(parser(badVal, "3", "tsv"))
+      assert.is_nil(parser(badVal, "-1", "tsv"))
+    end)
+
+    it("should provide access to predicates in expression", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctValidId", parent = "string", validate = "predicates.isIdentifier(value)" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctValidId")
+      assert.is_not_nil(parser)
+
+      -- Valid identifiers
+      assert.equals("foo", parser(badVal, "foo", "tsv"))
+      assert.equals("_bar", parser(badVal, "_bar", "tsv"))
+      assert.equals("myVar123", parser(badVal, "myVar123", "tsv"))
+
+      -- Invalid identifiers
+      assert.is_nil(parser(badVal, "123abc", "tsv"))
+      assert.is_nil(parser(badVal, "foo-bar", "tsv"))
+      assert.is_nil(parser(badVal, "", "tsv"))
+    end)
+
+    it("should provide access to stringUtils in expression", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctTrimmedNonEmpty", parent = "string", validate = "#stringUtils.trim(value) > 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctTrimmedNonEmpty")
+      assert.is_not_nil(parser)
+
+      -- Non-empty after trim
+      assert.equals("hello", parser(badVal, "hello", "tsv"))
+      assert.equals("  hello  ", parser(badVal, "  hello  ", "tsv"))
+
+      -- Empty after trim
+      assert.is_nil(parser(badVal, "", "tsv"))
+      assert.is_nil(parser(badVal, "   ", "tsv"))
+    end)
+
+    it("should reject expression that doesn't compile", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctBadExpr", parent = "integer", validate = "value >" }}  -- Syntax error
+      assert.is_false(parsers.registerTypesFromSpec(badVal, specs))
+      assert.is_true(#log_messages > 0)
+    end)
+
+    it("should reject mixing expression with data-driven constraints", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Try to mix validate with min
+      local specs = {{ name = "ctMixedExpr", parent = "integer", validate = "value > 0", min = 1 }}
+      assert.is_false(parsers.registerTypesFromSpec(badVal, specs))
+      assert.is_true(#log_messages > 0)
+    end)
+
+    it("should handle expression that returns false for invalid values", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctDivisibleBy5", parent = "integer", validate = "value % 5 == 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctDivisibleBy5")
+      assert.is_not_nil(parser)
+
+      -- Divisible by 5
+      assert.equals(0, parser(badVal, "0", "tsv"))
+      assert.equals(5, parser(badVal, "5", "tsv"))
+      assert.equals(10, parser(badVal, "10", "tsv"))
+      assert.equals(-15, parser(badVal, "-15", "tsv"))
+
+      -- Not divisible by 5
+      assert.is_nil(parser(badVal, "1", "tsv"))
+      assert.is_nil(parser(badVal, "7", "tsv"))
+    end)
+
+    it("should work with complex parent types", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Use integer|nil as parent, validate only non-nil values
+      local specs = {{ name = "ctOptionalPositive", parent = "integer|nil", validate = "value == nil or value > 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctOptionalPositive")
+      assert.is_not_nil(parser)
+
+      -- Valid: positive or nil
+      assert.equals(1, parser(badVal, "1", "tsv"))
+      assert.equals(100, parser(badVal, "100", "tsv"))
+      assert.equals(nil, parser(badVal, "", "tsv"))  -- nil is valid
+
+      -- Invalid: zero or negative
+      assert.is_nil(parser(badVal, "0", "tsv"))
+      assert.is_nil(parser(badVal, "-1", "tsv"))
+    end)
+  end)
+
 end)
