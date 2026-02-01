@@ -154,23 +154,42 @@ The type system is based on the types of Lua. The basic types, which are expecte
 | Type | Description |
 |------|-------------|
 | `boolean` | Boolean value (`true` or `false`) |
-| `integer` | Integer number |
-| `number` | Floating-point value (technically the super-type of integers) |
+| `integer` | Integer number (safe range for JSON/LuaJIT compatibility: ±2^53) |
+| `float` | Floating-point number (always formatted with decimal point, e.g., `5.0`) |
 | `string` | Text string |
+
+> **Note:** The `number` type exists as the parent type of both `integer`, `float`, and `long`, but direct usage of `number` in column types is deprecated. Use `float` for decimal values, `integer` for common whole numbers, or `long` when full 64-bit precision is required. This ensures consistent formatting and better compatibility across Lua versions.
 
 ### Integer Range Types
 
 The following integer types with range restrictions are available:
 
-| Type | Range |
-|------|-------|
-| `ubyte` | 0 to 255 |
-| `ushort` | 0 to 65,535 |
-| `uint` | 0 to 4,294,967,295 |
-| `byte` | -128 to 127 |
-| `short` | -32,768 to 32,767 |
-| `int` | -2,147,483,648 to 2,147,483,647 |
-| `long` | 64-bit signed integer |
+| Type | Range | Notes |
+|------|-------|-------|
+| `ubyte` | 0 to 255 | Extends `integer` |
+| `ushort` | 0 to 65,535 | Extends `integer` |
+| `uint` | 0 to 4,294,967,295 | Extends `integer` |
+| `byte` | -128 to 127 | Extends `integer` |
+| `short` | -32,768 to 32,767 | Extends `integer` |
+| `int` | -2,147,483,648 to 2,147,483,647 | Extends `integer` |
+| `long` | Full 64-bit signed integer | **Extends `number` directly** |
+
+#### The `integer` vs `long` Distinction
+
+The `integer` type is restricted to the "safe integer" range (±9,007,199,254,740,992 or ±2^53). This range ensures that values can be exactly represented as IEEE 754 double-precision floating-point numbers, making them compatible with:
+
+- **JSON**: All JSON numbers are IEEE 754 doubles
+- **LuaJIT**: Uses doubles for all numeric values
+- **JavaScript**: Uses doubles for all numbers
+
+The `long` type extends `number` directly (not `integer`) and supports the full 64-bit signed integer range on Lua 5.3+. Use `long` only when you specifically need values outside the safe integer range, such as:
+
+- Database auto-increment IDs that exceed 2^53
+- 64-bit timestamps
+- Snowflake IDs
+- Very large counters
+
+> **Platform Note:** On LuaJIT, `long` is limited to the safe integer range because LuaJIT cannot precisely represent 64-bit integers without using FFI.
 
 ### Container Types
 

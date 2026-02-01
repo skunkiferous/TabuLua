@@ -69,6 +69,9 @@ M.OPTIONAL = {}
 -- Set with all unknown types so far, so they are only logged once
 M.UNKNOWN_TYPES = {}
 
+-- Set of types we've already warned about (to avoid duplicate warnings)
+M.WARNED_TYPES = {}
+
 -- Maps number parser names to their limits
 M.NUMBER_LIMITS = {}
 

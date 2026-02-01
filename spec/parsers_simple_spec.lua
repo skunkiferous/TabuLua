@@ -187,7 +187,7 @@ describe("parsers - simple types", function()
       }, log_messages)
     end)
 
-    it("should validate integer", function()
+    it("should validate integer within safe range (±2^53)", function()
       local log_messages = {}
       local badVal = mockBadVal(log_messages)
       local integerParser = parsers.parseType(badVal, "integer")
@@ -200,14 +200,72 @@ describe("parsers - simple types", function()
       -- but Lua would still parse it as a number within a "structure",
       -- and we don't want to differentiate
       assert_equals_2(100, "100", integerParser(badVal, "1e2"))
-      -- Invalid integers
+      -- Safe integer boundary values (±2^53)
+      assert_equals_2(9007199254740992, "9007199254740992", integerParser(badVal, "9007199254740992"))
+      assert_equals_2(-9007199254740992, "-9007199254740992", integerParser(badVal, "-9007199254740992"))
+      -- Invalid integers (non-integer values)
       assert_equals_2(nil, "1.23", integerParser(badVal, "1.23"))
       assert_equals_2(nil, "abc", integerParser(badVal, "abc"))
       assert_equals_2(nil, "", integerParser(badVal, ""))
+      -- Values outside safe integer range should be rejected
+      assert_equals_2(nil, "9007199254740993", integerParser(badVal, "9007199254740993"))
+      assert_equals_2(nil, "-9007199254740993", integerParser(badVal, "-9007199254740993"))
       assert.same({
         "Bad integer  in test on line 1: '1.23'",
         "Bad integer  in test on line 1: 'abc'",
         "Bad integer  in test on line 1: ''",
+        "Bad integer  in test on line 1: '9007199254740993' (value outside safe integer range (±2^53))",
+        "Bad integer  in test on line 1: '-9007199254740993' (value outside safe integer range (±2^53))",
+      }, log_messages)
+    end)
+
+    it("should validate float", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local floatParser = parsers.parseType(badVal, "float")
+      assert.is.not_nil(floatParser, "floatParser is nil")
+      -- Float values should always have decimal point in reformatted output
+      assert_equals_2(123.0, "123.0", floatParser(badVal, "123"))
+      assert_equals_2(0.0, "0.0", floatParser(badVal, "0"))
+      assert_equals_2(-456.0, "-456.0", floatParser(badVal, "-456"))
+      -- Already float values
+      assert_equals_2(1.23, "1.23", floatParser(badVal, "1.23"))
+      assert_equals_2(-0.5, "-0.5", floatParser(badVal, "-0.5"))
+      -- Large numbers: tostring() doesn't use scientific notation for 1e10
+      assert_equals_2(1e10, "10000000000.0", floatParser(badVal, "1e10"))
+      -- Very large numbers that tostring() puts in scientific notation pass through as-is
+      assert_equals_2(1e100, "1e+100", floatParser(badVal, "1e100"))
+      -- Invalid floats
+      assert_equals_2(nil, "abc", floatParser(badVal, "abc"))
+      assert_equals_2(nil, "", floatParser(badVal, ""))
+      assert.same({
+        "Bad float  in test on line 1: 'abc'",
+        "Bad float  in test on line 1: ''",
+      }, log_messages)
+    end)
+
+    it("should validate long (full 64-bit range on Lua 5.3+)", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local longParser = parsers.parseType(badVal, "long")
+      assert.is.not_nil(longParser, "longParser is nil")
+      -- Valid long integers
+      assert_equals_2(123, "123", longParser(badVal, "123"))
+      assert_equals_2(-456, "-456", longParser(badVal, "-456"))
+      assert_equals_2(0, "0", longParser(badVal, "0"))
+      -- Large values that exceed safe integer range (2^53) - valid on Lua 5.3+
+      -- On Lua 5.3+, long supports full 64-bit range
+      if math.type then
+        assert_equals_2(9007199254740993, "9007199254740993", longParser(badVal, "9007199254740993"))
+        assert_equals_2(9223372036854775807, "9223372036854775807", longParser(badVal, "9223372036854775807"))
+        assert_equals_2(-9223372036854775808, "-9223372036854775808", longParser(badVal, "-9223372036854775808"))
+      end
+      -- Invalid longs (non-integer values)
+      assert_equals_2(nil, "1.23", longParser(badVal, "1.23"))
+      assert_equals_2(nil, "abc", longParser(badVal, "abc"))
+      assert.same({
+        "Bad long  in test on line 1: '1.23'",
+        "Bad long  in test on line 1: 'abc'",
       }, log_messages)
     end)
 

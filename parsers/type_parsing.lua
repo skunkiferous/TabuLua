@@ -429,6 +429,25 @@ local function parse_type_record(badVal, xparsed, type_spec)
     return result, type_spec, xparsed
 end
 
+-- Warns about deprecated usage of "number" type (should use "float" or "integer" instead)
+local function warnIfDeprecatedNumber(type_spec, orig_type_spec)
+    -- Only warn after module setup is complete (not during initialization)
+    if state.settingUp then
+        return
+    end
+    -- Only warn once per unique type specification
+    if state.WARNED_TYPES[orig_type_spec] then
+        return
+    end
+    -- Check if the resolved type is exactly "number"
+    local resolved = utils.resolve(type_spec)
+    if resolved == "number" then
+        state.WARNED_TYPES[orig_type_spec] = true
+        state.logger:warn("Deprecated: using 'number' type in '" .. orig_type_spec ..
+            "'. Consider using 'float' (for decimal values) or 'integer'/'long' (for whole numbers) instead.")
+    end
+end
+
 -- Parses a type specification, and returns a parser, or nil if invalid
 parse_type = function(badVal, parsed, log_unknown)
     if type(parsed) ~= 'table' then
@@ -440,6 +459,10 @@ parse_type = function(badVal, parsed, log_unknown)
     local type_spec = lpeg_parser.parsedTypeSpecToStr(parsed)
     local orig_type_spec = type_spec
     local result = state.PARSERS[utils.resolve(type_spec)]
+    if result then
+        -- Type already exists in cache, check for deprecated usage
+        warnIfDeprecatedNumber(type_spec, orig_type_spec)
+    end
     if not result then
         if state.UNKNOWN_TYPES[type_spec] then
             return nil
@@ -453,6 +476,9 @@ parse_type = function(badVal, parsed, log_unknown)
         if tag == "name" then
             type_spec = parsed.value
             tmp_result = state.PARSERS[utils.resolve(type_spec)]
+            if tmp_result then
+                warnIfDeprecatedNumber(type_spec, orig_type_spec)
+            end
         elseif tag == "array" then
             tmp_result = parse_type_array(badVal, parsed, type_spec)
         elseif tag == "tuple" then

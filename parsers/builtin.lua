@@ -35,6 +35,14 @@ local serializeTable = serialization.serializeTable
 
 local M = {}
 
+-- Safe integer range constants (IEEE 754 double precision)
+-- Values within this range can be exactly represented as doubles
+local SAFE_INTEGER_MIN = -9007199254740992  -- -(2^53)
+local SAFE_INTEGER_MAX = 9007199254740992   -- 2^53
+
+-- Detect if we have native 64-bit integers (Lua 5.3+)
+local HAS_NATIVE_INTEGERS = (math.type ~= nil and math.type(1) == "integer")
+
 -- badVal used during registration of "default parsers" within this module
 local ownBadVal = badValGen()
 ownBadVal.logger = state.logger
@@ -118,7 +126,9 @@ state.PARSERS.number = function (badVal, value, context)
             utils.log(badVal, 'number', value)
             return nil, tostring(value)
         else
-            return (num+0.0), tostring(num)
+            -- Note: Do NOT use (num+0.0) here, as that would convert 64-bit integers
+            -- to floats, losing precision for values outside the safe integer range
+            return num, tostring(num)
         end
     else
         if t ~= "number" then
@@ -126,7 +136,9 @@ state.PARSERS.number = function (badVal, value, context)
                 "context was 'parsed', was expecting a number")
             return nil, tostring(value)
         end
-        return (value+0.0), tostring(value)
+        -- Note: Do NOT use (value+0.0) here, as that would convert 64-bit integers
+        -- to floats, losing precision for values outside the safe integer range
+        return value, tostring(value)
     end
 end
 state.COMPARATORS.number = function (a, b)
@@ -528,19 +540,45 @@ function M.registerDerivedParsers()
         end
     end)
 
-    -- Any integer
+    -- Any integer within the safe integer range (±2^53)
+    -- This range ensures values can be exactly represented as IEEE 754 doubles,
+    -- making them compatible with JSON and LuaJIT
     registration.extendParser(ownBadVal, 'number', 'integer',
     function (badVal, num, _reformatted, _context)
-        if math.type(num) ~= 'integer' then
-            if isIntegerValue(num) then
-                num = math.floor(num)
-                return num, tostring(num)
-            end
+        if not isIntegerValue(num) then
             utils.log(badVal, 'integer', num)
             return nil, tostring(num)
-        else
-            return num, tostring(num)
         end
+        -- Validate within safe integer range
+        if num < SAFE_INTEGER_MIN or num > SAFE_INTEGER_MAX then
+            utils.log(badVal, 'integer', num,
+                "value outside safe integer range (±2^53)")
+            return nil, tostring(num)
+        end
+        -- Ensure we return an integer on Lua 5.3+
+        if math.type and math.type(num) ~= 'integer' then
+            num = math.floor(num)
+        end
+        return num, tostring(num)
+    end)
+
+    -- Helper to format a float with a decimal point (e.g., 5 -> "5.0")
+    local function formatFloat(num)
+        local s = tostring(num)
+        -- If tostring produced scientific notation or already has a decimal, use as-is
+        if s:find('[%.eE]') then
+            return s
+        end
+        -- Otherwise add .0 to make it clear this is a float
+        return s .. '.0'
+    end
+
+    -- A floating-point number (always formatted with decimal point)
+    registration.extendParser(ownBadVal, 'number', 'float',
+    function (_badVal, num, _reformatted, _context)
+        -- Convert to float (this is safe since floats don't need 64-bit precision)
+        num = num + 0.0
+        return num, formatFloat(num)
     end)
 
     -- A version string
@@ -652,9 +690,46 @@ function M.registerDerivedParsers()
     registration.restrictNumber(ownBadVal, 'integer', -128, 127, 'byte')
     registration.restrictNumber(ownBadVal, 'integer', -32768, 32767, 'short')
     registration.restrictNumber(ownBadVal, 'integer', -2147483648, 2147483647, 'int')
-    -- For some reason, my editor says -9223372036854775808 is not a valid Lua integer value
-    local LONG_MIN = (-9223372036854775807) - 1
-    registration.restrictNumber(ownBadVal, 'integer', LONG_MIN, 9223372036854775807, 'long')
+
+    -- "long" type: full 64-bit signed integer range
+    -- Note: Extends "number" directly, NOT "integer", since its range is larger than safe integers
+    if HAS_NATIVE_INTEGERS then
+        -- Lua 5.3+: Support full 64-bit range
+        local LONG_MIN = math.mininteger  -- -9223372036854775808
+        local LONG_MAX = math.maxinteger  -- 9223372036854775807
+
+        registration.extendParser(ownBadVal, 'number', 'long',
+        function (badVal, num, _reformatted, _context)
+            if not isIntegerValue(num) then
+                utils.log(badVal, 'long', num)
+                return nil, tostring(num)
+            end
+            if num < LONG_MIN or num > LONG_MAX then
+                utils.log(badVal, 'long', num, "value outside 64-bit range")
+                return nil, tostring(num)
+            end
+            if math.type(num) ~= 'integer' then
+                num = math.floor(num)
+            end
+            return num, tostring(num)
+        end)
+    else
+        -- LuaJIT: "long" is limited to safe integer range
+        -- Full 64-bit support would require FFI int64_t, which is out of scope
+        registration.extendParser(ownBadVal, 'number', 'long',
+        function (badVal, num, _reformatted, _context)
+            if not isIntegerValue(num) then
+                utils.log(badVal, 'long', num)
+                return nil, tostring(num)
+            end
+            if num < SAFE_INTEGER_MIN or num > SAFE_INTEGER_MAX then
+                utils.log(badVal, 'long', num,
+                    "LuaJIT cannot precisely represent 64-bit integers outside ±2^53")
+                return nil, tostring(num)
+            end
+            return math.floor(num), tostring(math.floor(num))
+        end)
+    end
 
     -- Define the custom type definition record type used in manifest custom_types field.
     -- Fields (alphabetically ordered for normalization):

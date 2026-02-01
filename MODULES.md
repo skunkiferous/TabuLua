@@ -197,7 +197,7 @@ Main entry point and public API for the modular type parsing system. Assembles a
 ### parsers.builtin
 **File:** [parsers/builtin.lua](parsers/builtin.lua)
 
-Registers built-in type parsers: boolean, number, integer, string, text, markdown, identifier, name, version, http, type_spec, percent, and integer range types.
+Registers built-in type parsers: boolean, number, integer, float, long, string, text, markdown, identifier, name, version, http, type_spec, percent, and integer range types (byte, ubyte, short, ushort, int, uint).
 
 **Dependencies:** parsers.registration, parsers.state, parsers.type_parsing, parsers.utils, predicates, regex_utils
 

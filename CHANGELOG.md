@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.4.0] - 2026-02-01
+
+### Added
+
+- New `float` built-in type for floating-point numbers
+  - Always formatted with decimal point (e.g., `5` becomes `5.0`)
+  - Extends `number` type
+- New `long` type tests in demo package (`Item.tsv`) with 64-bit integer values
+- Deprecation warning when using `number` type directly in column definitions
+  - Suggests using `float` for decimal values or `integer`/`long` for whole numbers
+- Safe integer constants (`SAFE_INTEGER_MIN`, `SAFE_INTEGER_MAX` = ±2^53) for IEEE 754 double compatibility
+
+### Changed
+
+- **Breaking: Number type hierarchy restructured for LuaJIT/JSON compatibility**:
+  - `integer`: Now restricted to safe integer range (±2^53) instead of full 64-bit
+    - Values outside this range are rejected with clear error message
+    - Ensures exact representation in IEEE 754 doubles (JSON, LuaJIT)
+  - `long`: Now extends `number` directly (NOT `integer`)
+    - On Lua 5.3+: Supports full 64-bit signed integer range (`math.mininteger` to `math.maxinteger`)
+    - On LuaJIT: Limited to safe integer range with clear error message
+  - `float`: Explicit floating-point type with decimal formatting
+  - `number`: Parent type for all numeric types (deprecated for direct use)
+  - Derived integer types (`byte`, `ubyte`, `short`, `ushort`, `int`, `uint`) unchanged - all within safe range
+- `restrictNumber()` now uses safe integer bounds as defaults when extending `integer` type
+- Fixed precision loss for 64-bit integers in `number` parser
+  - Removed `+0.0` conversion that was corrupting large integers
+  - Values like `9223372036854775807` now serialize correctly
+
+### Fixed
+
+- Large integers (outside ±2^53) no longer convert to scientific notation
+- `long` type values preserve full 64-bit precision on Lua 5.3+
+- Integer validation now properly checks safe range boundaries
+
 ## [0.3.0] - 2026-02-01
 
 ### Added

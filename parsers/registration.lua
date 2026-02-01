@@ -26,6 +26,10 @@ local serialization = require("serialization")
 local error_reporting = require("error_reporting")
 local nullBadVal = error_reporting.nullBadVal
 
+-- Safe integer range constants (IEEE 754 double precision)
+local SAFE_INTEGER_MIN = -9007199254740992  -- -(2^53)
+local SAFE_INTEGER_MAX = 9007199254740992   -- 2^53
+
 local M = {}
 
 -- Forward declarations (set by init.lua)
@@ -202,18 +206,20 @@ function M.restrictNumber(badVal, numberType, min, max, newName)
     -- Replace nil values with non-nil, so we don't need to check for nil when comparing
     local updateName = false
     if parentInteger then
+        -- For "integer" type, use safe integer range as default bounds (±2^53)
+        -- This ensures compatibility with JSON and LuaJIT
         if t_min ~= 'nil' then
             if not isIntegerValue(min) then
                 utils.log(badVal, 'number', min,
                     'min must be an integer or nil, to extend ' .. numberType)
                 return nil, newParserName
             end
-            if math.type(min) ~= "integer" then
+            if math.type and math.type(min) ~= "integer" then
                 min = math.floor(min)
                 updateName = true
             end
         else
-            min = math.mininteger
+            min = SAFE_INTEGER_MIN
         end
         if t_max ~= 'nil' then
             if not isIntegerValue(max) then
@@ -221,12 +227,12 @@ function M.restrictNumber(badVal, numberType, min, max, newName)
                     'max must be an integer or nil to extend ' .. numberType)
                 return nil
             end
-            if math.type(max) ~= "integer" then
+            if math.type and math.type(max) ~= "integer" then
                 max = math.floor(max)
                 updateName = true
             end
         else
-            max = math.maxinteger
+            max = SAFE_INTEGER_MAX
         end
     end
     if updateName then
