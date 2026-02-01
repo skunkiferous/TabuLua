@@ -36,11 +36,9 @@ local isSamePath = file_util.isSamePath
 -- File name representing a package manifest.
 local MANIFEST_FILENAME = "Manifest.transposed.tsv"
 
--- Constants for MANIFEST_SPEC key fields (used in registerAliases for error reporting)
+-- Constants for MANIFEST_SPEC key fields (used for error reporting)
 local PACKAGE_ID_FIELD = "package_id"
 local PACKAGE_ID_TYPE = "package_id"
-local TYPE_ALIASES_FIELD = "type_aliases"
-local TYPE_ALIASES_TYPE = "{{name,type_spec}}|nil"
 local CUSTOM_TYPES_FIELD = "custom_types"
 local CUSTOM_TYPES_TYPE = "{custom_type_def}|nil"
 local CODE_LIBRARIES_FIELD = "code_libraries"
@@ -65,8 +63,6 @@ local MANIFEST_SPEC = [[{
     description:markdown,
     # Defines the source of this package
     url:http|nil,
-    # Defines type aliases, used in file headers
-    type_aliases:{{name,type_spec}}|nil,
     # Defines custom types with data-driven validators
     custom_types:{custom_type_def}|nil,
     # Defines code libraries for expressions and COG
@@ -182,11 +178,6 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
     else
         manifest.load_after = nil
     end
-    if manifest.type_aliases and next(manifest.type_aliases) then
-        manifest.type_aliases = readOnly(manifest.type_aliases)
-    else
-        manifest.type_aliases = nil
-    end
     if manifest.custom_types and next(manifest.custom_types) then
         manifest.custom_types = readOnly(manifest.custom_types)
     else
@@ -272,53 +263,6 @@ local function loadManifestFile(badVal, raw_files, cog_env, manifest_file)
         return nil
     end
     return manifest, manifest_tsv
-end
-
--- Register the package type aliases
-local function registerAliases(badVal, manifest)
-    badVal.col_idx = MANIFEST_DATA_COL_IDX
-    badVal.row_key = PACKAGE_ID_ROW_KEY
-    badVal.col_name = TYPE_ALIASES_FIELD
-    return error_reporting.withColType(badVal, TYPE_ALIASES_TYPE, function()
-        local type_aliases = manifest.type_aliases
-        if type_aliases then
-            local todo = {}
-            for _,ta in ipairs(type_aliases) do
-                local name = ta[1]
-                todo[name] = true
-            end
-            local logged = false
-            while next(todo) do
-                for _,ta in ipairs(type_aliases) do
-                    local name = ta[1]
-                    if todo[name] then
-                        local type_spec = ta[2]
-                        local matched = false
-                        for _,ta2 in ipairs(type_aliases) do
-                            local name2 = ta2[1]
-                            if name ~= name2 and todo[name2] then
-                                local pattern = "%f[%w_]"..name2.."%f[^%w_]"
-                                if type_spec:find(pattern) then
-                                    -- The type_spec of name references another name that is *not yet
-                                    -- defined*, and so we cannot yet register it
-                                    matched = true
-                                    break
-                                end
-                            end
-                        end
-                        if not matched then
-                            if not logged then
-                                logger:info("Registering aliases for package "..manifest.package_id)
-                                logged = true
-                            end
-                            parsers.registerAlias(badVal, name, type_spec)
-                            todo[name] = nil
-                        end
-                    end
-                end
-            end
-        end
-    end)
 end
 
 -- Register the package custom types (data-driven validators)
@@ -463,7 +407,6 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
         if manifest then
             packages[manifest.package_id] = manifest
             graph[manifest.package_id] = {}
-            registerAliases(badVal, manifest)
             if not registerCustomTypes(badVal, manifest) then
                 fail = true
             end

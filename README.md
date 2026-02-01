@@ -244,7 +244,7 @@ name:string	My Package
 version:version	1.0.0
 description:markdown	A description of what this package does.
 dependencies:{{package_id,cmp_version}}|nil	{{'core','>=1.0.0'}}
-type_aliases:{{name,type_spec}}|nil	{'MyAlias','string|nil'}
+custom_types:{custom_type_def}|nil	{name="MyAlias",parent="string|nil"}
 ```
 
 ### Files.tsv Registry

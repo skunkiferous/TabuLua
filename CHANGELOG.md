@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.3.0] - 2026-02-01
+
+### Added
+
+- Custom types with data-driven validators via `custom_types` manifest field
+  - Numeric constraints: `min`, `max` for types extending `number` or `integer`
+  - String constraints: `minLen`, `maxLen`, `pattern` for types extending `string`
+  - Enum constraints: `values` for restricting enum types
+  - Types without constraints act as simple type aliases
+- New `registerTypesFromSpec()` function in parsers module for programmatic type registration
+- New `custom_type_def` built-in record type for manifest parsing
+- Demo file `CustomTypes.tsv` demonstrating custom type validators
+- Comprehensive test suite for custom type registration
+
+### Changed
+
+- **Breaking**: Removed `type_aliases` manifest field in favor of unified `custom_types`
+  - Migration: Replace `{'aliasName','parentType'}` with `{name="aliasName",parent="parentType"}`
+- Updated documentation in `DATA_FORMAT_README.md` with custom types section
+- Updated `manifest_info` module to process custom types during package loading
+
+### Fixed
+
 ## [0.2.0] - 2026-01-31
 
 ### Added

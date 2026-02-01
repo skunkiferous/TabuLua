@@ -37,7 +37,7 @@ name:string	The A package
 version:version	0.1.0
 description:markdown	The A package is the first test package, so it has no dependency
 url:http|nil	http://example.com/packages/A
-type_aliases:{{name,type_spec}}|nil	{'pkg_a_type','name'}
+custom_types:{custom_type_def}|nil	{name="pkg_a_type",parent="name"}
 ]]
 
 -- The second package, "B", with no dependency, but loads after A, if present
@@ -539,7 +539,7 @@ describe("manifest_info", function()
       end)
     end)
 
-    describe("type_aliases", function()
+    describe("custom_types", function()
         it("should be supported", function()
             local a_file = path_join(temp_dir, 'x', MANIFEST_FILENAME)
             lfs.mkdir(path_join(temp_dir, 'x'))
@@ -547,7 +547,7 @@ describe("manifest_info", function()
             local raw_files = {}
             local a = manifest_info.loadManifestFile(badVal, raw_files, {}, a_file)
             assert.is_not_nil(a, MANIFEST_FILENAME)
-            assert.is_not_nil(a.type_aliases, "a.type_aliases")
+            assert.is_not_nil(a.custom_types, "a.custom_types")
             assert.is_not_nil(parsers.parseType(error_reporting.nullBadVal, 'pkg_a_type'), "pkg_a_type")
         end)
     end)

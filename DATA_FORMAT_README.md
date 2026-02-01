@@ -287,7 +287,7 @@ Lines prefixed with `###` inside the COG block are executed as Lua code. The ret
 
 It is possible to "extend" types in code to add additional validations. The `ratio` type was built this way. It is also possible to define "aliases" for types. Technically, an alias is not a new type, but just a shortcut to save on typing and/or add meaning to the type definition.
 
-Type aliases can be defined at the package level via the `type_aliases` field in `Manifest.transposed.tsv` files.
+Type aliases and custom types can be defined at the package level via the `custom_types` field in `Manifest.transposed.tsv` files. See the [Custom Types](#custom-types) section for details.
 
 ## Code Libraries
 
@@ -461,15 +461,14 @@ Since the file has only a single data row and multiple values can be quite long,
 | `version` | `version` | Package version (`x.y.z` format) |
 | `description` | `markdown` | Package description |
 | `url` | `http\|nil` | Source URL for this package |
-| `type_aliases` | `{{name,type_spec}}\|nil` | Type aliases usable in file headers |
-| `custom_types` | `{custom_type_def}\|nil` | Custom types with data-driven validators |
+| `custom_types` | `{custom_type_def}\|nil` | Custom types with data-driven validators (also used for simple type aliases) |
 | `code_libraries` | `{{name,string}}\|nil` | Code libraries for expressions and COG |
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
 
 ### Custom Types
 
-Packages can define custom types with data-driven validators. Unlike type aliases (which are simple mappings), custom types extend a parent type with additional validation constraints.
+Packages can define custom types with data-driven validators. Custom types extend a parent type with optional validation constraints. When no constraints are specified, the custom type acts as a simple type alias.
 
 #### Custom Type Definition
 
