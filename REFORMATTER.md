@@ -165,7 +165,7 @@ The SQL exporter maps Lua/TSV types to SQL types as follows:
 | TSV Type | SQL Type |
 |----------|----------|
 | `string` | `TEXT` |
-| `number` | `REAL` |
+| `float` | `REAL` |
 | `integer` | `BIGINT` |
 | `boolean` | `SMALLINT` (0/1) |
 | `table` | `TEXT` (serialized) |

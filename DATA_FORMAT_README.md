@@ -6,7 +6,7 @@ We assume type names are defined using **Pascal Case** convention. We also assum
 
 Data file names should usually represent a type name. Since the type name is normally singular (as it represents *one* value of that type), the type name part of the file name should also be singular.
 
-A type/module can be defined inside another type/module, so the type/module name can be in the form `A.B`, where `B` is a type/module defined inside the type/module `A`.
+A type/package can be defined inside another type/package, so the type/package name can be in the form `A.B`, where `B` is a type/package defined inside the type/package `A`.
 
 ## Directory Structure
 
@@ -14,7 +14,7 @@ The position in the directory structure should represent the type hierarchy:
 
 - The root of a type hierarchy should be defined directly in the root of the data directory.
 - A type extending another type should be in the sub-directory named like that type.
-- A type/module `C` defined inside another type/module `B`, in the form `A/B.C` does **not** mean that `B.C` extends `A`. In that case, it just means that `C` is defined in `B`, and `B` extends `A`.
+- A type/package `C` defined inside another type/package `B`, in the form `A/B.C` does **not** mean that `B.C` extends `A`. In that case, it just means that `C` is defined in `B`, and `B` extends `A`.
 
 Despite the use of a directory hierarchy, **each complete file name (without its directory) should still be unique**.
 
@@ -30,7 +30,7 @@ The file content is defined following the **TSV** (tab-separated-value) conventi
 
 Since the data files represent tables of values of the same type, and the file name is normally the type name, the column header should represent "fields" of the given type.
 
-To support particular cases, where you would have many columns but just one or a few rows, we also support a "vertical"/"transposed" TSV format. In this case, the first column should be the "table headers", and the other column(s) should be the values. The system recognize this format automatically, by naming the file filename.transposed.tsv instead of filename.tsv
+To support particular cases, where you would have many columns but just one or a few rows, we also support a "vertical"/"transposed" TSV format. In this case, the first **column** should be the "table headers", and the other column(s) should be the values. The system recognize this format automatically, by naming the file filename.transposed.tsv instead of filename.tsv
 
 ## Column Headers
 
@@ -57,8 +57,8 @@ fieldName:fieldType:defaultValue
 ```tsv
 quantity:integer:1           # Default to 1
 status:string:Unknown        # Default to "Unknown"
-total:number:=price*qty      # Computed default using expression
-area:number:=self.width*self.height  # Expression referencing other columns
+total:float:=price*qty      # Computed default using expression
+area:float:=self.width*self.height  # Expression referencing other columns
 ```
 
 ### Behavior
@@ -66,7 +66,7 @@ area:number:=self.width*self.height  # Expression referencing other columns
 | Cell Content | Column Default | Result               |
 |--------------|----------------|----------------------|
 | Has value    | Any            | Cell value used      |
-| Empty        | None           | Empty string         |
+| Empty        | None           | Depends on type def. |
 | Empty        | Literal        | Default literal      |
 | Empty        | Expression     | Evaluated expression |
 
@@ -137,6 +137,7 @@ When exporting TSV files, the `exportExploded` parameter controls the output for
 | `false` | Collapsed column: `location:{level:name,position:{integer,integer,integer}}` | Lua table literal: `{level="zone_a",position={10,20,30}}` |
 
 Using `exportExploded=true` (the default) preserves round-trip fidelity with the original file format.
+It is specified with the `--collapse-exploded` flag (meaning `exportExploded=false`) when reformatting.
 
 ### Restrictions
 
@@ -269,7 +270,7 @@ A comment line can be added anywhere in the data files (except the first line) u
 
 ## Primary Keys
 
-Normally, the first field/column is the "primary key" of the line/row, and its value must be unique among all the lines/rows in that file. Furthermore, the "primary key" should be unique among all instances of a type *or its sub-types*.
+The first field/column is the "primary key" of the line/row, and its value must be unique among all the lines/rows in that file. Furthermore, the "primary key" should be unique among all instances of a type *or its sub-types*.
 
 When a type has sub-types, all fields of all types should have unique names, unless several fields with the same name in several sub-types also have the same type and the same meaning. This enables a design where a single database table can represent all instances of all sub-types of a type.
 
@@ -286,7 +287,39 @@ Expressions are evaluated in a sandbox context. Data from files with lower `load
 
 ## COG Code Generation
 
-TSV files can contain dynamic row generation blocks using COG (Code Generation). Example:
+This module implements functionality inspired by [Cog](https://nedbatchelder.com/code/cog/). It scans text files for a "comment pattern" and executes a code block when it finds it, replacing part of the "comment block" with the output of the code block.
+
+The idea is that whenever required, you run this on your text files, and it will replace (update) the parts of the files that need to be updated. It's essentially a very generic "template engine" that can be used inside any file that uses one of the three supported comment styles (`--`, `##`, or `//`).
+
+The code block is executed in a sandbox, and the output is inserted into the file. The code can make use of many functions, like those from the [predicates](predicates.lua) module, that have been added to the sandbox environment. User code in "code libraries" can also be reused.
+
+### COG Block Structure
+
+A COG block is built from 5 parts:
+
+1. **Start marker** - one of:
+   - `---[[[`
+   - `###[[[`
+   - `///[[[`
+
+2. **Code block** - Lua code to execute, each line prefixed with the appropriate comment pattern:
+   - `---return "--Hello, world!"`
+   - `###return "--Hello, world!"`
+   - `///return "--Hello, world!"`
+
+3. **Code block end marker** - one of:
+   - `---]]]`
+   - `###]]]`
+   - `///]]]`
+
+4. **Generated content** - the text that gets replaced by the output of the code block (can be anything)
+
+5. **Block end marker** - one of:
+   - `---[[[end]]]`
+   - `###[[[end]]]`
+   - `///[[[end]]]`
+
+### Example
 
 ```
 ###[[[
@@ -296,11 +329,11 @@ TSV files can contain dynamic row generation blocks using COG (Code Generation).
 ###end
 ###return table.concat(rows, "\n")
 ###]]]
-<generated text comes here>
+<generated content appears here>
 ###[[[end]]]
 ```
 
-Lines prefixed with `###` inside the COG block are executed as Lua code. The returned string is inserted between the "closing marker" and the "end marker", replacing any previously generated content.
+Lines prefixed with the comment pattern (`###` in this case) inside the COG block are executed as Lua code. The returned string is inserted between the "code block end marker" and the "block end marker", replacing any previously generated content.
 
 ## Type Aliases and Extensions
 

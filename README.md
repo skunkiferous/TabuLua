@@ -12,7 +12,7 @@ TabuLua provides a robust way to define, validate, and manage structured data in
 - **Type Inheritance** - Extend existing types with additional fields
 - **Expression Evaluation** - Compute cell values dynamically (e.g., `=baseValue * 2`)
 - **Code Generation (COG)** - Generate rows programmatically with embedded Lua
-- **Module System** - Organize data into modules with dependencies and versioning
+- **Package System** - Organize data into packages with dependencies and versioning
 - **Multi-Format Export** - Export to JSON, Lua tables, XML, SQL, and MessagePack
 - **Comprehensive Validation** - Catch type errors before runtime
 
@@ -21,7 +21,7 @@ TabuLua provides a robust way to define, validate, and manage structured data in
 A simple TSV data file with typed columns:
 
 ```tsv
-name:name	displayName:text	count:integer	price:number	available:boolean
+name:name	displayName:text	count:integer	price:float	available:boolean
 sword	Iron Sword	5	25.99	true
 shield	Wooden Shield	3	12.50	true
 potion	Health Potion	50	5.00	true
@@ -30,7 +30,7 @@ potion	Health Potion	50	5.00	true
 With expression evaluation:
 
 ```tsv
-name:name	value:number	computed:number
+name:name	value:float	computed:float
 base	100.0	=base
 multiplier	2.5	=multiplier
 result	0	=base * multiplier
@@ -76,16 +76,17 @@ cd tabulua
 
 | Document | Description |
 |----------|-------------|
+| [AGENTS.md](AGENTS.md) | Detailed architecture guide, designed to hel AI Agents |
+| [CHANGELOG.md](CHANGELOG.md) | List of changes in each version |
 | [DATA_FORMAT_README.md](DATA_FORMAT_README.md) | Complete data format specification |
 | [MODULES.md](MODULES.md) | Module reference with dependencies |
-| [CLAUDE.md](CLAUDE.md) | Detailed architecture guide |
 
 ## Project Structure
 
 ```
 tabulua/
 ├── parsers/              # Type system implementation
-│   ├── builtin.lua       # Built-in types (string, number, etc.)
+│   ├── builtin.lua       # Built-in types (string, float, etc.)
 │   ├── type_parsing.lua  # Core parsing logic
 │   ├── introspection.lua # Type querying utilities
 │   └── ...
@@ -121,7 +122,7 @@ See [MODULES.md](MODULES.md) for the complete module reference.
 ### Basic Types
 
 ```
-boolean, integer, number, string
+boolean, integer, float, string
 ```
 
 ### Integer Range Types
@@ -134,16 +135,16 @@ ubyte (0-255), ushort, uint, byte, short, int, long
 
 ```lua
 {string}              -- Array of strings
-{string:number}       -- Map from string to number
-{number,string}       -- Tuple (number, string)
-{name:string,age:number}  -- Record with named fields
+{string:float}       -- Map from string to float
+{float,string}       -- Tuple (float, string)
+{name:string,age:float}  -- Record with named fields
 ```
 
 ### Union and Optional Types
 
 ```lua
 string|nil            -- Optional string
-number|string         -- Number or string
+float|string         -- Number or string
 ```
 
 ### Enums
@@ -159,7 +160,7 @@ number|string         -- Number or string
 {extends:Vehicle,wheels:integer}
 
 -- Extend a tuple type
-{extends,Point2D,number}
+{extends,Point2D,float}
 ```
 
 ### Extended String Types
@@ -173,14 +174,14 @@ number|string         -- Number or string
 | `version` | Semantic version (`1.0.0`) |
 | `http` | HTTP(S) URL |
 
-## Demo Module
+## Demo Package
 
-The `demo/` directory contains a complete example module showcasing all TabuLua features:
+The `demo/` directory contains a complete example package showcasing all TabuLua features:
 
 ### Constant.tsv - Expression Evaluation
 
 ```tsv
-name:name	value:number
+name:name	value:float
 pi	3.14159265359
 radius	10.0
 circumference	=2*pi*radius
@@ -193,8 +194,8 @@ Expressions (prefixed with `=`) are evaluated in a sandbox. Earlier rows become 
 
 ```tsv
 name:name	tags:table|nil	composition:ratio|nil	metadata:table|nil
-sword	{"weapon","melee"}		{damage=15}
-alloy	{"material"}	Copper="88%",Tin="12%"	{hardness=80}
+sword	"weapon","melee"		damage=15
+alloy	"material"	Copper="88%",Tin="12%"	hardness=80
 ```
 
 Demonstrates arrays, records, optional fields, and the `ratio` type (percentages that must sum to 100%).
@@ -219,6 +220,7 @@ item5	50
 ```
 
 COG blocks generate rows dynamically. The code between `###[[[` and `###]]]` runs as Lua, and its output replaces the content before `###[[[end]]]`.
+Refer to [DATA_FORMAT_README.md](DATA_FORMAT_README.md) for details.
 
 ### Status.tsv - Enums
 
@@ -249,7 +251,7 @@ custom_types:{custom_type_def}|nil	{name="MyAlias",parent="string|nil"}
 
 ### Files.tsv Registry
 
-Every package needs a `Files.tsv` to register its data files:
+Every package needs one (or more, in sub-directories) `Files.tsv` to register its data files:
 
 ```tsv
 fileName:string	typeName:type_spec	loadOrder:number	description:text
@@ -278,17 +280,17 @@ The type specification syntax is defined in an ANTLR4 grammar file (`TypeSpec.g4
 
 ```bash
 # Windows (from the .antlr directory)
-cd .antlr
+cd antlr
 build_test.cmd
 
 # Linux/macOS/WSL (from the .antlr directory)
-cd .antlr
+cd antlr
 ./build_test.sh
 ```
 
 **Prerequisites:**
 - Java JDK installed
-- Download `antlr-4.13.2-complete.jar` from https://www.antlr.org/download/antlr-4.13.2-complete.jar into the `.antlr` directory
+- Download `antlr-4.13.2-complete.jar` from https://www.antlr.org/download/antlr-4.13.2-complete.jar into the `antlr` directory
 - Run the reformatter with an export option first to generate `exported/schema.tsv`
 
 The test scripts will:
@@ -304,7 +306,7 @@ The easiest way to use TabuLua is via the `reformatter.lua` CLI tool:
 
 ```bash
 # Validate and reformat files in-place
-lua reformatter.lua demo/ demo/
+lua reformatter.lua primary/ secondary/
 
 # Export to JSON
 lua reformatter.lua --json demo/
@@ -351,17 +353,8 @@ local type_info = parsers.parseType(nullBadVal, "{name:string,age:integer}")
 
 ### Export Formats
 
-TabuLua can export to multiple formats via CLI flags or the `exporter` module:
-
-| Flag | Format | Output |
-|------|--------|--------|
-| `--json` | JSON arrays | `[[headers],[row1],...]` |
-| `--lua` | Lua tables | `return {{headers},{row1},...}` |
-| `--xml` | XML document | `<file><header>...</header><row>...</row></file>` |
-| `--jsontsv` | TSV with JSON values | TSV where complex cells are JSON |
-| `--luatsv` | TSV with Lua values | TSV where complex cells are Lua literals |
-| `--jsonsql` | SQL with JSON columns | INSERT statements, tables as JSON |
-| `--msgpack` | MessagePack binary | Compact binary format |
+TabuLua can export to multiple formats via CLI flags or the `exporter` module.
+Refer to [REFORMATTER.md](REFORMATTER.md) for details.
 
 ## License
 

@@ -38,7 +38,10 @@ local isSamePath = file_util.isSamePath
 -- built in 5 parts. The "idea" is that whenever required, you run this on all your (text) files,
 -- and it will replace (update) the parts of the files that need to be replaced. It's basically a
 -- very generic "template engine", that can be used inside any file that uses one of the 3
--- "comment styles" (-- or ## or //)
+-- "comment styles" (-- or ## or //) The code block is executed in a sandbox, and the output of the
+-- code block is inserted into the file. The code can make use of many functions, like those from the
+-- predicates module, that have been added to the sandbox environment. User code in "code libraries"
+-- can also be (re)used.
 
 -- First, the comment "start marker". It can be one of those 3 strings:
 -- 1) ---[[[
