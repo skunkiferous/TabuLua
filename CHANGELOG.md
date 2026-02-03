@@ -13,6 +13,49 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.5.0] - 2026-02-03
+
+### Added
+
+- Multi-level validator system for row, file, and package validation
+  - **Row validators**: Validate individual rows after all columns are parsed, with access to `self` (the row) and `rowIndex`
+  - **File validators**: Validate entire files after all rows are processed, with access to `rows` and `count`
+  - **Package validators**: Validate the full package after all files are loaded, with access to `files`
+  - Validators support `error` (default) and `warn` levels
+  - Validators return `true`/`""` for valid, `false`/`nil` for invalid, or a string for custom error messages
+- New `validator_executor` module for sandboxed validator execution with configurable quotas
+  - Row validator quota: 1,000 operations
+  - File validator quota: 10,000 operations
+  - Package validator quota: 100,000 operations
+- New `validator_helpers` module with collection functions for use in validators
+  - Aggregate functions: `sum`, `min`, `max`, `avg`, `count`
+  - Collection predicates: `unique`, `all`, `any`, `none`
+  - Query functions: `filter`, `find`, `lookup`, `groupBy`
+- New built-in types for validator support
+  - `expression`: Syntax-validated Lua expression string
+  - `error_level`: Enum with values `"error"` or `"warn"`
+  - `validator_spec`: Union of `expression` or `{expr:expression, level:error_level|nil}`
+- New `validator_spec` columns in file descriptors: `rowValidators` and `fileValidators`
+- New `package_validators` field in manifest specification
+- `serializeInSandbox()` function in `serialization` module for safe serialization of arbitrary values
+- Documentation for collection columns (bracket notation for arrays and maps in exploded columns)
+- Documentation for `any`, `package_id`, and `regex` types
+- Comprehensive test suites: `parsers_validators_spec`, `validator_executor_spec`, `validator_helpers_spec`
+- Demo validators on `Item.tsv` (row and file level) and in `Manifest.transposed.tsv` (package level)
+
+### Changed
+
+- `manifest_loader` now runs all validators after files are loaded and returns `validationPassed` and `validationWarnings` in results
+- `files_desc` parses and propagates `rowValidators` and `fileValidators` columns from file descriptors
+- `table_parsing.parseTableStr` now returns `nil` on validation failure instead of continuing
+- Union parser in `parsers/generators` now saves and restores error counts around each trial parse to prevent error accumulation
+- `parsers/registration.restrictWithExpression` simplified to use `serializeInSandbox` for error messages
+- Version bumped to 0.5.0 across all modified modules
+
+### Fixed
+
+- Union parser error count leaking between trial parses, which could cause false failures in nested union/array types
+
 ## [0.4.0] - 2026-02-01
 
 ### Added

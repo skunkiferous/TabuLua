@@ -5,7 +5,7 @@ local NAME = "validator_executor"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 4, 0)
+local VERSION = semver(0, 5, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
