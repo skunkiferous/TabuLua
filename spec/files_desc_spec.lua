@@ -282,6 +282,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.same({}, log_messages)
@@ -318,6 +319,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.same({}, log_messages)
@@ -355,6 +357,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -389,6 +392,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -425,6 +429,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -465,6 +470,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -518,6 +524,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -568,6 +575,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       -- The validation should catch that TestDog and TestCat have 'weight' with different types
@@ -612,6 +620,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        {}, {},
         raw_files, {}, badVal)
 
       assert.is_nil(result)

@@ -167,12 +167,20 @@ float|string         -- Number or string
 
 | Type | Description |
 |------|-------------|
+| `ascii` | ASCII-only string |
+| `asciitext` | ASCII text with escape support |
+| `asciimarkdown` | ASCII markdown-formatted text |
+| `comment` | Comment string (can be stripped on export) |
 | `text` | Supports `\t`, `\n`, `\\` escapes |
 | `markdown` | Markdown-formatted text |
 | `identifier` | Valid Lua identifier |
 | `name` | Dotted identifier (e.g., `Foo.Bar`) |
 | `version` | Semantic version (`1.0.0`) |
+| `cmp_version` | Version comparison (e.g., `>=1.0.0`) |
 | `http` | HTTP(S) URL |
+| `type_spec` | Type specification string |
+| `type` | Validated type reference |
+| `regex` | Valid Lua pattern string |
 
 ## Demo Package
 

@@ -50,6 +50,11 @@ local matchDescriptorFiles = files_desc.matchDescriptorFiles
 local orderFilesDescByPackageOrder = files_desc.orderFilesDescByPackageOrder
 local loadDescriptorFiles = files_desc.loadDescriptorFiles
 
+local validator_executor = require("validator_executor")
+local runRowValidators = validator_executor.runRowValidators
+local runFileValidators = validator_executor.runFileValidators
+local runPackageValidators = validator_executor.runPackageValidators
+
 -- CSV file extension
 local CSV = "csv"
 
@@ -401,9 +406,13 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2JoinColumn = {}
     local lcFn2Export = {}
     local lcFn2JoinedTypeName = {}
+    -- Validator maps
+    local lcFn2RowValidators = {}
+    local lcFn2FileValidators = {}
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
         post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+        lcFn2RowValidators, lcFn2FileValidators,
         raw_files, loadEnv, badVal)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
@@ -424,6 +433,9 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         lcFn2JoinColumn = lcFn2JoinColumn,
         lcFn2Export = lcFn2Export,
         lcFn2JoinedTypeName = lcFn2JoinedTypeName,
+        -- Validator metadata
+        lcFn2RowValidators = lcFn2RowValidators,
+        lcFn2FileValidators = lcFn2FileValidators,
     }
     return tsv_files, joinMeta
 end
@@ -499,6 +511,112 @@ local function mergeManifestFiles(tsv_files, manifest_tsv_files)
     end
 end
 
+-- Extracts data rows from a TSV file (skips header and non-table rows)
+local function extractDataRows(tsv_file)
+    local rows = {}
+    for i, row in ipairs(tsv_file) do
+        if i > 1 and type(row) == "table" then
+            rows[#rows + 1] = row
+        end
+    end
+    return rows
+end
+
+-- Computes the lowercase file name key relative to its directory
+local function computeFilenameKeyForValidation(file_name)
+    -- Extract just the filename from the full path
+    local name = file_name:match("[/\\]([^/\\]+)$") or file_name
+    return name:lower()
+end
+
+-- Runs all validators (row, file, package) after files are loaded
+-- Returns true if all error-level validators passed
+local function runAllValidators(tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+    local lcFn2RowValidators = joinMeta.lcFn2RowValidators or {}
+    local lcFn2FileValidators = joinMeta.lcFn2FileValidators or {}
+
+    local allWarnings = {}
+    local errorCount = badVal.errors
+
+    -- Process each file
+    for file_name, tsv_file in pairs(tsv_files) do
+        local lcfn = computeFilenameKeyForValidation(file_name)
+        local rowValidators = lcFn2RowValidators[lcfn]
+        local fileValidators = lcFn2FileValidators[lcfn]
+
+        -- Skip files with no validators
+        if not rowValidators and not fileValidators then
+            goto continue_file
+        end
+
+        local dataRows = extractDataRows(tsv_file)
+
+        -- Run row validators
+        if rowValidators and #rowValidators > 0 then
+            badVal.source_name = file_name
+            for i, row in ipairs(dataRows) do
+                -- Row index is i+1 because header is row 1
+                local rowIndex = i + 1
+                local success, warnings = runRowValidators(
+                    rowValidators, row, rowIndex, file_name, badVal, loadEnv)
+                for _, w in ipairs(warnings) do
+                    allWarnings[#allWarnings + 1] = w
+                end
+                if not success then
+                    -- Error already logged, continue to next row
+                end
+            end
+        end
+
+        -- Run file validators
+        if fileValidators and #fileValidators > 0 then
+            local success, warnings = runFileValidators(
+                fileValidators, dataRows, file_name, badVal, loadEnv)
+            for _, w in ipairs(warnings) do
+                allWarnings[#allWarnings + 1] = w
+            end
+            if not success then
+                -- Error already logged
+            end
+        end
+
+        ::continue_file::
+    end
+
+    -- Run package validators for each package
+    for _, package_id in ipairs(package_order) do
+        local manifest = packages[package_id]
+        if manifest and manifest.package_validators then
+            -- Build a map of files for this package
+            -- Note: In a full implementation, we would filter files by package
+            -- For now, we pass all files
+            local packageFiles = {}
+            for file_name, tsv_file in pairs(tsv_files) do
+                local lcfn = computeFilenameKeyForValidation(file_name)
+                packageFiles[lcfn] = extractDataRows(tsv_file)
+            end
+
+            local success, warnings = runPackageValidators(
+                manifest.package_validators, packageFiles, package_id, badVal, loadEnv)
+            for _, w in ipairs(warnings) do
+                allWarnings[#allWarnings + 1] = w
+            end
+            if not success then
+                -- Error already logged
+            end
+        end
+    end
+
+    -- Return true if no new errors were added
+    local passed = (badVal.errors == errorCount)
+
+    if #allWarnings > 0 then
+        logger:info(string.format("Validation completed with %d warning(s)", #allWarnings))
+    end
+
+    return passed, allWarnings
+end
+
 --- Processes all TSV/CSV files in the given directories.
 --- Resolves package dependencies, loads file descriptors, parses files with type registration.
 --- @param directories table Sequence of directory paths to process
@@ -533,12 +651,18 @@ local function processFiles(directories, badVal)
     loadRemainingFiles(files, raw_files)
     mergeManifestFiles(tsv_files, manifest_tsv_files)
 
+    -- Run all validators (row, file, package) after files are loaded
+    local validationPassed, validationWarnings = runAllValidators(
+        tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+
     return {
         raw_files = raw_files,
         tsv_files = tsv_files,
         package_order = package_order,
         packages = packages,
         joinMeta = joinMeta,
+        validationPassed = validationPassed,
+        validationWarnings = validationWarnings,
     }
 end
 

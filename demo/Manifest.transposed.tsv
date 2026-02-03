@@ -16,3 +16,5 @@ code_libraries:{{name,string}}|nil	{'mathLib','libs/mathUtils.lua'}
 dependencies:{{package_id,cmp_version}}|nil
 # Specifies the ids of packages that, if present, must be loaded *before* this package
 load_after:{package_id}|nil
+# Package-level validators run after all files are loaded
+package_validators:{validator_spec}|nil	{expr="count(files) > 0 or 'package must have at least one data file'",level="warn"}

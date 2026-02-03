@@ -1,10 +1,10 @@
-fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil
-Constant.tsv	Constant		true		value	100	Numeric and calculated constants demonstrating expressions				
-DefaultValue.tsv	DefaultValue		true			200	Demonstrates default values in column headers				
-Equipment.tsv	Equipment		true			250	Demonstrates exploded columns for nested data structures				
-Files.tsv	Files		true	Files		0	This file; describes the demo data files				
-Generated.tsv	Generated		true			400	Rows generated using cog code blocks				
-Item.tsv	Item		true	Item		300	Demo items with various data types and table values				ItemWithDE
-Item.de.tsv	ItemDE		false			301	German translations for Item.tsv	Item.tsv	name		
-Status.tsv	Status	enum	true			50	Enum demonstrating status values				
-CustomTypes.tsv	CustomTypes		true			55	Demonstrates custom data-driven type validators				
+fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
+Constant.tsv	Constant		true		value	100	Numeric and calculated constants demonstrating expressions						
+DefaultValue.tsv	DefaultValue		true			200	Demonstrates default values in column headers						
+Equipment.tsv	Equipment		true			250	Demonstrates exploded columns for nested data structures						
+Files.tsv	Files		true	Files		0	This file; describes the demo data files						
+Generated.tsv	Generated		true			400	Rows generated using cog code blocks						
+Item.tsv	Item		true	Item		300	Demo items with various data types and table values				ItemWithDE	"self.price.parsed > 0 or 'price must be positive'","self.count.parsed >= 0 or 'count cannot be negative'",{expr="self.price.parsed < 1000 or 'price seems high'",level="warn"}	{expr="count(rows) <= 100 or 'too many items'",level="warn"}
+Item.de.tsv	ItemDE		false			301	German translations for Item.tsv	Item.tsv	name				
+Status.tsv	Status	enum	true			50	Enum demonstrating status values						
+CustomTypes.tsv	CustomTypes		true			55	Demonstrates custom data-driven type validators						

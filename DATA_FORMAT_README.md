@@ -139,6 +139,45 @@ When exporting TSV files, the `exportExploded` parameter controls the output for
 Using `exportExploded=true` (the default) preserves round-trip fidelity with the original file format.
 It is specified with the `--collapse-exploded` flag (meaning `exportExploded=false`) when reformatting.
 
+### Collection Columns (Bracket Notation)
+
+In addition to dot-separated paths for records and tuples, exploded columns support **bracket notation** for arrays and maps:
+
+**Array elements:**
+
+```text
+items[1]:string  items[2]:string  items[3]:string
+apple            banana           cherry
+```
+
+This defines `items` as `{string}` (an array of strings).
+
+**Map key-value pairs:**
+
+```text
+stats[1]:string  stats[1]=:integer  stats[2]:string  stats[2]=:integer
+health           100                mana             50
+```
+
+This defines `stats` as `{string:integer}` (a map from string to integer). The `=` suffix on a bracket column marks it as the map value; the column without `=` is the map key.
+
+**Nested collections:**
+
+```text
+player.inventory[1]:string  player.inventory[2]:string
+sword                       shield
+```
+
+This defines `player` as a record containing an `inventory` array: `{inventory:{string}}`.
+
+#### Collection Rules
+
+- Indices must be positive integers starting at 1
+- Indices must be consecutive (no gaps)
+- For maps, each index must have both a key column (`name[N]`) and a value column (`name[N]=`)
+- All elements in an array must have the same type
+- All keys and all values in a map must have consistent types
+
 ### Restrictions
 
 - Each path segment must be a valid identifier (letters, digits, underscores; starting with letter or underscore)
@@ -214,8 +253,10 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 | Type | Description |
 |------|-------------|
 | `raw` | Pre-defined union: `boolean\|number\|table\|string\|nil` |
+| `any` | Tagged union: `{type,raw}` — a tuple storing both the type name and the raw value, validated to ensure the value matches the declared type |
 | `nil` | Just the nil value (only used in unions for "optional" values) |
 | `true` | Just the true value (only valid as `<type2>` in maps, for Lua-style "sets") |
+| `package_id` | Alias for `name`; used as the package identifier in manifests |
 
 ## Type Inheritance (Extends)
 
@@ -255,6 +296,7 @@ There are multiple types extending `string`:
 | `name` | Extends `ascii`; dotted identifier: `<identifier1>.<identifier2>...<identifierN>` |
 | `type` | Extends `ascii`; a `type_spec` which is validated against previously-defined types |
 | `type_spec` | Extends `ascii`; represents a type specification using the syntax defined here |
+| `regex` | Extends `string`; a valid Lua pattern string (validated and translated to PCRE for export) |
 | `version` | Extends `ascii`; standard `x.y.z` version format |
 
 ## Numeric Extension Types
@@ -752,3 +794,191 @@ Custom types are registered after the manifest is processed but before code libr
 - Custom types can extend built-in types or types from dependency packages
 - Custom types from one package are available to dependent packages
 - Within a package, custom types are registered in declaration order, so later types can extend earlier ones
+
+## Row, File, and Package Validators
+
+Beyond single-cell type validation, the system supports multi-level validation:
+
+1. **Row Validators** - Validate individual rows after all columns are parsed
+2. **File Validators** - Validate entire files/tables after all rows are processed
+3. **Package Validators** - Validate the entire package after all files are loaded
+
+All validators are expressions that return:
+- `true` or empty string `""` → valid
+- `false` or `nil` → invalid with default message
+- Non-empty string → invalid with custom error message
+
+### Validator Specification Types
+
+Three new types support validators:
+
+| Type | Description |
+|------|-------------|
+| `expression` | A string containing a valid Lua expression (syntax-validated at parse time) |
+| `error_level` | Enum with values `"error"` or `"warn"` |
+| `validator_spec` | Either a simple `expression` string or a record `{expr:expression, level:error_level\|nil}` |
+
+### Validator Levels
+
+Validators can have two levels:
+
+| Level | Behavior |
+|-------|----------|
+| `error` (default) | Validation stops on first failure, reported as error |
+| `warn` | Validation continues even on failure, reported as warning |
+
+### Row Validators
+
+Configured in `Files.tsv` via the `rowValidators` column:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `rowValidators` | `{validator_spec}\|nil` | Validators run on each row after parsing |
+
+**Expression Context:**
+
+- `self` / `row` - The current row (columns accessible as `self.columnName`)
+- Don't forget that the value of a column is a table containing multiple "forms" of the value. Usually, you will want the "parsed" form.
+- `rowIndex` - 1-based index of the current row
+- Published contexts from earlier-loaded files
+- Code libraries defined in the manifest
+- Standard sandbox utilities (`math`, `string`, etc.)
+
+**Example:**
+
+```tsv
+fileName:string	typeName:type_spec	rowValidators:{validator_spec}|nil
+Items.tsv	Item	{"self.minLevel.parsed <= self.maxLevel.parsed or 'minLevel must be <= maxLevel'",{expr="self.price.parsed < 10000 or 'price seems high'",level="warn"}}
+```
+
+More readable Lua format:
+```lua
+{
+    "self.minLevel.parsed <= self.maxLevel.parsed or 'minLevel must be <= maxLevel'",  -- error (default)
+    {expr = "self.price.parsed < 10000 or 'price seems unusually high'", level = "warn"},  -- warning
+}
+```
+
+### File Validators
+
+Configured in `Files.tsv` via the `fileValidators` column:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `fileValidators` | `{validator_spec}\|nil` | Validators run on complete file |
+
+**Expression Context:**
+
+- `rows` / `file` - Array of all parsed rows in the file
+- `fileName` - Name of the current file
+- `count` - Number of rows
+- Published contexts from earlier-loaded files
+- Code libraries defined in the manifest
+- Helper functions (see below)
+
+**Example:**
+
+```lua
+{
+    "unique(rows, 'sku') or 'SKU must be unique across all items'",  -- error
+    {expr = "sum(rows, 'weight') <= 10000 or 'total weight exceeds limit'", level = "warn"},  -- warning
+}
+```
+
+### Package Validators
+
+Configured in `Manifest.transposed.tsv` via the `package_validators` field:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `package_validators` | `{validator_spec}\|nil` | Validators run on complete package |
+
+**Expression Context:**
+
+- `files` / `package` - Table mapping file names to their row arrays
+- `packageId` - The package identifier
+- All published contexts (including from dependency packages)
+- Code libraries defined in the manifest
+- Helper functions (see below)
+
+**Example in Manifest.transposed.tsv:**
+
+```tsv
+package_validators:{validator_spec}|nil	{"all(files['items.tsv'], function(item) return any(files['categories.tsv'], function(cat) return cat.id.parsed == item.category.parsed end) end) or 'all items must reference valid category'"}
+```
+
+### Validator Helper Functions
+
+The following helper functions are available in file and package validator expressions:
+
+#### Collection Predicates
+
+| Function | Description |
+|----------|-------------|
+| `unique(rows, column)` | Check if column values are unique |
+| `sum(rows, column)` | Sum numeric column values |
+| `min(rows, column)` | Minimum value in column |
+| `max(rows, column)` | Maximum value in column |
+| `avg(rows, column)` | Average value in column |
+| `count(rows, predicate)` | Count rows matching predicate (optional) |
+
+#### Iteration Helpers
+
+| Function | Description |
+|----------|-------------|
+| `all(rows, predicate)` | All rows satisfy predicate |
+| `any(rows, predicate)` | At least one row satisfies predicate |
+| `none(rows, predicate)` | No rows satisfy predicate |
+| `filter(rows, predicate)` | Return rows matching predicate |
+| `find(rows, predicate)` | Return first row matching predicate |
+
+#### Lookup Helpers
+
+| Function | Description |
+|----------|-------------|
+| `lookup(rows, column, value)` | Find row where column == value |
+| `groupBy(rows, column)` | Group rows by column value |
+
+### Quota and Performance
+
+| Validator Type | Operation Quota |
+|----------------|-----------------|
+| Row validators | 1,000 operations per row |
+| File validators | 10,000 operations per file |
+| Package validators | 100,000 operations per package |
+
+Row validators run per-row, so complex validators will slow parsing. File and package validators run once, allowing more intensive checks.
+
+### Error Reporting
+
+**Row Validator Messages:**
+
+```
+[ERROR] Row validation failed in Items.tsv row 42:
+  Validator: self.minLevel.parsed <= self.maxLevel.parsed or 'minLevel must be <= maxLevel'
+  Error: minLevel must be <= maxLevel
+
+[WARN] Row validation warning in Items.tsv row 15:
+  Validator: self.price.parsed < 10000 or 'price seems unusually high'
+  Warning: price seems unusually high
+```
+
+**File Validator Messages:**
+
+```
+[ERROR] File validation failed in Items.tsv:
+  Validator: unique(rows, 'sku') or 'SKU must be unique'
+  Error: SKU must be unique
+
+[WARN] File validation warning in Items.tsv:
+  Validator: sum(rows, 'weight') <= 10000 or 'total weight exceeds limit'
+  Warning: total weight exceeds limit
+```
+
+**Package Validator Messages:**
+
+```
+[ERROR] Package validation failed in demo:
+  Validator: all items must reference valid category
+  Error: Items reference non-existent categories
+```

@@ -81,7 +81,11 @@ local MANIFEST_SPEC = [[{
         cmp_version
     }}|nil,
     # Specifies the ids of packages that, if present, must be loaded *before* this package
-    load_after:{package_id}|nil
+    load_after:{package_id}|nil,
+    # Package-level validators run after all files are loaded
+    # Each validator is either a simple expression string (error level) or
+    # a structured record {expr:expression, level:error_level|nil}
+    package_validators:{validator_spec}|nil
 }]]
 
 -- Our own badVal (uses module logger by default)
@@ -193,6 +197,11 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         manifest.code_libraries = readOnly(manifest.code_libraries)
     else
         manifest.code_libraries = nil
+    end
+    if manifest.package_validators and next(manifest.package_validators) then
+        manifest.package_validators = readOnly(manifest.package_validators)
+    else
+        manifest.package_validators = nil
     end
     return readOnly(manifest)
 end

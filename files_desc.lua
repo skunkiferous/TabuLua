@@ -61,6 +61,9 @@ local JOIN_INTO_COL = "joinInto:name|nil"
 local JOIN_COLUMN_COL = "joinColumn:name|nil"
 local EXPORT_COL = "export:boolean|nil"
 local JOINED_TYPE_NAME_COL = "joinedTypeName:type_spec|nil"
+-- Validator columns
+local ROW_VALIDATORS_COL = "rowValidators:{validator_spec}|nil"
+local FILE_VALIDATORS_COL = "fileValidators:{validator_spec}|nil"
 
 -- Returns true, if this is a process-first meta-data file
 local function isFilesDescriptor(file)
@@ -173,6 +176,8 @@ local function parseFilesDescHeader(file_name, file, log)
     local joinColumnIdx = -1
     local exportIdx = -1
     local joinedTypeNameIdx = -1
+    local rowValidatorsIdx = -1
+    local fileValidatorsIdx = -1
     for idx, col in ipairs(header) do
         col = tostring(col)
         if col == FILE_NAME_COL then
@@ -197,6 +202,10 @@ local function parseFilesDescHeader(file_name, file, log)
             exportIdx = idx
         elseif col == JOINED_TYPE_NAME_COL then
             joinedTypeNameIdx = idx
+        elseif col == ROW_VALIDATORS_COL then
+            rowValidatorsIdx = idx
+        elseif col == FILE_VALIDATORS_COL then
+            fileValidatorsIdx = idx
         elseif col== DESCRIPTION_COL then
             -- For the user only; ignore ...
         else
@@ -210,9 +219,10 @@ local function parseFilesDescHeader(file_name, file, log)
     warnMissingColumn(file_name, publishContextIdx, "publishContext", log)
     warnMissingColumn(file_name, publishColumnIdx, "publishColumn", log)
     warnMissingColumn(file_name, loadOrderIdx, "loadOrder", log)
-    -- Note: join columns are optional, so we don't warn if missing
+    -- Note: join columns and validator columns are optional, so we don't warn if missing
     return fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
-        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx
+        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
+        rowValidatorsIdx, fileValidatorsIdx
 end
 
 -- Check the file name matches the type name
@@ -289,6 +299,8 @@ end
 -- @field lcFn2JoinColumn table: Map of lowercase filename to join column name
 -- @field lcFn2Export table: Map of lowercase filename to export flag (boolean|nil)
 -- @field lcFn2JoinedTypeName table: Map of lowercase filename to joined type name
+-- @field lcFn2RowValidators table: Map of lowercase filename to row validators list
+-- @field lcFn2FileValidators table: Map of lowercase filename to file validators list
 -- @field fn2Idx table: Map of descriptor file to column indices
 -- @field log logger: Logger instance
 
@@ -311,14 +323,18 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcFn2JoinColumn = opts.lcFn2JoinColumn
     local lcFn2Export = opts.lcFn2Export
     local lcFn2JoinedTypeName = opts.lcFn2JoinedTypeName
+    local lcFn2RowValidators = opts.lcFn2RowValidators
+    local lcFn2FileValidators = opts.lcFn2FileValidators
     local fn2Idx = opts.fn2Idx
     local log = opts.log
 
     local fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx, publishColumnIdx,
-        loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx =
+        loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
+        rowValidatorsIdx, fileValidatorsIdx =
         parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = {fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
-        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx}
+        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
+        rowValidatorsIdx, fileValidatorsIdx}
     if fileNameIdx ~= -1 and loadOrderIdx ~= -1 then
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
@@ -370,6 +386,19 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                     local joinedTypeName = row[joinedTypeNameIdx] and row[joinedTypeNameIdx].parsed
                     if joinedTypeName and joinedTypeName ~= '' then
                         lcFn2JoinedTypeName[lcfn] = joinedTypeName
+                    end
+                end
+                -- Handle validator columns
+                if rowValidatorsIdx ~= -1 then
+                    local rowValidators = row[rowValidatorsIdx] and row[rowValidatorsIdx].parsed
+                    if rowValidators and type(rowValidators) == "table" and #rowValidators > 0 then
+                        lcFn2RowValidators[lcfn] = rowValidators
+                    end
+                end
+                if fileValidatorsIdx ~= -1 then
+                    local fileValidators = row[fileValidatorsIdx] and row[fileValidatorsIdx].parsed
+                    if fileValidators and type(fileValidators) == "table" and #fileValidators > 0 then
+                        lcFn2FileValidators[lcfn] = fileValidators
                     end
                 end
             end
@@ -514,6 +543,7 @@ end
 local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
+    lcFn2RowValidators, lcFn2FileValidators,
     raw_files, loadEnv, badVal)
     local desc_files = {}
     local max_prio = -math.huge
@@ -539,6 +569,8 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2JoinColumn = lcFn2JoinColumn,
         lcFn2Export = lcFn2Export,
         lcFn2JoinedTypeName = lcFn2JoinedTypeName,
+        lcFn2RowValidators = lcFn2RowValidators,
+        lcFn2FileValidators = lcFn2FileValidators,
         fn2Idx = fn2Idx,
         log = log,
     }

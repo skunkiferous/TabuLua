@@ -81,28 +81,32 @@ local function parseTableStr(badVal, col_type, value)
     assert(ct == "string", "col_type must be a string: "..ct)
     local success, parsed = pcall(ltcn.parse, "return " .. value)
 
-    withColType(badVal, col_type, function()
+    local valid = withColType(badVal, col_type, function()
         if not success then
             badVal(value, parsed)  -- On failure, parsed contains the error message
-            return nil
+            return false
         end
 
         if type(parsed) ~= "table" then
             badVal(value, "not a table")
-            return nil
+            return false
         end
 
         -- Check table depth and recursion
         local depth, err = getMaxTableDepth(parsed)
         if not depth then
             badVal(value, "Invalid table: " .. err)
-            return nil
+            return false
         end
         if depth > MAX_TABLE_DEPTH then
             badVal(value, "Table exceeds maximum depth of " .. MAX_TABLE_DEPTH)
-            return nil
+            return false
         end
+        return true
     end)
+    if not valid then
+        return nil
+    end
     return parsed
 end
 

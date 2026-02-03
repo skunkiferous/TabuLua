@@ -28,6 +28,8 @@ local isBasic = predicates.isBasic
 
 local logger = require( "named_logger").getLogger(NAME)
 
+local sandbox = require("sandbox")
+
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
 local function getVersion()
@@ -735,6 +737,67 @@ local function serializeMessagePackSQLBlob(v, nil_as_empty_str)
     return serializeSQLBlob(serializeMessagePack(v, nil_as_empty_str))
 end
 
+-- Maximum operations allowed when serializing in sandbox
+local SERIALIZE_SANDBOX_QUOTA = 1000
+
+--- Safely serialize any value, running table serialization in a sandbox.
+--- Prevents infinite loops, excessive memory usage, or malicious __tostring metamethods.
+--- @param value any The value to serialize
+--- @return string The serialized representation
+local function serializeInSandbox(value)
+    local t = type(value)
+    if t == "nil" then
+        return ""
+    elseif t == "boolean" then
+        return tostring(value)
+    elseif t == "number" then
+        -- Handle special float values
+        if value ~= value then  -- NaN check
+            return "nan"
+        elseif value == math.huge then
+            return "inf"
+        elseif value == -math.huge then
+            return "-inf"
+        end
+        return tostring(value)
+    elseif t == "string" then
+        return value
+    elseif t == "function" then
+        return "<function>"
+    elseif t == "userdata" then
+        return "<userdata>"
+    elseif t == "thread" then
+        return "<thread>"
+    elseif t == "table" then
+        -- Run serializeTable() in a sandbox to prevent infinite loops,
+        -- excessive memory usage, or malicious __tostring metamethods
+        local opt = {quota = SERIALIZE_SANDBOX_QUOTA}
+        local code = [[
+            local serialize = ...
+            return function(tbl)
+                return serialize(tbl)
+            end
+        ]]
+        local ok, protected = pcall(sandbox.protect, code, opt)
+        if not ok then
+            return "<table: sandbox error>"
+        end
+        -- Pass serialize function and execute
+        local exec_ok, serializer = pcall(protected, serialize)
+        if not exec_ok then
+            return "<table: init error>"
+        end
+        local result_ok, result = pcall(serializer, value)
+        if not result_ok then
+            -- Serialization failed (quota exceeded, recursive table, etc.)
+            return "<table: " .. tostring(result) .. ">"
+        end
+        return result
+    else
+        return "<" .. t .. ">"
+    end
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -745,6 +808,7 @@ local API = {
     dump=dump,
     getVersion=getVersion,
     serialize=serialize,
+    serializeInSandbox=serializeInSandbox,
     serializeJSON=serializeJSON,
     serializeMessagePack=serializeMessagePack,
     serializeMessagePackSQLBlob=serializeMessagePackSQLBlob,
@@ -760,6 +824,7 @@ local API = {
     unquotedStr=unquotedStr,
     warnDump=warnDump,
     MAX_TABLE_DEPTH=MAX_TABLE_DEPTH,
+    SERIALIZE_SANDBOX_QUOTA=SERIALIZE_SANDBOX_QUOTA,
 }
 
 -- Enables the module to be called as a function

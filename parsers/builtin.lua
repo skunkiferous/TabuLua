@@ -744,6 +744,44 @@ function M.registerDerivedParsers()
     --   values: {string}|nil - allowed values (for enum types)
     registration.registerAlias(ownBadVal, 'custom_type_def',
         '{max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec,pattern:string|nil,validate:string|nil,values:{string}|nil}')
+
+    -- ============================================================
+    -- Validator Types for Row, File, and Package Validators
+    -- ============================================================
+
+    -- Expression type: A string containing a valid Lua expression.
+    -- At parse time: validates syntax only (compiles successfully)
+    -- At runtime: evaluated in sandboxed environment
+    registration.extendParser(ownBadVal, 'string', 'expression',
+    function (badVal, value, reformatted, _context)
+        -- Validate that the expression is syntactically valid Lua
+        local code = "return (" .. value .. ")"
+        local compiled, err = load(code)
+        if not compiled then
+            -- Try loadstring for Lua 5.1/LuaJIT compatibility
+            if loadstring then
+                compiled, err = loadstring(code)
+            end
+        end
+        if not compiled then
+            utils.log(badVal, 'expression', value,
+                "invalid Lua expression: " .. tostring(err))
+            return nil, reformatted
+        end
+        return value, reformatted
+    end)
+
+    -- Log level enum: "error" or "warn"
+    -- "error" level validators stop on first failure
+    -- "warn" level validators continue execution and collect all warnings
+    registration.registerEnumParser(ownBadVal, {"error", "warn"}, "error_level")
+
+    -- Validator specification: either a simple expression string (defaults to error level)
+    -- or a structured record with explicit level
+    -- Simple string form: "self.x > 0 or 'x must be positive'" (defaults to error)
+    -- Structured form: {expr="self.x > 0 or 'x must be positive'", level="warn"}
+    registration.registerAlias(ownBadVal, 'validator_spec',
+        'expression|{expr:expression,level:error_level|nil}')
 end
 
 return M

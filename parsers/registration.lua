@@ -754,29 +754,8 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
             return nil, reformatted
         else
             -- Invalid with custom error message
-            local errorMsg
-            local resultType = type(result)
-            if resultType == "string" then
-                errorMsg = result
-            elseif resultType == "number" then
-                errorMsg = tostring(result)
-            else
-                -- Use serialize for complex types, but sandbox it for safety
-                local serialize_env = {value = result}
-                local serialize_code = "return require('serialization').serialize(value)"
-                local serialize_opt = {quota = VALIDATE_EXPR_MAX_OPERATIONS, env = serialize_env}
-                local ser_ok, ser_protected = pcall(sandbox.protect, serialize_code, serialize_opt)
-                if ser_ok then
-                    local ser_exec_ok, ser_result = pcall(ser_protected)
-                    if ser_exec_ok and type(ser_result) == "string" then
-                        errorMsg = ser_result
-                    else
-                        errorMsg = tostring(result)
-                    end
-                else
-                    errorMsg = tostring(result)
-                end
-            end
+            -- Use serializeInSandbox for safe serialization of any result type
+            local errorMsg = serialization.serializeInSandbox(result)
             utils.log(badVal2, newParserName, value, errorMsg)
             return nil, reformatted
         end

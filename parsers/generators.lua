@@ -305,12 +305,18 @@ function M.get_union_parser(types, fields_parsers)
             if canBeNil and (value == nil or value == '') then
                 return nil, ''
             end
+            -- Save and restore nullBadVal.errors around each trial to prevent accumulated
+            -- errors from failed trials affecting parsers that check error counts (like
+            -- the array parser's element-by-element error checking)
+            local saved_errors = nullBadVal.errors
             for i, p in ipairs(fields_parsers) do
                 local parsed_v, reformatted_v = M.callParser(p, nullBadVal,
                     value, context)
                 if parsed_v ~= nil then
+                    nullBadVal.errors = saved_errors
                     return parsed_v, reformatted_v
                 end
+                nullBadVal.errors = saved_errors
             end
             utils.log(badVal, cache_key, value)
             if type(value) == "function" then
