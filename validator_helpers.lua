@@ -124,12 +124,21 @@ local function avg(rows, column)
 end
 
 --- Counts rows, optionally filtering by a predicate.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects, or dictionary of named entries
 --- @param predicate function|nil Optional predicate function(row) -> boolean
 --- @return number Count of rows (matching predicate if provided)
 local function count(rows, predicate)
     if predicate == nil then
-        return #rows
+        local len = #rows
+        if len > 0 then
+            return len
+        end
+        -- Handle dictionary-style tables (string keys, e.g. package files)
+        local n = 0
+        for _ in pairs(rows) do
+            n = n + 1
+        end
+        return n
     end
     local result = 0
     for _, row in ipairs(rows) do

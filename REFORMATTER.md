@@ -100,57 +100,59 @@ exported/
 
 ## Examples
 
+**Important:** Specify package directories directly (directories containing `Manifest.transposed.tsv` or `Files.tsv`), not parent directories. For example, use `tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/` instead of just `tutorial/core/ tutorial/expansion/`.
+
 ### Basic reformatting (no export)
 ```bash
-lua reformatter.lua demo/
+lua reformatter.lua tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
 ```
-Processes all TSV files in `demo/` and reformats them in-place if changes are detected.
+Processes all TSV files in the specified package directories and reformats them in-place if changes are detected.
 
 ### Export to JSON (natural format)
 ```bash
-lua reformatter.lua --file=json demo/
+lua reformatter.lua --file=json tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
 ```
 Reformats files and exports as JSON to `exported/json-json-natural/`.
 
 ### Export to JSON with type preservation
 ```bash
-lua reformatter.lua --file=json --data=json-typed demo/
+lua reformatter.lua --file=json --data=json-typed tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
 ```
 Exports as JSON (typed format) to `exported/json-json-typed/`.
 
 ### Export as TSV with Lua literals
 ```bash
-lua reformatter.lua --file=tsv --data=lua demo/
+lua reformatter.lua --file=tsv --data=lua tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
 ```
 Exports as TSV with Lua literals to `exported/tsv-lua/`.
 
 ### Export to multiple formats
 ```bash
-lua reformatter.lua --file=lua --file=json demo/
+lua reformatter.lua --file=lua --file=json tutorial/core/ tutorial/expansion/
 ```
 Exports to both `exported/lua-lua/` and `exported/json-json-natural/` simultaneously.
 
 ### Custom export directory with SQL
 ```bash
-lua reformatter.lua --file=sql --data=json-natural --export-dir=db demo/
+lua reformatter.lua --file=sql --data=json-natural --export-dir=db tutorial/core/ tutorial/expansion/
 ```
 Exports as SQL with JSON columns to `db/sql-json-natural/`.
 
 ### Multiple source directories
 ```bash
-lua reformatter.lua --file=json demo/ mods/ plugins/
+lua reformatter.lua --file=json tutorial/core/ tutorial/expansion/ mods/ plugins/
 ```
 Processes files from multiple directories, all exported to `exported/json-json-natural/`.
 
 ### Clean export directory before exporting
 ```bash
-lua reformatter.lua --clean --file=json demo/
+lua reformatter.lua --clean --file=json tutorial/core/ tutorial/expansion/
 ```
 Empties the export directory before exporting new files.
 
 ### Compact binary export
 ```bash
-lua reformatter.lua --file=mpk --export-dir=bin demo/
+lua reformatter.lua --file=mpk --export-dir=bin tutorial/core/ tutorial/expansion/
 ```
 Exports to `bin/mpk-mpk/` in compact MessagePack format.
 

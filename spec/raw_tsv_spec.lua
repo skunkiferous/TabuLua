@@ -296,7 +296,7 @@ describe("raw_tsv", function()
       }
       local result = raw_tsv.transposeRawTSV(input)
       assert.same({
-        {"a", "dummy0:comment", "dummy1:comment", "d"},
+        {"a", "__comment1:comment", "__comment2:comment", "d"},
         {"b", "# Comment line", "", "e"},
         {"c", "", "", "f"}
       }, result)
@@ -309,7 +309,7 @@ describe("raw_tsv", function()
       }
       local result2 = raw_tsv.transposeRawTSV(input2)
       assert.same({
-        {"a", "dummy0:comment", "dummy1:comment", "d"},
+        {"a", "__comment1:comment", "__comment2:comment", "d"},
         {"b", "", "# Comment line", "e"},
         {"c", "", "", "f"}
       }, result2)

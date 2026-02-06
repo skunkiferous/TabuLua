@@ -1,0 +1,25 @@
+package_id:package_id	tutorial.core
+# ^ The unique package identifier; uses the 'name' type (dotted identifiers)
+# Human-readable package name
+name:string	Chronicles of Tabula - Core
+# Custom fields (not part of standard manifest schema) are preserved by the reformatter
+gameGenre:string	RPG
+targetAudience:string	Casual Gamers
+# Semantic version of this package
+version:version	1.0.0
+# Package description using markdown type (supports \n and \t escapes)
+description:markdown	Core game data for the Chronicles of Tabula RPG.\nDefines elements, items, creatures, spells, recipes, and world configuration.\nThis package is designed to be extended by expansion mods.
+# Optional URL for the package source
+url:http|nil	
+# Custom types with data-driven validators (see DATA_FORMAT_README.md for details)
+# Each entry defines a named type that extends a parent type, optionally adding constraints.
+# Types are registered after the manifest is processed, making them available in all data files.
+custom_types:{custom_type_def}|nil	{name="BaseStats",parent="{attack:integer,defense:integer,speed:integer}"},{name="Point2D",parent="{float,float}"},{name="evenLevel",parent="integer",validate="value >= 0 and value % 2 == 0 or 'must be non-negative even number'"},{name="gold",parent="uint"},{min=0,name="hitPoints",parent="integer"},{maxLen=50,minLen=3,name="itemCode",parent="ascii",pattern="^[A-Z][A-Z][A-Z]%-[0-9]+$"},{max=99,min=1,name="level",parent="ubyte"},{name="superType",parent="type_spec|nil"}
+# Code libraries are Lua modules available in expressions and COG blocks
+code_libraries:{{name,string}}|nil	{"gameLib","libs/gameLib.lua"}
+# Package dependencies (none for the core package)
+dependencies:{{package_id,cmp_version}}|nil	
+# Packages that must load before this one (none for core)
+load_after:{package_id}|nil	
+# Package-level validators run after all files in the package are loaded
+package_validators:{validator_spec}|nil	{expr="count(files) > 0 or 'package must have at least one data file'",level="warn"}

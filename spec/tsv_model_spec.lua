@@ -347,14 +347,131 @@ describe("tsv_model", function()
             assert.same({}, log_messages)
 
             assert.equals("a:string", dataset[1][1].value)
-            assert.equals("dummy0:comment", dataset[1][2].value)
-            assert.equals("dummy1:comment", dataset[1][3].value)
+            assert.equals("__comment1:comment", dataset[1][2].value)
+            assert.equals("__comment2:comment", dataset[1][3].value)
             assert.equals("d:string", dataset[1][4].value)
 
             assert.equals("b", dataset[2][1].value)
             assert.equals("# Comment line", dataset[2][2].value)
             assert.equals("", dataset[2][3].value)
             assert.equals("e", dataset[2][4].value)
+        end)
+
+        it("should produce transposed output from tostring", function()
+            local transposed_raw_tsv = {
+                {"name:string", "Alice", "Bob"},
+                {"age:number", "25", "30"},
+            }
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor,
+                nil,
+                mockParserFinder,
+                "test.transposed.tsv",
+                transposed_raw_tsv,
+                badVal,
+                nil,
+                false -- let transpose be set automatically from filename
+            )
+
+            assert.is_not_nil(dataset)
+            assert.same({}, log_messages)
+
+            -- tostring should produce transposed output (one field per line)
+            local output = tostring(dataset)
+            -- The output should have field:type\tvalue per line (transposed format)
+            local lines = {}
+            for line in output:gmatch("[^\n]+") do
+                lines[#lines+1] = line
+            end
+            -- Should have 2 field rows (name and age), each with 2 data columns
+            assert.equals(2, #lines)
+            assert.is_truthy(lines[1]:find("^name:string\t"))
+            assert.is_truthy(lines[2]:find("^age:number\t"))
+        end)
+
+        it("should produce non-transposed output for normal files", function()
+            local raw_tsv = {
+                {"name:string", "age:number"},
+                {"Alice", "25"},
+                {"Bob", "30"},
+            }
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor,
+                nil,
+                mockParserFinder,
+                "test.tsv",
+                raw_tsv,
+                badVal,
+                nil,
+                false
+            )
+
+            assert.is_not_nil(dataset)
+            assert.same({}, log_messages)
+
+            local output = tostring(dataset)
+            local lines = {}
+            for line in output:gmatch("[^\n]+") do
+                lines[#lines+1] = line
+            end
+            -- Should have 3 rows: header + 2 data rows (non-transposed)
+            assert.equals(3, #lines)
+            assert.is_truthy(lines[1]:find("^name:string\t"))
+            assert.is_truthy(lines[2]:find("^Alice\t"))
+        end)
+
+        it("should preserve comments in transposed output", function()
+            -- Transposed file with a comment line becomes a __comment placeholder column
+            local transposed_with_comment = {
+                "# This is a comment",  -- Comment line (string, not table)
+                {"name:string", "TestValue"},
+                {"level:number", "42"},
+            }
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor,
+                nil,
+                mockParserFinder,
+                "test.transposed.tsv",
+                transposed_with_comment,
+                badVal,
+                nil,
+                true  -- transpose
+            )
+
+            assert.is_not_nil(dataset)
+            assert.same({}, log_messages)
+
+            -- Verify the dataset has 3 columns after transpose: __comment1, name, level
+            local header = dataset[1]
+            assert.equals(3, #header)
+            assert.equals("__comment1", header[1].name)
+            assert.equals("comment", header[1].type_spec)
+            assert.equals("name", header[2].name)
+            assert.equals("level", header[3].name)
+
+            -- tostring should produce transposed output with comment preserved
+            local output = tostring(dataset)
+            local lines = {}
+            for line in output:gmatch("[^\n]+") do
+                lines[#lines+1] = line
+            end
+            -- Should have 3 lines: comment, name field, level field
+            assert.equals(3, #lines)
+            assert.equals("# This is a comment", lines[1])
+            assert.is_truthy(lines[2]:find("^name:string\t"))
+            assert.is_truthy(lines[3]:find("^level:number\t"))
         end)
 
         it("should process report original row/col on error", function()

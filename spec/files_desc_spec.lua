@@ -645,4 +645,106 @@ describe("files_desc", function()
       assert.equals("pkg2", desc_file2package_id[result[3]])
     end)
   end)
+
+  describe("duplicate file/type name warnings", function()
+    it("should warn about duplicate file names from different descriptors", function()
+      local file_path1 = path_join(temp_dir, "pkg1")
+      local file_path2 = path_join(temp_dir, "pkg2")
+      assert(lfs.mkdir(file_path1))
+      assert(lfs.mkdir(file_path2))
+
+      local desc1_path = path_join(file_path1, "files.tsv")
+      local desc2_path = path_join(file_path2, "files.tsv")
+
+      -- Both descriptors list "data.tsv" - should warn
+      local content1 = create_files_desc_content({
+        {"data.tsv", "Data", "", "true", "", "", "1", "Data file"}
+      })
+      local content2 = create_files_desc_content({
+        {"data.tsv", "Data", "", "true", "", "", "1", "Data file"}
+      })
+      assert.is_true(file_util.writeFile(desc1_path, content1))
+      assert.is_true(file_util.writeFile(desc2_path, content2))
+
+      local warnings = {}
+      local mockLog = {
+        warn = function(self, msg) table.insert(warnings, msg) end,
+        error = function() end,
+        info = function() end
+      }
+      local badVal = badValGen()
+      badVal.logger = mockLog
+
+      local prios = {}
+      local desc_files_order = {desc1_path, desc2_path}
+      local desc_file2mod_id = {
+        [desc1_path] = "pkg1",
+        [desc2_path] = "pkg2"
+      }
+
+      local raw_files = {}
+      files_desc.loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
+        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, raw_files, {}, badVal)
+
+      -- Should have warnings about duplicate data.tsv and Data type
+      assert.is_true(#warnings >= 1)
+      local found_data_warning = false
+      for _, w in ipairs(warnings) do
+        if w:match("Multiple files with name 'data.tsv'") or
+           w:match("Multiple types with name 'data'") then
+          found_data_warning = true
+          break
+        end
+      end
+      assert.is_true(found_data_warning, "Expected warning about duplicate data.tsv")
+    end)
+
+    it("should NOT warn about duplicate Files.tsv across packages", function()
+      local file_path1 = path_join(temp_dir, "pkg1")
+      local file_path2 = path_join(temp_dir, "pkg2")
+      assert(lfs.mkdir(file_path1))
+      assert(lfs.mkdir(file_path2))
+
+      local desc1_path = path_join(file_path1, "files.tsv")
+      local desc2_path = path_join(file_path2, "files.tsv")
+
+      -- Both descriptors list themselves as "Files.tsv" - should NOT warn
+      local content1 = create_files_desc_content({
+        {"Files.tsv", "Files", "", "true", "", "", "0", "Descriptor file"}
+      })
+      local content2 = create_files_desc_content({
+        {"Files.tsv", "Files", "", "true", "", "", "0", "Descriptor file"}
+      })
+      assert.is_true(file_util.writeFile(desc1_path, content1))
+      assert.is_true(file_util.writeFile(desc2_path, content2))
+
+      local warnings = {}
+      local mockLog = {
+        warn = function(self, msg) table.insert(warnings, msg) end,
+        error = function() end,
+        info = function() end
+      }
+      local badVal = badValGen()
+      badVal.logger = mockLog
+
+      local prios = {}
+      local desc_files_order = {desc1_path, desc2_path}
+      local desc_file2mod_id = {
+        [desc1_path] = "pkg1",
+        [desc2_path] = "pkg2"
+      }
+
+      local raw_files = {}
+      files_desc.loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
+        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, raw_files, {}, badVal)
+
+      -- Should NOT have warnings about Files.tsv or Files type
+      for _, w in ipairs(warnings) do
+        assert.is_false(w:match("Multiple files with name 'files.tsv'"),
+          "Should not warn about duplicate Files.tsv: " .. w)
+        assert.is_false(w:match("Multiple types with name 'files'"),
+          "Should not warn about duplicate Files type: " .. w)
+      end
+    end)
+  end)
 end)

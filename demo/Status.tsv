@@ -1,6 +1,0 @@
-name:identifier	displayName:text	description:text
-Active	Active	Item is currently active and available
-Inactive	Inactive	Item is disabled but can be reactivated
-Pending	Pending	Item is awaiting approval or processing
-Archived	Archived	Item has been archived and is read-only
-Deleted	Deleted	Item is marked for deletion

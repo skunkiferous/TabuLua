@@ -1,0 +1,14 @@
+# World configuration for the Verdant Plains region
+# Demonstrates transposed format with single-record data
+regionName:name	verdantPlains
+displayName:text	The Verdant Plains
+biome:string	grassland
+dangerLevel:level	15
+width:float	1000.0
+height:float	800.0
+# Area is calculated using an expression
+area:float	=self.width*self.height
+spawnRate:float	0.05
+maxCreatures:integer	50
+dominantElement:Element	Earth
+description:text	A vast expanse of rolling green hills and gentle streams.\nHome to goblins and stone golems.

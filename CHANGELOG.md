@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.5.1] - 2026-02-06
+
+### Added
+
+- Comprehensive tutorial in `tutorial/` directory with two example packages (core + expansion)
+  demonstrating all TabuLua features including custom types, validators, expressions, and multi-package support
+
+### Changed
+
+- Comment lines in transposed files now use `__comment#` prefix (instead of `dummy#`) for placeholder columns
+  - Uses 1-based indexing (`__comment1`, `__comment2`, etc.) consistent with Lua conventions
+  - The `__comment` prefix is reserved and should not be used for user column names
+- Reformatter now reformats manifest files (`Manifest.transposed.tsv`)
+  - User-defined fields beyond the standard manifest schema are preserved
+  - Comments in manifests are preserved via the `__comment` placeholder mechanism
+
+### Fixed
+
+- Transposed data files with comments are now correctly preserved by the reformatter
+  - Previously, comments in `.transposed.tsv` files would cause errors or be lost during reformatting
+  - Comments are converted to `__comment#:comment` placeholder columns during loading and restored on output
+- Custom numeric types now properly inherit parent min/max limits when only one bound is specified
+  - e.g., `bossLevel extends level` with only `min=50` now correctly inherits `max=99` from parent
+- `count()` function in validator_helpers now works with dictionary-style tables (string keys)
+  - Previously returned 0 for tables like `packageFiles` which use string keys
+- Duplicate file/type name warnings no longer triggered for `Files.tsv` across packages
+  - Every package is expected to have its own `Files.tsv`, so duplicate warnings were spurious
+- Added error when specifying parent directories instead of package directories
+  - e.g., `tutorial/` instead of `tutorial/core/ tutorial/expansion/` now shows a clear error message
+  - Helps users understand they must specify directories containing `Manifest.transposed.tsv` or `Files.tsv`
+
+### Removed
+
+- Removed `demo/` directory (superseded by the new `tutorial/` directory)
+
 ## [0.5.0] - 2026-02-03
 
 ### Added

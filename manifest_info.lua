@@ -240,15 +240,15 @@ local function loadManifestFile(badVal, raw_files, cog_env, manifest_file)
         return nil
     end
 
-    -- Due to the transposition, we might have 'dummy' columns. So we cannot use the "raw" model
-    -- type specification from the header (__type_spec)
+    -- Due to the transposition, we might have '__comment' placeholder columns (from comment lines).
+    -- So we cannot use the "raw" model type specification from the header (__type_spec)
     local header = manifest_tsv[1]
     local fields = parsers.recordFieldTypes(FORMATTED_MANIFEST_SPEC)
     local found = {}
     local log = badVal.logger
     for i = 1, #header do
         local col = header[i].name
-        if col:sub(1,5) ~= 'dummy' then
+        if col:sub(1,9) ~= '__comment' then
             local type_spec = header[i].type_spec
             local expected = fields[col]
             if expected then

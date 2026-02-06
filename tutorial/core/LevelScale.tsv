@@ -1,0 +1,30 @@
+name:name	level:level	hpGain:integer	attackGain:integer	defenseGain:integer	goldReward:float
+# ^ This file demonstrates COG (Code Generation) blocks.
+# ^ The ###[[[...###]]] block contains Lua code that generates rows dynamically.
+# ^ Code between the markers is executed, and its return value replaces the content
+# ^ between ###]]] and ###[[[end]]]. The code has access to code libraries (gameLib).
+###[[[
+###local rows = {}
+###for i = 1, 10 do
+###    local name = "level" .. i
+###    local hp = math.floor(gameLib.lerp(10, 100, i / 10))
+###    local atk = math.floor(gameLib.lerp(2, 20, i / 10))
+###    local def = math.floor(gameLib.lerp(1, 15, i / 10))
+###    local gold = 50.0 * i
+###    rows[#rows+1] = name .. "\t" .. i .. "\t" .. hp .. "\t" .. atk .. "\t" .. def .. "\t" .. gold
+###end
+###return table.concat(rows, "\n")
+###]]]
+level1	1	19	3	2	50.0
+level2	2	28	5	3	100.0
+level3	3	37	7	5	150.0
+level4	4	46	9	6	200.0
+level5	5	55	11	8	250.0
+level6	6	64	12	9	300.0
+level7	7	73	14	10	350.0
+level8	8	82	16	12	400.0
+level9	9	91	18	13	450.0
+level10	10	100	20	15	500.0
+###[[[end]]]
+# Manual entry after the COG-generated block (showing that generated and manual rows can coexist)
+bossBonus	99	500	100	80	9999.0

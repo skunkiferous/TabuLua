@@ -1,0 +1,13 @@
+name:name	recipeCode:ascii	result:name	requiredLevel:level	craftTime:ushort	successRate:ratio	materials[1]:name	materials[1]=:integer	materials[2]:name	materials[2]=:integer	materials[3]:name	materials[3]=:integer	description:text
+# ^ recipeCode: 'ascii' type (ASCII-only characters, bytes 0-127)
+# ^ requiredLevel: custom type 'level' (ubyte restricted to 1-99)
+# ^ craftTime: 'ushort' range type (unsigned short, 0 to 65535) representing seconds
+# ^ successRate: 'ratio' type - a map of names to percentages that MUST sum to 100%
+# ^   Format: Key="Value%",Key="Value%" e.g. Skill="60%",Luck="40%"
+# ^ materials[*] / materials[*]= : exploded MAP columns using bracket notation
+# ^   materials[N] is the map KEY (item name), materials[N]= is the map VALUE (quantity)
+# ^   The = suffix marks the value column of a key-value pair
+# ^   This creates a map type {name:integer} mapping item names to quantities needed
+ironSwordRecipe	CRAFT-IS	ironSword	5	30	Luck="40%",Skill="60%"	healthPotion	2	manaPotion	1	earthAmulet	1	Forge an iron sword from basic components
+healthPotionRecipe	CRAFT-HP	healthPotion	1	10	Luck="20%",Skill="80%"	manaPotion	1	earthAmulet	1	manaPotion	1	Brew a basic health potion from ingredients
+fireStaffRecipe	CRAFT-FS	fireStaff	20	120	Luck="30%",Magic="30%",Skill="40%"	ironSword	1	manaPotion	3	earthAmulet	2	Enchant a staff with fire essence using rare materials

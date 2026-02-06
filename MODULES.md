@@ -289,7 +289,7 @@ Type checking predicate functions for validation (is_string, is_number, is_table
 ### raw_tsv
 **File:** [raw_tsv.lua](raw_tsv.lua)
 
-Low-level TSV/CSV file parsing and writing without type validation. Pure data handling.
+Low-level TSV/CSV file parsing and writing without type validation. Pure data handling. Includes `transposeRawTSV()` which swaps rows and columns for transposed files. Comment lines in transposed files are converted to `__comment#:comment` placeholder columns (where `#` is a sequential number), which are restored to comment lines when the file is serialized back.
 
 **Dependencies:** file_util, predicates, read_only, string_utils
 

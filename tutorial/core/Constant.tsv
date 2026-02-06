@@ -1,0 +1,14 @@
+name:name	displayName:text	value:float	unit:name	comment:comment
+# ^ This file publishes game constants via publishContext=Constant, publishColumn=value.
+# ^ That means other files with higher loadOrder can reference these by name in expressions.
+# ^ For example, a cell in Creature.tsv can use =baseDamage because baseDamage is published here.
+baseDamage	Base Damage	10.0	points	Baseline damage used for scaling all combat calculations
+critMultiplier	Crit Multiplier	2.5	multiplier	Critical hit damage multiplier applied on critical strikes
+maxLevel	Max Level	99.0	level	Maximum character level in the game
+goldPerLevel	Gold Per Level	50.0	gold	Gold reward granted per level gained
+# Expression rows: the value cell starts with = to indicate an expression
+scaledDamage	Scaled Damage	=baseDamage*critMultiplier	points	Computed: baseDamage * critMultiplier
+# Library function usage: gameLib is registered in Manifest.transposed.tsv
+circleArea	Circle Area	=gameLib.circleArea(10)	squareMetre	Using gameLib.circleArea() library function
+lerpValue	Lerp Value	=gameLib.lerp(0, baseDamage, 0.75)	points	Linear interpolation from 0 to baseDamage at 75%
+clampedValue	Clamped Value	=gameLib.clamp(250, 0, goldPerLevel*maxLevel)	gold	Clamped to range [0, goldPerLevel*maxLevel]

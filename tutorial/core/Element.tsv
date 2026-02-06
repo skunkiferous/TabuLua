@@ -1,0 +1,10 @@
+name:identifier	displayName:text	description:text
+# ^ This file defines an enum type 'Element'. In Files.tsv, superType=enum triggers
+# ^ automatic enum registration, making 'Element' usable as a column type in other files.
+# ^ The first column (name:identifier) is the enum key. Additional columns store metadata.
+Fire	Fire	The element of destruction and warmth
+Water	Water	The element of life and flow
+Earth	Earth	The element of strength and stability
+Air	Air	The element of speed and freedom
+Shadow	Shadow	The element of stealth and darkness
+Light	Light	The element of healing and truth

@@ -1,0 +1,12 @@
+name:name	displayName:text	description:text
+# ^ This secondary file joins into Item.tsv by the 'name' column (see Files.tsv: joinInto, joinColumn).
+# ^ After joining, the combined type is 'ItemLocalized' (see Files.tsv: joinedTypeName).
+# ^ The 'text' type supports escape sequences: \n for newline, \t for tab, \\ for backslash.
+ironSword	Iron Sword	A reliable iron sword, favored by new adventurers.\nSharp enough to cut through basic foes.
+oakShield	Oak Shield	A sturdy shield carved from ancient oak.\tProvides solid defense.
+healthPotion	Health Potion	A crimson vial that restores vitality.\nDrink to recover hit points.
+fireStaff	Fire Staff	A staff imbued with the essence of flame.\nChannels fire magic.
+shadowCloak	Shadow Cloak	A cloak woven from threads of shadow.\nGrants stealth in darkness.
+legendaryBlade	Blade of Dawn	The legendary sword of the first hero.\nSaid to glow with the light of dawn.
+earthAmulet	Earth Amulet	An amulet that resonates with the power of the earth.
+manaPotion	Mana Potion	A blue potion that restores magical energy.\nTastes faintly of blueberries.

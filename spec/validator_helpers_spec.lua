@@ -287,6 +287,19 @@ describe("validator_helpers", function()
       local pred = function(row) return row.val.parsed > 100 end
       assert.are.equal(0, validator_helpers.count(rows, pred))
     end)
+
+    it("should count entries in dictionary-style tables", function()
+      local dict = {
+        ["items.tsv"] = {makeRow({val = 1})},
+        ["config.tsv"] = {makeRow({val = 2})},
+        ["data.tsv"] = {makeRow({val = 3})},
+      }
+      assert.are.equal(3, validator_helpers.count(dict))
+    end)
+
+    it("should return 0 for empty dictionary", function()
+      assert.are.equal(0, validator_helpers.count({}))
+    end)
   end)
 
   -- ============================================================

@@ -523,16 +523,17 @@ local function validateFileJoins(lcFn2JoinInto, lcFileNames, badVal)
 end
 
 -- Validates file and type names reuse
+-- Files.tsv is exempt because every package is expected to have one
 local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     log = log or logger
     for fn, fd in pairs(lcFileNames) do
-        if #fd > 1 then
+        if #fd > 1 and fn ~= "files.tsv" then
             log:warn("Multiple files with name '" .. fn
                 .. "' in " .. table.concat(fd, ", "))
         end
     end
     for tn, fd in pairs(lcTypeNames) do
-        if #fd > 1 then
+        if #fd > 1 and tn ~= "files" then
             log:warn("Multiple types with name '" .. tn
                 .. "' in " .. table.concat(fd, ", "))
         end

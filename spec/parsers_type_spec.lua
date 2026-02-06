@@ -387,6 +387,52 @@ describe("parsers - type specifications", function()
       assert.same({}, log_messages)
     end)
 
+    it("should inherit parent max when child only specifies min", function()
+      -- Create a parent type with both min and max
+      local parentParser, parentName = parsers.restrictNumber(badVal, "integer", 1, 99, "ParentLevel")
+      assert.is_not_nil(parentParser)
+      assert.same({}, log_messages)
+
+      -- Create a child type that only specifies min (max should be inherited from parent)
+      local childParser, childName = parsers.restrictNumber(badVal, parentName, 50, nil, "ChildLevel")
+      assert.is_not_nil(childParser, "Child type should succeed without explicit max")
+      assert.same({}, log_messages)
+
+      -- Verify the child parser enforces inherited max
+      assert.is_not_nil(childParser(badVal, "50"))   -- at min boundary
+      assert.is_not_nil(childParser(badVal, "75"))   -- in range
+      assert.is_not_nil(childParser(badVal, "99"))   -- at inherited max
+      assert.is_nil(childParser(badVal, "100"))      -- above inherited max
+      assert.is_nil(childParser(badVal, "49"))       -- below specified min
+    end)
+
+    it("should inherit parent min when child only specifies max", function()
+      local parentParser, parentName = parsers.restrictNumber(badVal, "integer", 10, 200, "ParentRange")
+      assert.is_not_nil(parentParser)
+      assert.same({}, log_messages)
+
+      local childParser, childName = parsers.restrictNumber(badVal, parentName, nil, 100, "ChildRange")
+      assert.is_not_nil(childParser, "Child type should succeed without explicit min")
+      assert.same({}, log_messages)
+
+      assert.is_not_nil(childParser(badVal, "10"))   -- at inherited min
+      assert.is_not_nil(childParser(badVal, "50"))   -- in range
+      assert.is_not_nil(childParser(badVal, "100"))  -- at specified max
+      assert.is_nil(childParser(badVal, "9"))        -- below inherited min
+      assert.is_nil(childParser(badVal, "101"))      -- above specified max
+    end)
+
+    it("should still error when explicitly exceeding parent range", function()
+      local parentParser, parentName = parsers.restrictNumber(badVal, "integer", 1, 99, "StrictParent")
+      assert.is_not_nil(parentParser)
+      assert.same({}, log_messages)
+
+      -- Explicitly specifying max=200 should fail (exceeds parent's max=99)
+      local childParser, childName = parsers.restrictNumber(badVal, parentName, 50, 200, "BadChild")
+      assert.is_nil(childParser)
+      assert.is_truthy(#log_messages > 0)
+    end)
+
     it("should handle custom complex types", function()
       -- Register some complex types
       assert(parsers.registerAlias(badVal, "StringDict", "{string:string}"))

@@ -1,0 +1,6 @@
+name:identifier	displayName:text	description:text
+# ^ Expansion-specific enum. This demonstrates that mod packages can define their own enums
+# ^ independently from core enums. Registered via superType=enum in this package's Files.tsv.
+Guardian	Guardian	A powerful defender stationed at realm boundaries
+Overlord	Overlord	A boss that commands armies of lesser creatures
+Ancient	Ancient	A primordial being of immense and ancient power

@@ -1,5 +1,0 @@
-name:name	basePrice:number	quantity:integer:=1	total:number:=self.basePrice*self.quantity	status:string:Available
-apple	1.5			
-banana	0.75	10		
-orange	2.0		=self.basePrice*2	Premium
-cherry	3.5	5	=self.basePrice*self.quantity*0.9	

@@ -1,0 +1,13 @@
+name:name	level:level	element:Element	hitPoints:hitPoints	stats.attack:integer	stats.defense:integer	stats.speed:integer	spawnPos._1:float	spawnPos._2:float	spawnPos._3:float	drops[1]:name|nil	drops[2]:name|nil	drops[3]:name|nil	resistances[1]:Element	resistances[1]=:integer	resistances[2]:Element	resistances[2]=:integer	immunities:{Element}|nil	attackPower:float
+# ^ This file demonstrates four kinds of exploded columns:
+# ^ stats.*     -> record {attack:integer,defense:integer,speed:integer}
+# ^ spawnPos._* -> tuple {float,float,float} representing (x, y, z) coordinates
+# ^ drops[*]    -> array of up to 3 item names that can drop on defeat
+# ^ resistances[*]/resistances[*]= -> map {Element:integer} for resistance percentages
+# ^ immunities is a NON-exploded array {Element}|nil for comparison with exploded arrays
+# ^ attackPower uses an expression referencing 'baseDamage' published by Constant.tsv
+goblin	5	Earth	80	8	4	6	10.5	20.0	0.0	healthPotion			Earth	15	Water	-10		=baseDamage*0.8
+fireImp	10	Fire	120	15	8	12	-5.0	30.0	5.0	manaPotion	healthPotion		Fire	50	Water	-25	Fire	=baseDamage*1.2
+stoneGolem	25	Earth	500	30	40	3	0.0	0.0	0.0	earthAmulet	ironSword		Earth	80	Air	-20	"Earth","Fire"	=baseDamage*2.5
+shadowWraith	40	Shadow	300	35	10	30	-20.0	50.0	10.0	shadowCloak	manaPotion	healthPotion	Shadow	60	Light	-40	Shadow	=baseDamage*3.0
+phoenix	60	Fire	800	50	25	20	100.0	100.0	50.0	fireStaff	legendaryBlade		Fire	90	Water	-50	"Fire","Light"	=baseDamage*5.0

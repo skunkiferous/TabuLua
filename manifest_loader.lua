@@ -49,6 +49,7 @@ local extractFilesDescriptors = files_desc.extractFilesDescriptors
 local matchDescriptorFiles = files_desc.matchDescriptorFiles
 local orderFilesDescByPackageOrder = files_desc.orderFilesDescByPackageOrder
 local loadDescriptorFiles = files_desc.loadDescriptorFiles
+local isFilesDescriptor = files_desc.isFilesDescriptor
 
 local validator_executor = require("validator_executor")
 local runRowValidators = validator_executor.runRowValidators
@@ -449,7 +450,64 @@ local function initializeBadVal(badVal)
     return badVal
 end
 
+-- Checks if a file is a TSV or CSV data file (not just any file like README.md)
+local function isTsvOrCsvFile(file)
+    local lower = file:lower()
+    return lower:sub(-4) == ".tsv" or lower:sub(-4) == ".csv"
+end
+
+-- Checks if a directory has TSV/CSV files ONLY in subdirectories but no package markers directly
+-- This catches the case where user specifies a parent dir instead of package dirs
+-- Returns true if the directory is INVALID:
+--   - Has TSV/CSV files in subdirectories but no manifest/Files.tsv directly
+-- Returns false if the directory is valid:
+--   - Empty directory (or only non-TSV files like README.md)
+--   - Has manifest/Files.tsv directly
+--   - Has TSV/CSV data files directly (simple package without subdirs)
+local function hasSubdirFilesButNoPackageMarkers(directory, files)
+    local dirPrefix = directory
+    -- Normalize: ensure directory ends without separator for prefix matching
+    if dirPrefix:sub(-1) == "/" or dirPrefix:sub(-1) == "\\" then
+        dirPrefix = dirPrefix:sub(1, -2)
+    end
+    local dirPrefixLen = #dirPrefix
+    local hasTsvInSubdirs = false
+    local hasDirectTsvFiles = false
+    local hasPackageMarker = false
+    for _, file in ipairs(files) do
+        -- Check if file belongs to this directory
+        if file:sub(1, dirPrefixLen) == dirPrefix then
+            -- Get the part after the directory prefix
+            local suffix = file:sub(dirPrefixLen + 1)
+            -- Remove leading separator
+            if suffix:sub(1, 1) == "/" or suffix:sub(1, 1) == "\\" then
+                suffix = suffix:sub(2)
+            end
+            -- Check if this is a direct child (no subdirectory separators in suffix)
+            local slashPos = suffix:find("[/\\]")
+            local isDirectChild = (slashPos == nil)
+            if isDirectChild then
+                if isTsvOrCsvFile(file) then
+                    hasDirectTsvFiles = true
+                end
+                if isManifestFile(file) or isFilesDescriptor(file) then
+                    hasPackageMarker = true
+                end
+            else
+                if isTsvOrCsvFile(file) then
+                    hasTsvInSubdirs = true
+                end
+            end
+        end
+    end
+    -- Invalid only if TSV/CSV files exist in subdirs but no package markers and no direct TSV files
+    -- This catches "tutorial/" case but allows simple packages with TSV files directly in the dir
+    return hasTsvInSubdirs and not hasPackageMarker and not hasDirectTsvFiles
+end
+
 -- Collects files from directories and logs any errors
+-- Also validates that each top-level directory contains package markers
+-- Returns files list, or nil if validation fails
 local function collectAndLogFiles(directories, file2dir)
     local files, errors = collectFiles(directories, EXTENSIONS, file2dir, logger)
     if errors then
@@ -457,6 +515,22 @@ local function collectAndLogFiles(directories, file2dir)
             logger:error(err)
         end
         -- We continue anyway, in case we did not need the files that cause errors
+    end
+    -- Validate that each top-level directory contains package markers
+    -- Only error if the directory has files but no manifest directly in it
+    -- (empty directories are allowed - they just produce no packages)
+    local hasInvalidDir = false
+    for _, dir in ipairs(directories) do
+        if dir and dir ~= "" then
+            if hasSubdirFilesButNoPackageMarkers(dir, files) then
+                logger:error("Directory '" .. dir .. "' contains files but no Manifest or Files.tsv directly. " ..
+                    "Specify package directories directly (e.g., 'tutorial/core/' not 'tutorial/').")
+                hasInvalidDir = true
+            end
+        end
+    end
+    if hasInvalidDir then
+        return nil
     end
     return files
 end
@@ -628,6 +702,9 @@ local function processFiles(directories, badVal)
 
     local file2dir = {}
     local files = collectAndLogFiles(directories, file2dir)
+    if not files then
+        return nil
+    end
 
     local raw_files = {}
     local manifest_tsv_files = {}

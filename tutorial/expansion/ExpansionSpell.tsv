@@ -1,0 +1,10 @@
+name:name	element:advancedElement	baseDamage:float	manaCost:integer	scalingPercent:percent	cooldown:float:8.0	totalDamage:float:=self.baseDamage*bossLib.bossScaling(self.scalingPercent)	description:text
+# ^ Similar structure to core Spell.tsv but with expansion-specific differences:
+# ^ element: uses advancedElement (restricted to Shadow, Light, Fire) instead of Element
+# ^ cooldown: higher literal default of 8.0 (vs core's 5.0) for balance
+# ^ totalDamage: uses bossLib.bossScaling() instead of gameLib.percentToMultiplier()
+# ^   bossLib is the expansion's own code library (1.2x multiplier)
+# ^ This demonstrates that each package can have its own libraries and balance parameters.
+voidStrike	Shadow	50.0	60	200%			A devastating strike from the void
+solarFlare	Light	40.0	45	175%	12.0		A blinding flash of solar energy
+infernalWave	Fire	60.0	80	250%	15.0		A massive wave of infernal flame

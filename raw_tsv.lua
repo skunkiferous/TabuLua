@@ -132,9 +132,10 @@ local function isRawTSV(t)
 end
 --- Transposes a raw TSV structure (swaps rows and columns).
 --- Comment/blank lines (stored as strings) are converted to rows with:
---- - Column 1: dummy marker (e.g., "dummy0:comment")
+--- - Column 1: comment placeholder marker (e.g., "__comment1:comment")
 --- - Column 2: original content
 --- - Remaining columns: empty strings
+--- The "__comment" prefix is reserved and should not be used for user columns.
 --- @param t table A valid raw TSV structure
 --- @return table The transposed structure
 --- @error Throws if t is not a valid raw TSV structure
@@ -153,7 +154,7 @@ local function transposeRawTSV(t)
 
     -- Create result structure
     local result = {}
-    local dummies = 0
+    local comment_count = 1
 
     -- Initialize all columns
     for c = 1, max_columns do
@@ -168,17 +169,17 @@ local function transposeRawTSV(t)
                 result[c][r] = cell
             end
         elseif type(row) == "string" then
-            -- For comment/blank lines: column 1 gets dummy marker, column 2 gets original content
+            -- For comment/blank lines: column 1 gets __comment marker, column 2 gets original content
             for c = 1, max_columns do
                 if c == 1 then
-                    result[c][r] = 'dummy'..dummies..':comment'
+                    result[c][r] = '__comment'..comment_count..':comment'
                 elseif c == 2 then
                     result[c][r] = row  -- Preserve original comment/blank content
                 else
                     result[c][r] = ""
                 end
             end
-            dummies = dummies + 1
+            comment_count = comment_count + 1
         else
             error("Invalid row type: " .. type(row), 2)
         end

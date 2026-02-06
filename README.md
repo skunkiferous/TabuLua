@@ -90,13 +90,15 @@ tabulua/
 │   ├── type_parsing.lua  # Core parsing logic
 │   ├── introspection.lua # Type querying utilities
 │   └── ...
-├── demo/                 # Example package demonstrating all features
-│   ├── Manifest.transposed.tsv  # Package manifest
-│   ├── Files.tsv         # File registry
-│   ├── Constant.tsv      # Expression examples
-│   ├── Item.tsv          # Complex types example
-│   ├── Generated.tsv     # COG code generation example
-│   └── Status.tsv        # Enum example
+├── tutorial/             # Example packages demonstrating all features
+│   ├── core/             # Core game data package
+│   │   ├── Manifest.transposed.tsv  # Package manifest
+│   │   ├── Files.tsv     # File registry
+│   │   └── ...           # Data files (Items, Creatures, Spells, etc.)
+│   └── expansion/        # Expansion package (depends on core)
+│       ├── Manifest.transposed.tsv  # Expansion manifest
+│       ├── Files.tsv     # Expansion file registry
+│       └── ...           # Expansion data files
 ├── spec/                 # Test suite
 ├── parsers.lua           # Main type system API
 ├── manifest_loader.lua   # Package loading orchestration
@@ -182,9 +184,9 @@ float|string         -- Number or string
 | `type` | Validated type reference |
 | `regex` | Valid Lua pattern string |
 
-## Demo Package
+## Tutorial Packages
 
-The `demo/` directory contains a complete example package showcasing all TabuLua features:
+The `tutorial/` directory contains complete example packages showcasing all TabuLua features:
 
 ### Constant.tsv - Expression Evaluation
 
@@ -313,18 +315,20 @@ The test scripts will:
 The easiest way to use TabuLua is via the `reformatter.lua` CLI tool:
 
 ```bash
-# Validate and reformat files in-place
-lua reformatter.lua primary/ secondary/
+# Validate and reformat files in-place (specify package directories directly)
+lua reformatter.lua tutorial/core/ tutorial/expansion/
 
 # Export to JSON
-lua reformatter.lua --json demo/
+lua reformatter.lua --json tutorial/core/ tutorial/expansion/
 
 # Export to multiple formats
-lua reformatter.lua --json --lua --xml --export-dir=output demo/
+lua reformatter.lua --json --lua --xml --export-dir=output tutorial/core/ tutorial/expansion/
 
 # See all options
 lua reformatter.lua
 ```
+
+**Note:** Always specify package directories (containing `Manifest.transposed.tsv` or `Files.tsv`) directly, not parent directories.
 
 ### Programmatic Usage
 
@@ -333,7 +337,8 @@ local manifest_loader = require("manifest_loader")
 local parsers = require("parsers")
 
 -- Process all files in directories (validates, parses, evaluates expressions)
-local result = manifest_loader.processFiles({"./data", "./demo"})
+-- Specify package directories directly, not parent directories
+local result = manifest_loader.processFiles({"./tutorial/core", "./tutorial/expansion"})
 
 if result then
     -- result.tsv_files: table mapping file paths to parsed TSV data

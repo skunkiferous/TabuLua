@@ -37,9 +37,6 @@ local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
 local serializeTableXML = serialization.serializeTableXML
 local serializeMessagePackSQLBlob = serialization.serializeMessagePackSQLBlob
 
-local manifest_info = require("manifest_info")
-local isManifestFile = manifest_info.isManifestFile
-
 local isDir = file_util.isDir
 local mkdir = file_util.mkdir
 
@@ -291,22 +288,24 @@ local function generateUsage()
 
     table.insert(lines, "")
     table.insert(lines, "EXAMPLES:")
-    table.insert(lines, "  lua reformatter.lua demo/")
-    table.insert(lines, "      Reformat files in demo/ directory (no export)")
+    table.insert(lines, "  NOTE: Specify package directories directly (containing Manifest or Files.tsv)")
     table.insert(lines, "")
-    table.insert(lines, "  lua reformatter.lua --file=json demo/")
+    table.insert(lines, "  lua reformatter.lua tutorial/core/ tutorial/expansion/")
+    table.insert(lines, "      Reformat files in package directories (no export)")
+    table.insert(lines, "")
+    table.insert(lines, "  lua reformatter.lua --file=json tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Export as JSON (natural format) to exported/json-json-natural/")
     table.insert(lines, "")
-    table.insert(lines, "  lua reformatter.lua --file=json --data=json-typed demo/")
+    table.insert(lines, "  lua reformatter.lua --file=json --data=json-typed tutorial/core/")
     table.insert(lines, "      Export as JSON (typed format) to exported/json-json-typed/")
     table.insert(lines, "")
-    table.insert(lines, "  lua reformatter.lua --file=tsv --data=lua demo/")
+    table.insert(lines, "  lua reformatter.lua --file=tsv --data=lua tutorial/core/")
     table.insert(lines, "      Export as TSV with Lua literals to exported/tsv-lua/")
     table.insert(lines, "")
-    table.insert(lines, "  lua reformatter.lua --file=sql --data=json-natural --export-dir=db demo/")
+    table.insert(lines, "  lua reformatter.lua --file=sql --data=json-natural --export-dir=db mypkg/")
     table.insert(lines, "      Export as SQL with JSON columns to db/sql-json-natural/")
     table.insert(lines, "")
-    table.insert(lines, "  lua reformatter.lua --file=lua --file=json demo/")
+    table.insert(lines, "  lua reformatter.lua --file=lua --file=json tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Export to multiple formats (uses defaults for each)")
 
     return table.concat(lines, "\n")
@@ -320,20 +319,20 @@ end
 local function reformat(tsv_files, raw_files, badVal)
     for file_name, tsv in pairs(tsv_files) do
         if raw_files[file_name] then
-            if not isManifestFile(file_name) then
-                local new_content = tostring(tsv)
-                local old_content = raw_files[file_name]
-                if new_content ~= old_content then
-                    if (new_content .. '\n') == old_content then
-                        logger:info("Last EOL of " .. file_name .. " has changed")
-                    else
-                        logger:warn("Content of " .. file_name .. " has changed")
-                    end
-                    if safeReplaceFile(file_name, new_content) then
-                        logger:info("Updated: " .. file_name)
-                    else
-                        badVal(file_name, "Failed to update")
-                    end
+            -- Manifests are now reformatted too: user-defined fields are preserved
+            -- in the tsv_model, and __comment placeholders restore comment lines
+            local new_content = tostring(tsv)
+            local old_content = raw_files[file_name]
+            if new_content ~= old_content then
+                if (new_content .. '\n') == old_content then
+                    logger:info("Last EOL of " .. file_name .. " has changed")
+                else
+                    logger:warn("Content of " .. file_name .. " has changed")
+                end
+                if safeReplaceFile(file_name, new_content) then
+                    logger:info("Updated: " .. file_name)
+                else
+                    badVal(file_name, "Failed to update")
                 end
             end
         else

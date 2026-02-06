@@ -1,0 +1,13 @@
+name:name	element:Element	baseDamage:float	manaCost:integer	scalingPercent:percent	cooldown:float:5.0	areaRadius:float:0.0	totalDamage:float:=self.baseDamage*gameLib.percentToMultiplier(self.scalingPercent)	description:text
+# ^ scalingPercent uses the 'percent' type: accepts "150%" (parsed as 1.5) or "3/2" (parsed as 1.5)
+# ^ cooldown:float:5.0 has a LITERAL default of 5.0 - empty cells get this value
+# ^ areaRadius:float:0.0 has a LITERAL default of 0.0
+# ^ totalDamage has an EXPRESSION default: =self.baseDamage*gameLib.percentToMultiplier(self.scalingPercent)
+# ^   Expression defaults reference other columns via self.columnName and can call library functions.
+# ^   When a cell provides an explicit value (like =0 for iceShield), it overrides the default.
+fireball	Fire	25.0	30	150%		3.5		A ball of fire that explodes on impact
+iceShield	Water	0.0	20	100%	10.0	0.0	=0	A protective barrier of ice that deals no damage
+earthquake	Earth	40.0	50	200%	15.0	5.0		Shakes the ground in a wide area
+gust	Air	10.0	10	1/2	2.0			A quick burst of wind
+shadowBolt	Shadow	30.0	35	175%	8.0			A bolt of pure shadow energy
+holyLight	Light	20.0	25	5/4		2.0		A radiant beam that heals allies and damages undead

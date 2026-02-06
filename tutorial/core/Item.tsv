@@ -1,0 +1,17 @@
+name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:Element|nil	tags:{string}	devNotes:comment|nil
+# ^ name: primary key using 'name' type (dotted identifier)
+# ^ catalogId: 'long' type for 64-bit IDs (note extreme values to test range)
+# ^ code: custom type 'itemCode' validated with pattern ^[A-Z][A-Z][A-Z]%-[0-9]+$
+# ^ rarity: references the Rarity enum (defined in Rarity.tsv, registered via superType=enum)
+# ^ price: custom type 'gold' (alias for uint, unsigned 32-bit integer)
+# ^ element: union type Element|nil - optional; nil means the item has no elemental affinity
+# ^ tags: array of strings {string} - values listed WITHOUT outer braces, strings quoted
+# ^ devNotes: union comment|nil - optional strippable developer notes
+ironSword	9007199254740993	SWD-001	Common	150	3.5	false	Fire	"weapon","melee","iron"	Basic starter weapon
+oakShield	9007199254740994	SHD-001	Common	120	5.0	false		"armor","shield","wood"	nil
+healthPotion	1152921504606846976	POT-001	Common	25	0.5	true		"consumable","healing"	Cheap and effective
+fireStaff	4611686018427387904	STF-001	Rare	500	2.0	false	Fire	"weapon","magic","fire"	Casts fireballs
+shadowCloak	9223372036854775807	CLK-001	Epic	2000	1.0	false	Shadow	"armor","cloak","shadow"	Grants invisibility
+legendaryBlade	-9223372036854775808	BLD-001	Legendary	9999	4.0	false	Light	"weapon","melee","legendary"	The fabled Blade of Dawn
+earthAmulet	123456789012345678	AML-001	Uncommon	300	0.2	false	Earth	"accessory","amulet","earth"	nil
+manaPotion	987654321098765432	POT-002	Common	30	0.5	true	Water	"consumable","mana"	Restores mana

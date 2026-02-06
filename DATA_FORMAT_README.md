@@ -310,6 +310,14 @@ There are multiple types extending `string`:
 
 A comment line can be added anywhere in the data files (except the first line) using the Unix shell comment character (`#`). This must be the first character on that line. By convention, the comment applies to the line below, as in most programming languages. Since the TSV files should always have their header as the first line, that means you cannot "comment" on them that way. Instead, place the comment right under the header, and start it with the caret ^ character, to imply the comment applies to the line *above*. That way, the header line can also have a comment describing the meaning/usage of individual fields.
 
+### Comments in Transposed Files
+
+Comments are fully supported in transposed files (`.transposed.tsv`). When a transposed file is loaded, comment lines are internally converted to placeholder columns with names like `__comment1`, `__comment2`, etc. (1-indexed, consistent with Lua conventions). These placeholder columns have the type `comment` and preserve the original comment content.
+
+When the file is reformatted and saved, these `__comment` placeholders are automatically converted back to proper comment lines in their original positions.
+
+**Reserved prefix:** The `__comment` prefix is reserved for internal use by the system. User-defined column names should not start with `__comment` to avoid conflicts with comment handling.
+
 ## Primary Keys
 
 The first field/column is the "primary key" of the line/row, and its value must be unique among all the lines/rows in that file. Furthermore, the "primary key" should be unique among all instances of a type *or its sub-types*.
@@ -978,7 +986,7 @@ Row validators run per-row, so complex validators will slow parsing. File and pa
 **Package Validator Messages:**
 
 ```
-[ERROR] Package validation failed in demo:
+[ERROR] Package validation failed in tutorial.core:
   Validator: all items must reference valid category
   Error: Items reference non-existent categories
 ```

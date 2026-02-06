@@ -1,0 +1,28 @@
+package_id:package_id	tutorial.expansion
+# ^ This expansion package depends on tutorial.core (see dependencies and load_after below).
+# ^ It demonstrates how mod packages extend the core game with new content.
+# Human-readable package name
+name:string	Chronicles of Tabula - Shadow Realm Expansion
+# Custom field: content rating for this expansion (user-defined, not in standard schema)
+contentRating:string	Teen
+# Expansion version (independent of core version)
+version:version	1.1.0
+# Package description
+description:markdown	Expansion adding boss encounters, new items, and shadow realm spells.\nDepends on tutorial.core for base types, enums, and libraries.
+# Optional source URL
+url:http|nil	
+# Custom types extending core types (demonstrates cross-package type chaining)
+# bossLevel: extends 'level' (which itself extends ubyte min=1,max=99) adding min=50
+# bossHp: extends 'hitPoints' (which extends integer min=0) adding expression validator
+# advancedElement: a focused enum for shadow realm content (Fire, Light, Shadow only)
+custom_types:{custom_type_def}|nil	{name="advancedElement",parent="{enum:Fire|Light|Shadow}"},{min=50,name="bossLevel",parent="level"},{name="bossHp",parent="hitPoints",validate="value >= 1000 or 'boss HP must be at least 1000'"},{name="superType",parent="type_spec|nil"}
+# Expansion-specific code library
+code_libraries:{{name,string}}|nil	{"bossLib","libs/bossLib.lua"}
+# DEPENDENCIES: hard requirement on tutorial.core version >=1.0.0
+# If tutorial.core is missing or its version is too old, loading will fail.
+dependencies:{{package_id,cmp_version}}|nil	{"tutorial.core",">=1.0.0"}
+# LOAD_AFTER: ensures tutorial.core is fully loaded before this package.
+# This guarantees that core's enums, custom types, and published data are available.
+load_after:{package_id}|nil	{'tutorial.core'}
+# Package-level validator
+package_validators:{validator_spec}|nil	{expr="count(files) > 0 or 'expansion must have data files'",level="warn"}

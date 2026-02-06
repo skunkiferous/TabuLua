@@ -285,15 +285,21 @@ function M.restrictNumber(badVal, numberType, min, max, newName)
         local limits = state.NUMBER_LIMITS[baseType]
         if limits then
             -- Validate new range is within old range
+            -- Only error if the user explicitly specified a value (t_min/t_max ~= 'nil').
+            -- When the value was defaulted (nil -> SAFE_INTEGER), silently inherit parent's limit.
             if limits.min and min and min < limits.min then
-                utils.log(badVal, 'number', min,
-                    'cannot be less than existing min ' .. limits.min)
-                return nil, newParserName
+                if t_min ~= 'nil' then
+                    utils.log(badVal, 'number', min,
+                        'cannot be less than existing min ' .. limits.min)
+                    return nil, newParserName
+                end
             end
             if limits.max and max and max > limits.max then
-                utils.log(badVal, 'number', max,
-                    'cannot be greater than existing max ' .. limits.max)
-                return nil, newParserName
+                if t_max ~= 'nil' then
+                    utils.log(badVal, 'number', max,
+                        'cannot be greater than existing max ' .. limits.max)
+                    return nil, newParserName
+                end
             end
             -- Take most restrictive bounds
             min = math.max(min or -math.huge, limits.min or -math.huge)

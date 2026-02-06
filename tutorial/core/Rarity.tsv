@@ -1,0 +1,9 @@
+name:identifier	displayName:text	dropWeight:float
+# ^ Another enum file. Unlike Element.tsv, this one includes a numeric column (dropWeight)
+# ^ showing that enum files can carry additional typed data beyond the name key.
+# ^ dropWeight is a float representing how likely this rarity level is to appear in loot.
+Common	Common	0.5
+Uncommon	Uncommon	0.25
+Rare	Rare	0.15
+Epic	Epic	0.08
+Legendary	Legendary	0.02
