@@ -744,6 +744,7 @@ local function processFiles(directories, badVal)
         package_order = package_order,
         packages = packages,
         joinMeta = joinMeta,
+        file2dir = file2dir,
         validationPassed = validationPassed,
         validationWarnings = validationWarnings,
     }

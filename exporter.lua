@@ -77,6 +77,17 @@ end
 -- Lua base types
 local base_types = {"boolean", "integer", "number", "string", "table"}
 
+-- Computes the relative path of a file for export.
+-- Uses file2dir to strip the source directory prefix from absolute paths.
+local function computeRelativePath(file_name, file2dir)
+    if not file2dir then return file_name end
+    local dir = file2dir[file_name]
+    if dir then
+        return file_name:sub(#dir + 2)
+    end
+    return file_name
+end
+
 -- Ensures the parent directory of the given path exists.
 -- Uses dirChecked table to avoid redundant checks.
 -- Returns true on success, false on failure.
@@ -241,6 +252,7 @@ local function exportTSV(process_files, exportParams, serializer)
     local tsv_files = process_files.tsv_files
     local raw_files = process_files.raw_files
     local joinMeta = process_files.joinMeta
+    local file2dir = process_files.file2dir
     local baseExportDir = exportParams.exportDir
     local formatSubdir = exportParams.formatSubdir or ""
     local exportDir = formatSubdir ~= "" and pathJoin(baseExportDir, formatSubdir) or baseExportDir
@@ -270,7 +282,8 @@ local function exportTSV(process_files, exportParams, serializer)
             goto continue
         end
         local is_tsv = hasExtension(file_name, "tsv")
-        local new_name = pathJoin(exportDir, file_name)
+        local relative_name = computeRelativePath(file_name, file2dir)
+        local new_name = pathJoin(exportDir, relative_name)
         if is_tsv and fileExt ~= "tsv" then
             new_name = changeExtension(new_name, fileExt)
         end
@@ -696,13 +709,15 @@ end
 local function exportMessagePack(process_files, exportParams)
     local tsv_files = process_files.tsv_files
     local raw_files = process_files.raw_files
+    local file2dir = process_files.file2dir
     local baseExportDir = exportParams.exportDir
     local formatSubdir = exportParams.formatSubdir or ""
     local exportDir = formatSubdir ~= "" and pathJoin(baseExportDir, formatSubdir) or baseExportDir
     local dirChecked = {}
     for file_name, content in pairs(raw_files) do
         local is_tsv = hasExtension(file_name, "tsv")
-        local new_name = pathJoin(exportDir, file_name)
+        local relative_name = computeRelativePath(file_name, file2dir)
+        local new_name = pathJoin(exportDir, relative_name)
         if is_tsv then
             new_name = changeExtension(new_name, "mpk")
         end
@@ -781,9 +796,11 @@ local function exportSchema(exportDir, processedFiles, badVal)
     end
     local tsv_files = processedFiles.tsv_files
     local raw_files = processedFiles.raw_files
-    raw_files[new_name] = schema
+    -- Use relative key so subsequent exporters can construct correct output paths
+    local schema_key = "schema.tsv"
+    raw_files[schema_key] = schema
     -- processTSV(options_extractor, expr_eval, parser_finder, source_name, raw_tsv, badVal, table_subscribers, transposed)
-    tsv_files[new_name] = processTSV(nil, nil, parseType, new_name, raw_tsv_model, badVal, nil, false)
+    tsv_files[schema_key] = processTSV(nil, nil, parseType, new_name, raw_tsv_model, badVal, nil, false)
     return true
 end
 
