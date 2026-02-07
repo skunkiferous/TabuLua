@@ -39,6 +39,9 @@ local serializeTableJSON = serialization.serializeTableJSON
 local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
 local serializeXML = serialization.serializeXML
 local serializeMessagePack = serialization.serializeMessagePack
+local serializeSQLBlob = serialization.serializeSQLBlob
+
+local base64 = require("base64")
 
 local parsers = require("parsers")
 local extendsOrRestrict = parsers.extendsOrRestrict
@@ -72,6 +75,35 @@ local function isCommentColumn(col)
     local colType = col.type
     local baseType = colType:match("^(.+)|nil$") or colType
     return baseType == "comment" or extendsOrRestrict(baseType, "comment")
+end
+
+-- Returns true if a column is of type hexbytes (or extending it), stripping |nil suffix.
+local function isHexBytesColumn(col)
+    local colType = col.type
+    local baseType = colType:match("^(.+)|nil$") or colType
+    return baseType == "hexbytes" or extendsOrRestrict(baseType, "hexbytes")
+end
+
+-- Returns true if a column is of type base64bytes (or extending it), stripping |nil suffix.
+local function isBase64BytesColumn(col)
+    local colType = col.type
+    local baseType = colType:match("^(.+)|nil$") or colType
+    return baseType == "base64bytes" or extendsOrRestrict(baseType, "base64bytes")
+end
+
+-- Returns true if a column is a bytes type (hexbytes or base64bytes).
+local function isBytesColumn(col)
+    return isHexBytesColumn(col) or isBase64BytesColumn(col)
+end
+
+-- Converts a parsed bytes value to raw binary data.
+local function bytesToBinary(col, value)
+    if value == nil then return nil end
+    if isHexBytesColumn(col) then
+        return value:gsub("..", function(h) return string.char(tonumber(h, 16)) end)
+    else
+        return base64.decode(value)
+    end
 end
 
 -- Lua base types
@@ -560,17 +592,23 @@ local function colToSQL(col)
     local key = colType .. ":" .. tostring(optional)
     local sqlType = sql_types[key]
     if sqlType == nil then
-        for _, b in ipairs(base_types) do
-            if colType:sub(-4) == "|nil" then
-                optional = true
-                colType = colType:sub(1,-5)
-            end
-            if (colType == b) or extendsOrRestrict(colType, b) then
-                sqlType = sql_types[b]
-                if not optional and not sqlType:find("NOT NULL") then
-                    sqlType = sqlType .. " NOT NULL"
+        if colType:sub(-4) == "|nil" then
+            optional = true
+            colType = colType:sub(1,-5)
+        end
+        -- Check for bytes types first (map to BLOB)
+        if (colType == "hexbytes") or extendsOrRestrict(colType, "hexbytes")
+            or (colType == "base64bytes") or extendsOrRestrict(colType, "base64bytes") then
+            sqlType = optional and "BLOB" or "BLOB NOT NULL"
+        else
+            for _, b in ipairs(base_types) do
+                if (colType == b) or extendsOrRestrict(colType, b) then
+                    sqlType = sql_types[b]
+                    if not optional and not sqlType:find("NOT NULL") then
+                        sqlType = sqlType .. " NOT NULL"
+                    end
+                    break
                 end
-                break
             end
         end
         if sqlType == nil then
@@ -580,9 +618,9 @@ local function colToSQL(col)
         sql_types[key] = sqlType
         logger:info("Mapping column type " .. col.type .. " to SQL type " .. sqlType)
     end
-    assert (isName(col.name), "Invalid column name: " .. col.name)
-    -- Replace dots with underscores for SQL-safe column names
-    local sqlColName = col.name:gsub("%.", "_")
+    -- Replace dots, brackets, and '=' with underscores for SQL-safe column names
+    -- (exploded columns use bracket notation like materials[1] or materials[iron]=)
+    local sqlColName = col.name:gsub("[%.%[%]%=]", "_"):gsub("_+$", "")
     local result = '"' .. sqlColName .. '" ' .. sqlType
     if col.idx == 1 then
         result = result .. " PRIMARY KEY"
@@ -593,9 +631,9 @@ end
 -- Builds the SQL CREATE TABLE statement followed by the INSERT statement
 -- export_cols: optional array of {col_idx, is_root, root_name, structure} for collapsed column export
 local function createTableInsertSQL(header, export_cols)
-    local source_path = splitPath(header.__source)
-    local file = source_path[#source_path]
-    local file_without_ext = file:match("^(.*)%.[^%.]+$")
+    local source_path = splitPath(header.__source or "")
+    local file = source_path[#source_path] or "unknown"
+    local file_without_ext = file:match("^(.*)%.[^%.]+$") or file
     local tableName = '"' .. file_without_ext .. '"'
     local result = "CREATE TABLE " .. tableName .. " "
     local sep = "(\n  "
@@ -627,11 +665,12 @@ local function createTableInsertSQL(header, export_cols)
     end
 
     result = result .. ")"
-    local rows = #header.__dataset
+    local dataset = header.__dataset or {}
+    local rows = #dataset
     local not_empty = (rows > 1)
     if not_empty then
         not_empty = false
-        for i, row in ipairs(header.__dataset) do
+        for i, row in ipairs(dataset) do
             if i > 1 and type(row) == "table" then
                 not_empty = true
                 break
@@ -679,6 +718,15 @@ local function exportSQL(process_files, exportParams)
                 result = result .. ") VALUES --"
             end
             return result
+        end
+        -- Convert bytes types to SQL BLOB literals
+        if value ~= nil and isBytesColumn(col) then
+            if isHexBytesColumn(col) then
+                return "X'" .. value .. "'"
+            else
+                local binary = base64.decode(value)
+                return serializeSQLBlob(binary)
+            end
         end
         return serializeSQL(value, tableSerializer)
     end
@@ -731,12 +779,27 @@ local function exportMessagePack(process_files, exportParams)
             else
                 -- Since the MessagePack API only allows packing tables using the default implementation,
                 -- I need to make a copy of the entire file, so that I can control the output format
+                -- Identify bytes columns from the header row for binary conversion
+                local bytes_cols = {}
+                local headerRow = tsv[1]
+                if headerRow and type(headerRow) == "table" then
+                    for j, col in ipairs(headerRow) do
+                        if isBytesColumn(col) then
+                            bytes_cols[j] = col
+                        end
+                    end
+                end
                 local cnt = {}
-                for _, row in ipairs(tsv) do
+                for rowIdx, row in ipairs(tsv) do
                     if type(row) == "table" then
                         local copy = {}
-                        for _, cell in ipairs(row) do
-                            copy[#copy + 1] = cell.parsed
+                        for j, cell in ipairs(row) do
+                            local val = cell.parsed
+                            -- Convert bytes columns to binary (skip header row)
+                            if rowIdx > 1 and bytes_cols[j] and val ~= nil then
+                                val = bytesToBinary(bytes_cols[j], val)
+                            end
+                            copy[#copy + 1] = val
                         end
                         cnt[#cnt + 1] = copy
                     end

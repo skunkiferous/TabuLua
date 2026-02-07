@@ -1,0 +1,8 @@
+name:name	bitmap:hexbytes	bitmapB64:base64bytes
+# ^ name: primary key
+# ^ bitmap: 8x8 monochrome pixel art as hex (8 bytes = 16 hex chars, 1 bit per pixel)
+# ^ bitmapB64: same icon data encoded as base64
+sword	181818187E181818	GBgYGH4YGBg=
+shield	FF818181818181FF	/4GBgYGBgf8=
+potion	3C24247E7E7E7E3C	PCQkfn5+fjw=
+star	10385492FE541028	EDhUkv5UECg=

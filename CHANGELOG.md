@@ -13,6 +13,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.5.3] - 2026-02-07
+
+### Added
+
+- New `hexbytes` built-in type extending `ascii` for hex-encoded binary data. Validates even length
+  and hex characters only, normalizes to uppercase. Exported as native binary (MessagePack) or
+  BLOB with `X'...'` literals (SQL).
+- New `base64bytes` built-in type extending `ascii` for base64-encoded binary data (RFC 4648).
+  Validates encoding and normalizes via decode/re-encode round-trip. Exported as native binary
+  (MessagePack) or BLOB (SQL).
+- New `base64` module: pure-Lua RFC 4648 Base64 encode/decode with `encode()`, `decode()`, and
+  `isValid()` functions.
+- Tutorial `Icon.tsv` with 8x8 monochrome pixel art icons demonstrating both binary data types.
+
+### Fixed
+
+- SQL exporter crash on exploded column names with bracket notation (e.g., `materials[1]`).
+  Replaced `isName()` assertion with sanitization for SQL column identifiers.
+- SQL exporter crash when `header.__source` or `header.__dataset` is nil.
+
 ## [0.5.2] - 2026-02-07
 
 ### Added

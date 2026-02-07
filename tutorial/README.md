@@ -21,6 +21,7 @@ tutorial/
     Constant.tsv                     # Published game constants + expressions
     Item.tsv                         # Items: long IDs, enums, arrays, unions
     Item.en.tsv                      # Localization: file joining demo
+    Icon.tsv                         # Icons: hexbytes + base64bytes binary types
     Creature.tsv                     # Creatures: all 4 exploded column types
     Spell.tsv                        # Spells: defaults + percent type
     Recipe.tsv                       # Crafting: exploded maps + ratio type
@@ -211,6 +212,29 @@ tab-indented content.
 *Rationale:* Localization is a natural use case for file joining. Translators work on
 a separate file containing only the text columns, while the primary file keeps all the
 mechanical data. On export, both are merged into a single `ItemLocalized` record.
+
+---
+
+#### Icon.tsv (Binary Data Types)
+
+Demonstrates the `hexbytes` and `base64bytes` types for storing binary data
+in TSV files. Each row represents an 8x8 monochrome pixel art icon (1 bit per
+pixel = 8 bytes).
+
+Columns: `name:name`, `bitmap:hexbytes`, `bitmapB64:base64bytes`
+
+- **`hexbytes`**: Hex-encoded binary data, always reformatted to uppercase.
+  Each byte is two hex characters (e.g., `FF` = 255).
+- **`base64bytes`**: The same binary data encoded as RFC 4648 base64.
+
+Both types extend `ascii` and store their encoded representation in TSV. When
+exporting to **binary targets** (MessagePack or SQL), the encoded strings are
+automatically converted to native binary:
+
+- **MessagePack**: raw binary bytes in the `.mpk` file
+- **SQL**: `BLOB` column type with `X'...'` hex literal values
+
+In text exports (JSON, Lua, XML), the values remain as encoded strings.
 
 ---
 
@@ -486,6 +510,8 @@ Quick lookup: which file demonstrates which feature.
 | cmp_version | Expansion Manifest (`dependencies`) |
 | http | Manifests (`url`) |
 | ascii | Recipe.tsv (`recipeCode`) |
+| hexbytes | Icon.tsv (`bitmap`) |
+| base64bytes | Icon.tsv (`bitmapB64`) |
 | percent | Spell.tsv (`scalingPercent`) |
 | ratio | Recipe.tsv (`successRate`) |
 | Array `{type}` | Creature.tsv (`immunities`), Boss.tsv (`lootTable`) |

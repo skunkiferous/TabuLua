@@ -6,10 +6,11 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
+| [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
 | [deserialization](#deserialization) | Data deserialization (Lua, JSON, XML, MessagePack) | read_only |
 | [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization |
-| [exporter](#exporter) | Exports parsed data to multiple formats | error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
+| [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
 | [exploded_columns](#exploded_columns) | Handles exploded/collapsed column structures | read_only, table_utils |
 | [file_joining](#file_joining) | Joins related TSV files by key columns | read_only, table_utils |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
@@ -22,7 +23,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [named_logger](#named_logger) | Logging system with named loggers and levels | *(none)* |
 | [number_identifiers](#number_identifiers) | Numeric/string identifier conversion | error_reporting, read_only |
 | [parsers](#parsers) | Main entry point for type parsing system | parsers.*, read_only |
-| [parsers.builtin](#parsersbuiltin) | Built-in type parsers (boolean, number, string, etc.) | error_reporting, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils |
+| [parsers.builtin](#parsersbuiltin) | Built-in type parsers (boolean, number, string, etc.) | base64, error_reporting, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils |
 | [parsers.generators](#parsersgenerators) | Factory functions for specialized parsers | error_reporting, parsers.state, parsers.utils, predicates, read_only, sparse_sequence, table_utils |
 | [parsers.introspection](#parsersintrospection) | Type querying and relationship analysis | parsers.state, parsers.utils |
 | [parsers.lpeg_parser](#parserslpeg_parser) | LPEG grammar for type specification parsing | parsers.state, parsers.utils |
@@ -50,6 +51,15 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 ---
 
 ## Module Details
+
+### base64
+**File:** [base64.lua](base64.lua)
+
+Pure-Lua RFC 4648 Base64 encode/decode. Provides `encode()`, `decode()`, and `isValid()` for binary data encoding. Used by `parsers.builtin` for the `base64bytes` type and by `exporter` for binary export conversion.
+
+**Dependencies:** read_only
+
+---
 
 ### comparators
 **File:** [comparators.lua](comparators.lua)
@@ -83,7 +93,7 @@ Error collection and reporting system using `badVal` handlers instead of excepti
 
 Exports parsed TSV data to multiple formats including JSON, Lua tables, XML, SQL, and MessagePack.
 
-**Dependencies:** error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model
+**Dependencies:** base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model
 
 ---
 
@@ -199,9 +209,9 @@ Main entry point and public API for the modular type parsing system. Assembles a
 ### parsers.builtin
 **File:** [parsers/builtin.lua](parsers/builtin.lua)
 
-Registers built-in type parsers: boolean, number, integer, float, long, string, text, markdown, identifier, name, version, http, type_spec, regex, percent, any, and integer range types (byte, ubyte, short, ushort, int, uint).
+Registers built-in type parsers: boolean, number, integer, float, long, string, text, markdown, identifier, name, version, http, type_spec, regex, percent, any, hexbytes, base64bytes, and integer range types (byte, ubyte, short, ushort, int, uint).
 
-**Dependencies:** error_reporting, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils
+**Dependencies:** base64, error_reporting, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils
 
 ---
 
@@ -424,6 +434,7 @@ table_utils (base)
         └── sparse_sequence
         └── string_utils
         └── number_identifiers
+        └── base64
         └── table_parsing
             └── predicates
                 └── raw_tsv

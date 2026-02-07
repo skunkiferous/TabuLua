@@ -287,7 +287,9 @@ There are multiple types extending `string`:
 | `ascii` | ASCII-only string (all bytes must be in the range 0-127) |
 | `asciitext` | Extends `ascii`; can contain escaped tabs and newlines like `text`, but restricted to ASCII characters |
 | `asciimarkdown` | Extends `asciitext`; used for markdown-formatted ASCII-only text |
+| `base64bytes` | Extends `ascii`; base64-encoded binary data (RFC 4648 standard alphabet with `=` padding). Normalized via decode+encode round-trip. Exported as native binary in MessagePack and BLOB in SQL |
 | `comment` | Any string with "comment" semantics (can be optionally stripped from exported data) |
+| `hexbytes` | Extends `ascii`; hex-encoded binary data (characters `0-9`, `A-F`, even length). Always reformatted to uppercase. Exported as native binary in MessagePack and BLOB in SQL |
 | `text` | Can contain escaped tabs and newlines. Tab is encoded as `\t`, newline as `\n`, and backslash as `\\` |
 | `markdown` | Extends `text`; used for markdown-formatted text |
 | `cmp_version` | Extends `ascii`; version comparison format: `<op>x.y.z` (e.g., `>=1.0.0`), used for version requirements |

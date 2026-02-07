@@ -26,6 +26,8 @@ local isValidHttpUrl = predicates.isValidHttpUrl
 
 local regex_utils = require("regex_utils")
 
+local base64 = require("base64")
+
 local error_reporting = require("error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
@@ -422,6 +424,44 @@ function M.registerDerivedParsers()
     -- ASCII-only string (all bytes must be 0-127)
     -- Must be registered before types that extend it (name, type, type_spec, version, cmp_version)
     registration.restrictWithValidator(ownBadVal, 'string', 'ascii', isValidASCII)
+
+    -- Hex-encoded binary data (uppercase, even length)
+    -- E.g. "48656C6C6F" represents the bytes for "Hello"
+    registration.extendParser(ownBadVal, 'ascii', 'hexbytes',
+    function (badVal, value, _reformatted, _context)
+        if #value % 2 ~= 0 then
+            utils.log(badVal, 'hexbytes', value,
+                "hex string must have even length")
+            return nil, value
+        end
+        if value:find("[^0-9A-Fa-f]") then
+            utils.log(badVal, 'hexbytes', value,
+                "invalid hex character (expected 0-9, A-F)")
+            return nil, value
+        end
+        local upper = value:upper()
+        return upper, upper
+    end)
+
+    -- Base64-encoded binary data (RFC 4648 standard alphabet with '=' padding)
+    -- E.g. "SGVsbG8=" represents the bytes for "Hello"
+    registration.extendParser(ownBadVal, 'ascii', 'base64bytes',
+    function (badVal, value, _reformatted, _context)
+        if not base64.isValid(value) then
+            utils.log(badVal, 'base64bytes', value,
+                "invalid base64 encoding")
+            return nil, value
+        end
+        -- Round-trip to canonical form
+        local decoded = base64.decode(value)
+        if not decoded then
+            utils.log(badVal, 'base64bytes', value,
+                "failed to decode base64")
+            return nil, value
+        end
+        local canonical = base64.encode(decoded)
+        return canonical, canonical
+    end)
 
     -- A name is a "chain" of identifiers
     -- E.g. "a.b.c"
