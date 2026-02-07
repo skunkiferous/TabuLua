@@ -1,4 +1,4 @@
--- gameLib.lua - Game utility functions for Chronicles of Tabula
+-- gameLib.lua - Game utility functions for Chronicles of Tabulua
 -- This code library is registered in Manifest.transposed.tsv and available
 -- in expressions (=gameLib.func(...)) and COG blocks (###gameLib.func(...)).
 local M = {}

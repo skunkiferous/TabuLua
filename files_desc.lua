@@ -50,7 +50,7 @@ local FILES_DESC = "files.tsv"
 -- Expected columns of the "files descriptor" files
 local FILE_NAME_COL = "fileName:string"
 local TYPE_NAME_COL = "typeName:type_spec"
-local SUPER_TYPE_COL = "superType:superType"
+local SUPER_TYPE_COL = "superType:super_type"
 local BASE_TYPE_COL = "baseType:boolean"
 local PUBLISH_CONTEXT_COL = "publishContext:name|nil"
 local PUBLISH_COLUMN_COL = "publishColumn:name|nil"
@@ -240,10 +240,14 @@ local function checkTypeName(extends, fileDesc, fileName, typeName, superType, l
             fileNameWithoutExt = fileNameWithoutPath:sub(1, -idx-1)
         end
         if typeName:lower() ~= fileNameWithoutExt:lower() then
-            log:warn("typeName '" .. typeName
-                .. "' in " .. fileDesc
-                .. " should match fileName '" .. fileName
-                .. "' without extension")
+            -- Retry after removing dots (e.g., Item.en -> ItemEn matches ItemEN)
+            local dotless = fileNameWithoutExt:gsub("%.", "")
+            if typeName:lower() ~= dotless:lower() then
+                log:warn("typeName '" .. typeName
+                    .. "' in " .. fileDesc
+                    .. " should match fileName '" .. fileName
+                    .. "' without extension")
+            end
         end
         if superType and #superType > 0 then
             if typeName:lower() == superType:lower() then

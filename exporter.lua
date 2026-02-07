@@ -66,6 +66,14 @@ local groupSecondaryFiles = file_joining.groupSecondaryFiles
 local findFilePath = file_joining.findFilePath
 local joinFiles = file_joining.joinFiles
 
+-- Returns true if a column is of type comment (or comment|nil, or a user type extending comment).
+-- Comment columns are developer-only and should be stripped from exports.
+local function isCommentColumn(col)
+    local colType = col.type
+    local baseType = colType:match("^(.+)|nil$") or colType
+    return baseType == "comment" or extendsOrRestrict(baseType, "comment")
+end
+
 -- Lua base types
 local base_types = {"boolean", "integer", "number", "string", "table"}
 
@@ -342,14 +350,18 @@ local function exportTSV(process_files, exportParams, serializer)
                 if exportExploded or not has_exploded then
                     -- Export all columns as-is
                     for j = 1, #header do
-                        export_cols[#export_cols + 1] = {col_idx = j}
+                        if not isCommentColumn(header[j]) then
+                            export_cols[#export_cols + 1] = {col_idx = j}
+                        end
                     end
                 else
                     -- Collapsed export: group exploded columns
                     local processed_roots = {}
                     for j = 1, #header do
                         local col = header[j]
-                        if col.is_exploded and col.exploded_path then
+                        if isCommentColumn(col) then
+                            -- Skip comment columns
+                        elseif col.is_exploded and col.exploded_path then
                             local root_name = col.exploded_path[1]
                             if not processed_roots[root_name] then
                                 processed_roots[root_name] = true

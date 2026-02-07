@@ -13,6 +13,58 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.5.2] - 2026-02-07
+
+### Added
+
+- `super_type` is now a built-in type alias for `type_spec|nil`. Packages no longer need to
+  define it as a custom type in their manifests.
+- New "Cell Value Formatting" section in DATA_FORMAT_README.md documenting how to write values
+  for all types (primitives, containers, nil, enums, quoting rules).
+- New "Validation-Related Types" subsection in DATA_FORMAT_README.md documenting `expression`,
+  `error_level`, `validator_spec`, and `super_type` built-in types.
+- DATA_FORMAT_README.md now documents `self` references in regular expressions (not just defaults),
+  intra-file row references, and the difference between expression context (`self.col`) and
+  validator context (`self.col.parsed`).
+- DATA_FORMAT_README.md now documents custom manifest fields, `package_validators`, and the
+  full set of Files.tsv columns including `rowValidators` and `fileValidators`.
+- Tutorial README added to the documentation table in README.md.
+
+### Changed
+
+- `comment` and `comment|nil` columns (e.g., `devNotes`) are now automatically stripped from all
+  export formats (JSON, SQL, XML, Lua, TSV). Comment columns are developer-only annotations
+  preserved during reformatting but excluded from production exports.
+- `number` type usage info downgraded from deprecation warning to informational message.
+  The `number` type is useful when you want mixed integer/decimal formatting (e.g., `loadOrder`),
+  whereas `float` forces all values to decimal format (e.g., `5` becomes `5.0`).
+- Lua code library files (`.lua`) now log at info level ("Loading code library: ...") instead of
+  warning "Don't know how to process" and "No priority found for". Libraries referenced via
+  manifest `code_libraries` don't need entries in `Files.tsv`.
+- Array parser now gives a specific warning when values are unnecessarily wrapped in `{}`:
+  "Value {...} is wrapped in {} but array braces are added automatically; remove the outer {}"
+  instead of the generic "Assuming ... is a single unquoted string".
+- `typeName` vs `fileName` check now tolerates dotted filenames by comparing with dots removed
+  (e.g., `Item.en.tsv` with typeName `ItemEN` no longer triggers a spurious warning).
+- README.md slimmed down: removed duplicated type system reference, tutorial examples, and
+  package system sections that are already covered in DATA_FORMAT_README.md.
+- Files.tsv `superType` column now uses the built-in `super_type` type instead of requiring
+  a custom type alias in each package manifest.
+
+### Fixed
+
+- Fixed `findFilePath` suffix matching in `file_joining` that could match wrong files across
+  packages (e.g., `ExpansionItem.tsv` matching when looking for `Item.tsv`). The function now
+  requires a path separator boundary before the filename match.
+- Fixed tutorial data: `load_after` value in expansion manifest corrected from `{'tutorial.core'}`
+  to `"tutorial.core"` (array braces are added automatically by the parser).
+- Fixed tutorial data: renamed "Chronicles of Tabula" to "Chronicles of Tabulua" throughout.
+- Fixed tutorial data: `tags` column type changed from `{string}` to `{name}` in Item.tsv and
+  ExpansionItem.tsv to match the actual tag values (dotted identifiers).
+- Fixed REFORMATTER.md example paths that were broken (duplicated/wrong directory paths).
+- Fixed README.md CLI examples using non-existent `--json` shorthand flags; corrected to
+  `--file=json` syntax.
+
 ## [0.5.1] - 2026-02-06
 
 ### Added

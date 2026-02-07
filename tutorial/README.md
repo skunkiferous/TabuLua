@@ -1,12 +1,12 @@
-# Chronicles of Tabula - Tutorial
+# Chronicles of Tabulua - Tutorial
 
-A comprehensive tutorial for **TabuLua** (v0.5.0), themed as an RPG game data system.
+A comprehensive tutorial for **TabuLua** (v0.5.2), themed as an RPG game data system.
 It demonstrates virtually every feature of the TabuLua typed TSV format through two
 interconnected packages: a core game and an expansion mod.
 
 ## Prerequisites
 
-- **Lua 5.4** (or LuaJIT) with TabuLua dependencies installed
+- **Lua 5.4** with TabuLua dependencies installed
 - Run from the TabuLua project root directory
 
 ## Directory Structure
@@ -90,7 +90,6 @@ but are otherwise fully supported.
 | `evenLevel` | `integer` | `validate="value >= 0 and value % 2 == 0"` | Demonstrates expression-based validation. The Lua expression is evaluated at parse time. |
 | `BaseStats` | `{attack:integer,...}` | (none) | Named record type alias. Defined here so that the expansion can **extend** it with additional fields (see Boss.tsv). |
 | `Point2D` | `{float,float}` | (none) | Named tuple type alias. Defined here so that the expansion can **extend** it to 3D (see Boss.tsv). |
-| `superType` | `type_spec\|nil` | (none) | Utility alias needed by Files.tsv's column schema. |
 
 **Code library:** `gameLib` loaded from `libs/gameLib.lua`, providing math utilities
 (`circleArea`, `lerp`, `clamp`, `percentToMultiplier`) available in expressions and COG blocks.
@@ -173,7 +172,7 @@ enables a data-driven design. Changing `baseDamage` here automatically updates e
 creature's `attackPower` expression in Creature.tsv.
 
 The `comment` type is a strippable annotation: it is preserved during reformatting but
-can be excluded on export, keeping production data clean of dev notes.
+automatically excluded from all exports, keeping production data clean of dev notes.
 
 ---
 
@@ -189,8 +188,8 @@ Demonstrates the richest variety of column types in a single file.
 | `rarity` | `Rarity` | Enum reference (defined in Rarity.tsv) |
 | `price` | `gold` | Custom type alias for `uint` |
 | `element` | `Element\|nil` | Union type: optional enum. `nil` means no elemental affinity |
-| `tags` | `{string}` | Array of strings. Values listed as `"weapon","melee","iron"` (no outer braces) |
-| `devNotes` | `comment\|nil` | Optional strippable comment |
+| `tags` | `{name}` | Array of names. Values listed as `"weapon","melee","iron"` (no outer braces) |
+| `devNotes` | `comment\|nil` | Optional developer comment (automatically stripped from exports) |
 
 *Rationale:* Items are the central data entity in any RPG. Having items reference enums
 (`Rarity`, `Element`), use custom validated types (`itemCode`, `gold`), support optional
@@ -344,7 +343,7 @@ extend, and reuse types from a core package.
 - `dependencies: {'tutorial.core','>=1.0.0'}` -- Hard requirement. Loading fails if the
   core package is missing or its version is below 1.0.0.
 
-- `load_after: {'tutorial.core'}` -- Guarantees core is fully loaded before the expansion.
+- `load_after: "tutorial.core"` -- Guarantees core is fully loaded before the expansion.
   This ensures core's enums, custom types, and published constants are available.
 
 **Custom field:** `contentRating` demonstrates that expansion manifests can also have
@@ -446,7 +445,7 @@ cooldowns, all expressed through the default value system.
    `{'tutorial.core','>=1.0.0'}` means "require tutorial.core version 1.0.0 or later."
 
 3. **Load order is explicit** via `load_after`. The expansion declares
-   `load_after:{'tutorial.core'}` to ensure core's enums, types, and published data
+   `load_after:"tutorial.core"` to ensure core's enums, types, and published data
    are registered before the expansion's files are processed.
 
 4. **Types flow across packages**: Once core registers `Element` as an enum, `gold` as

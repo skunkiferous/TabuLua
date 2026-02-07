@@ -195,7 +195,7 @@ The type system is based on the types of Lua. The basic types, which are expecte
 |------|-------------|
 | `boolean` | Boolean value (`true` or `false`) |
 | `integer` | Integer number (safe range for JSON/LuaJIT compatibility: ±2^53) |
-| `float` | Floating-point number (always formatted with decimal point, e.g., `5.0`) |
+| `float` | Floating-point number (input can be any numeric format; always reformatted with a decimal point, e.g., `5` becomes `5.0`) |
 | `string` | Text string |
 
 > **Note:** The `number` type exists as the parent type of both `integer`, `float`, and `long`, but direct usage of `number` in column types is deprecated. Use `float` for decimal values, `integer` for common whole numbers, or `long` when full 64-bit precision is required. This ensures consistent formatting and better compatibility across Lua versions.
@@ -306,6 +306,64 @@ There are multiple types extending `string`:
 | `percent` | Either `<number>%` (e.g., `50%`) OR `<integer>/<integer>` (e.g., `3/5`). Parsed to a number (50% => 0.5, 3/5 => 0.6) |
 | `ratio` | Map `{name:percent}` where all percent values must sum to 1.0 (100%) |
 
+### Validation-Related Types
+
+| Type | Description |
+|------|-------------|
+| `expression` | A string containing a valid Lua expression (syntax-validated at parse time by compiling with `load()`) |
+| `error_level` | Enum: `"error"` or `"warn"` |
+| `validator_spec` | Union: `expression\|{expr:expression,level:error_level\|nil}` — either a plain expression string (defaults to error level) or a record with explicit level |
+| `super_type` | Alias for `type_spec\|nil`; used in the `superType` column of `Files.tsv` |
+
+## Cell Value Formatting
+
+This section describes how to write actual cell values for each type in TSV data files.
+
+### Primitive Values
+
+| Type | How to Write | Examples |
+|------|--------------|----------|
+| `boolean` | `true` or `false` | `true`, `false` |
+| `integer` | A whole number | `42`, `-7`, `0` |
+| `float` | A number (decimal point not required on input; always reformatted with one, e.g., `5` becomes `5.0`) | `3.14`, `5`, `-0.5` |
+| `string` | Plain text (never quoted at the cell level) | `Hello World` |
+| `text` | Like string, but supports escape sequences: `\t` (tab), `\n` (newline), `\\` (backslash) | `Line one\nLine two` |
+
+### Nil and Optional Values
+
+For optional types (unions ending in `|nil`), an **empty cell** (no content between tab separators) represents `nil`.
+
+### Container Values
+
+**Important:** Container values in cells must be written **without** outer `{}` braces, to keep boilerplate to a minimum. The parser adds them internally based on the column's type definition.
+
+- **Array** — Comma-separated values: `"sword","shield","potion"`
+- **Map** — Comma-separated key=value pairs: `Skill="60%",Luck="40%"`
+- **Tuple** — Comma-separated values (positional): `-20.0,50.0,10.0`
+- **Record** — Comma-separated field=value pairs: `attack=80,defense=40,speed=30`
+
+### Quoting Rules for Container Values
+
+- **Single values** in arrays can be unquoted: `Fire` is valid for type `{Element}`.
+- **Multiple values** in arrays must be individually quoted: `"Fire","Light"` not `Fire,Light`. Without quotes, the parser issues a warning about assuming a **single** unquoted string.
+- **String values** inside maps and records follow the same rule: `key="value"`.
+- **Numeric and boolean values** inside containers are never quoted: `attack=80`.
+
+### Enum Values
+
+Enum values are written as plain text matching one of the enum's defined labels:
+
+```
+Fire
+```
+
+When a file is registered with `superType=enum` in `Files.tsv`, the file's primary key values become the enum labels, and the file's type name becomes usable as a column type in other files.
+
+### Percent and Ratio Values
+
+- `percent`: Write as `<number>%` (e.g., `150%`, parsed as 1.5) or as a fraction `<integer>/<integer>` (e.g., `3/2`, parsed as 1.5).
+- `ratio`: Write as a map of names to percent values: `Skill="60%",Luck="40%"`. All percentages must sum to 100%.
+
 ## Comments in Data Files
 
 A comment line can be added anywhere in the data files (except the first line) using the Unix shell comment character (`#`). This must be the first character on that line. By convention, the comment applies to the line below, as in most programming languages. Since the TSV files should always have their header as the first line, that means you cannot "comment" on them that way. Instead, place the comment right under the header, and start it with the caret ^ character, to imply the comment applies to the line *above*. That way, the header line can also have a comment describing the meaning/usage of individual fields.
@@ -328,12 +386,43 @@ When a type has sub-types, all fields of all types should have unique names, unl
 
 Data files support computed expressions in cell values. An expression is indicated by the `=` prefix:
 
-```
+```text
 =baseValue * multiplier
 =2 * pi * radius
 ```
 
-Expressions are evaluated in a sandbox context. Data from files with lower `loadOrder` values becomes available for use in expressions in files with higher `loadOrder` values. This is controlled via the `publishContext` and `publishColumn` fields in `Files.tsv`.
+Expressions are evaluated in a sandboxed Lua environment.
+
+### Available References in Expressions
+
+The `self` variable provides access to other columns in the **same row** (by name or numeric index). Within a cell expression, `self.columnName` returns the **parsed value** directly (a number, string, boolean, etc.):
+
+```text
+=self.width * self.height
+=self.baseDamage * 2
+```
+
+### Published Data from Other Files
+
+Data from files with lower `loadOrder` values can be made available for use in expressions in files with higher `loadOrder` values. This is controlled via the `publishContext` and `publishColumn` fields in `Files.tsv`.
+
+Within the **same file**, rows are processed top-to-bottom, so earlier rows' published values are available to later rows' expressions. For example, if a file publishes its `value` column globally (`publishColumn=value`, empty `publishContext`), then row 3 can reference row 1's primary key as a variable that resolves to row 1's `value`.
+
+### Expression Context vs Validator Context
+
+In **cell expressions** (values starting with `=`), `self.columnName` returns the parsed value directly:
+
+```text
+=self.price * 1.1
+```
+
+In **row validators** (see [Row, File, and Package Validators](#row-file-and-package-validators)), `self` is the full row object. Each cell is a record with multiple forms, so you must use `.parsed` to access the value:
+
+```text
+self.price.parsed > 0 or 'price must be positive'
+```
+
+This difference exists because expressions run during cell parsing (values are plain), while validators run after the full row is parsed (cells retain metadata).
 
 ## COG Code Generation
 
@@ -581,7 +670,11 @@ Note: Library names cannot conflict with existing Lua globals (e.g., don't use `
 
 ## Files.tsv Metadata
 
-The header alone does not give all information about the "type" of a file. The `Files.tsv` file associates metadata with data files. All files must be described in some `Files.tsv` file. Since it is also used to define the order in which files are processed, `Files.tsv` can refer to files in the current directory AND in sub-directories.
+The header alone does not give all information about the "type" of a file. The `Files.tsv` file associates metadata with data files. All data files in a package must be listed in `Files.tsv`. Since it is also used to define the order in which files are processed, `Files.tsv` can refer to files in the current directory AND in sub-directories.
+
+`Files.tsv` must also include a row describing **itself** (e.g., `Files.tsv	Files	...`). This self-referencing entry is required for consistency.
+
+The system expects a specific set of columns. The first seven columns (`fileName` through `loadOrder`) are required — a warning is issued if any are missing. The remaining columns are optional. Any unrecognized column generates a warning to help catch typos.
 
 ### Files.tsv Fields
 
@@ -589,7 +682,7 @@ The header alone does not give all information about the "type" of a file. The `
 |-------|------|-------------|
 | `fileName` | `string` | The path to the file, possibly in a sub-directory |
 | `typeName` | `type_spec` | The type of the "records" in this file |
-| `superType` | `type_spec\|nil` | The optional super-type of the type of this file |
+| `superType` | `super_type` | The optional super-type; set to `enum` to register this file as an enum type |
 | `baseType` | `boolean` | Is this file a base-type file? (No super-type) |
 | `publishContext` | `name\|nil` | The optional "context" under which the file data is "published" |
 | `publishColumn` | `name\|nil` | The optional column of the file that is "published" |
@@ -599,6 +692,8 @@ The header alone does not give all information about the "type" of a file. The `
 | `joinColumn` | `name\|nil` | The column name used for joining (defaults to first column if nil) |
 | `export` | `boolean\|nil` | Whether to export this file independently (defaults based on joinInto) |
 | `joinedTypeName` | `type_spec\|nil` | The type name for the joined result |
+| `rowValidators` | `{validator_spec}\|nil` | Validators run on each row after parsing |
+| `fileValidators` | `{validator_spec}\|nil` | Validators run on the complete file |
 
 ### Publishing Data
 
@@ -686,6 +781,11 @@ Since the file has only a single data row and multiple values can be quite long,
 | `code_libraries` | `{{name,string}}\|nil` | Code libraries for expressions and COG |
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
+| `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
+
+### Custom Manifest Fields
+
+Manifests support user-defined fields beyond the standard schema listed above. Custom fields are parsed according to their declared type, preserved during reformatting, and generate a warning during loading (to help catch typos). For example, a game project might add `gameGenre:string` or `contentRating:string` to store project-specific metadata.
 
 ### Custom Types
 

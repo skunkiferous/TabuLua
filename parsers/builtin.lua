@@ -782,6 +782,9 @@ function M.registerDerivedParsers()
     -- Structured form: {expr="self.x > 0 or 'x must be positive'", level="warn"}
     registration.registerAlias(ownBadVal, 'validator_spec',
         'expression|{expr:expression,level:error_level|nil}')
+    
+    -- Helper type for creating "Files.tsv"
+    registration.registerAlias(ownBadVal, 'super_type', 'type_spec|nil')
 end
 
 return M

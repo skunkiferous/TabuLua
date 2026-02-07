@@ -1,4 +1,4 @@
-name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:advancedElement|nil	tags:{string}	devNotes:comment|nil
+name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:advancedElement|nil	tags:{name}	devNotes:comment|nil
 # ^ This file uses the same column structure as core Item.tsv, demonstrating CROSS-PACKAGE references:
 # ^ itemCode, gold: custom types defined in core Manifest, available here because of the dependency
 # ^ Rarity: enum defined in core Rarity.tsv, registered via superType=enum

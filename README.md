@@ -14,7 +14,7 @@ TabuLua provides a robust way to define, validate, and manage structured data in
 - **Code Generation (COG)** - Generate rows programmatically with embedded Lua
 - **Package System** - Organize data into packages with dependencies and versioning
 - **Multi-Format Export** - Export to JSON, Lua tables, XML, SQL, and MessagePack
-- **Comprehensive Validation** - Catch type errors before runtime
+- **Comprehensive Validation** - Custom types, row/file/package validators
 
 ## Quick Example
 
@@ -27,14 +27,7 @@ shield	Wooden Shield	3	12.50	true
 potion	Health Potion	50	5.00	true
 ```
 
-With expression evaluation:
-
-```tsv
-name:name	value:float	computed:float
-base	100.0	=base
-multiplier	2.5	=multiplier
-result	0	=base * multiplier
-```
+Column headers use the format `fieldName:fieldType`. The first column is the primary key. See [DATA_FORMAT_README.md](DATA_FORMAT_README.md) for the full type system and data format specification.
 
 ## Installation
 
@@ -76,237 +69,12 @@ cd tabulua
 
 | Document | Description |
 |----------|-------------|
-| [AGENTS.md](AGENTS.md) | Detailed architecture guide, designed to hel AI Agents |
+| [DATA_FORMAT_README.md](DATA_FORMAT_README.md) | Complete data format and type system specification |
+| [tutorial/README.md](tutorial/README.md) | Hands-on tutorial with RPG-themed example packages |
+| [REFORMATTER.md](REFORMATTER.md) | CLI tool and export format reference |
+| [AGENTS.md](AGENTS.md) | Detailed architecture guide, designed to help AI Agents |
 | [CHANGELOG.md](CHANGELOG.md) | List of changes in each version |
-| [DATA_FORMAT_README.md](DATA_FORMAT_README.md) | Complete data format specification |
 | [MODULES.md](MODULES.md) | Module reference with dependencies |
-
-## Project Structure
-
-```
-tabulua/
-├── parsers/              # Type system implementation
-│   ├── builtin.lua       # Built-in types (string, float, etc.)
-│   ├── type_parsing.lua  # Core parsing logic
-│   ├── introspection.lua # Type querying utilities
-│   └── ...
-├── tutorial/             # Example packages demonstrating all features
-│   ├── core/             # Core game data package
-│   │   ├── Manifest.transposed.tsv  # Package manifest
-│   │   ├── Files.tsv     # File registry
-│   │   └── ...           # Data files (Items, Creatures, Spells, etc.)
-│   └── expansion/        # Expansion package (depends on core)
-│       ├── Manifest.transposed.tsv  # Expansion manifest
-│       ├── Files.tsv     # Expansion file registry
-│       └── ...           # Expansion data files
-├── spec/                 # Test suite
-├── parsers.lua           # Main type system API
-├── manifest_loader.lua   # Package loading orchestration
-├── tsv_model.lua         # TSV parsing with validation
-└── reformatter.lua       # Data file reformatter and exporter
-```
-
-## Key Modules
-
-| Module | Purpose |
-|--------|---------|
-| `parsers` | Type parsing, validation, and introspection |
-| `manifest_loader` | Load packages with dependency resolution |
-| `tsv_model` | Parse TSV files with type validation |
-| `manifest_info` | Handle `Manifest.transposed.tsv` files for package metadata |
-| `reformatter` | Reformat and export data files |
-| `exporter` | Export to JSON, Lua, XML, SQL, MessagePack |
-
-See [MODULES.md](MODULES.md) for the complete module reference.
-
-## Type System
-
-### Basic Types
-
-```
-boolean, integer, float, string
-```
-
-### Integer Range Types
-
-```
-ubyte (0-255), ushort, uint, byte, short, int, long
-```
-
-### Container Types
-
-```lua
-{string}              -- Array of strings
-{string:float}       -- Map from string to float
-{float,string}       -- Tuple (float, string)
-{name:string,age:float}  -- Record with named fields
-```
-
-### Union and Optional Types
-
-```lua
-string|nil            -- Optional string
-float|string         -- Number or string
-```
-
-### Enums
-
-```lua
-{enum:Active|Inactive|Pending}
-```
-
-### Type Inheritance
-
-```lua
--- Extend a record type
-{extends:Vehicle,wheels:integer}
-
--- Extend a tuple type
-{extends,Point2D,float}
-```
-
-### Extended String Types
-
-| Type | Description |
-|------|-------------|
-| `ascii` | ASCII-only string |
-| `asciitext` | ASCII text with escape support |
-| `asciimarkdown` | ASCII markdown-formatted text |
-| `comment` | Comment string (can be stripped on export) |
-| `text` | Supports `\t`, `\n`, `\\` escapes |
-| `markdown` | Markdown-formatted text |
-| `identifier` | Valid Lua identifier |
-| `name` | Dotted identifier (e.g., `Foo.Bar`) |
-| `version` | Semantic version (`1.0.0`) |
-| `cmp_version` | Version comparison (e.g., `>=1.0.0`) |
-| `http` | HTTP(S) URL |
-| `type_spec` | Type specification string |
-| `type` | Validated type reference |
-| `regex` | Valid Lua pattern string |
-
-## Tutorial Packages
-
-The `tutorial/` directory contains complete example packages showcasing all TabuLua features:
-
-### Constant.tsv - Expression Evaluation
-
-```tsv
-name:name	value:float
-pi	3.14159265359
-radius	10.0
-circumference	=2*pi*radius
-area	=pi*radius*radius
-```
-
-Expressions (prefixed with `=`) are evaluated in a sandbox. Earlier rows become available to later expressions via the `publishColumn` mechanism.
-
-### Item.tsv - Complex Types
-
-```tsv
-name:name	tags:table|nil	composition:ratio|nil	metadata:table|nil
-sword	"weapon","melee"		damage=15
-alloy	"material"	Copper="88%",Tin="12%"	hardness=80
-```
-
-Demonstrates arrays, records, optional fields, and the `ratio` type (percentages that must sum to 100%).
-
-### Generated.tsv - Code Generation
-
-```tsv
-name:name	level:integer
-###[[[
-###local rows = {}
-###for i = 1, 5 do
-###    rows[#rows+1] = "item" .. i .. "\t" .. (i * 10)
-###end
-###return table.concat(rows, "\n")
-###]]]
-item1	10
-item2	20
-item3	30
-item4	40
-item5	50
-###[[[end]]]
-```
-
-COG blocks generate rows dynamically. The code between `###[[[` and `###]]]` runs as Lua, and its output replaces the content before `###[[[end]]]`.
-Refer to [DATA_FORMAT_README.md](DATA_FORMAT_README.md) for details.
-
-### Status.tsv - Enums
-
-```tsv
-id:name	label:string
-Active	Active
-Inactive	Inactive
-Pending	Pending
-Archived	Archived
-```
-
-Defines an enum type that can be referenced in other files as `Status`.
-
-## Package System
-
-### Creating a Package
-
-Create a `Manifest.transposed.tsv` file with package metadata:
-
-```tsv
-package_id:package_id	my.package
-name:string	My Package
-version:version	1.0.0
-description:markdown	A description of what this package does.
-dependencies:{{package_id,cmp_version}}|nil	{{'core','>=1.0.0'}}
-custom_types:{custom_type_def}|nil	{name="MyAlias",parent="string|nil"}
-```
-
-### Files.tsv Registry
-
-Every package needs one (or more, in sub-directories) `Files.tsv` to register its data files:
-
-```tsv
-fileName:string	typeName:type_spec	loadOrder:number	description:text
-Item.tsv	Item	100	Game items
-Recipe.tsv	Recipe	200	Crafting recipes (can reference Items)
-```
-
-The `loadOrder` determines processing sequence, which matters for expressions that reference data from other files.
-
-## Running Tests
-
-```bash
-# Windows
-run_tests.cmd
-
-# Unix/WSL
-./run_tests.sh
-
-# Or directly with busted
-busted spec/
-```
-
-### Testing the TypeSpec Grammar
-
-The type specification syntax is defined in an ANTLR4 grammar file (`TypeSpec.g4`). To test the grammar parser against exported schema files:
-
-```bash
-# Windows (from the .antlr directory)
-cd antlr
-build_test.cmd
-
-# Linux/macOS/WSL (from the .antlr directory)
-cd antlr
-./build_test.sh
-```
-
-**Prerequisites:**
-- Java JDK installed
-- Download `antlr-4.13.2-complete.jar` from https://www.antlr.org/download/antlr-4.13.2-complete.jar into the `antlr` directory
-- Run the reformatter with an export option first to generate `exported/schema.tsv`
-
-The test scripts will:
-1. Generate the ANTLR parser from `TypeSpec.g4`
-2. Compile the parser and test harness
-3. Parse all type specifications from `exported/schema.tsv` and report any failures
 
 ## Basic Usage
 
@@ -319,16 +87,18 @@ The easiest way to use TabuLua is via the `reformatter.lua` CLI tool:
 lua reformatter.lua tutorial/core/ tutorial/expansion/
 
 # Export to JSON
-lua reformatter.lua --json tutorial/core/ tutorial/expansion/
+lua reformatter.lua --file=json tutorial/core/ tutorial/expansion/
 
 # Export to multiple formats
-lua reformatter.lua --json --lua --xml --export-dir=output tutorial/core/ tutorial/expansion/
+lua reformatter.lua --file=json --file=lua --file=xml --export-dir=output tutorial/core/ tutorial/expansion/
 
 # See all options
 lua reformatter.lua
 ```
 
 **Note:** Always specify package directories (containing `Manifest.transposed.tsv` or `Files.tsv`) directly, not parent directories.
+
+Refer to [REFORMATTER.md](REFORMATTER.md) for the full list of export formats and options.
 
 ### Programmatic Usage
 
@@ -364,10 +134,67 @@ local nullBadVal = require("error_reporting").nullBadVal
 local type_info = parsers.parseType(nullBadVal, "{name:string,age:integer}")
 ```
 
-### Export Formats
+## Project Structure
 
-TabuLua can export to multiple formats via CLI flags or the `exporter` module.
-Refer to [REFORMATTER.md](REFORMATTER.md) for details.
+```
+tabulua/
+├── parsers/              # Type system implementation
+│   ├── builtin.lua       # Built-in types (string, float, etc.)
+│   ├── type_parsing.lua  # Core parsing logic
+│   ├── introspection.lua # Type querying utilities
+│   └── ...
+├── tutorial/             # Example packages demonstrating all features
+│   ├── core/             # Core game data package
+│   │   ├── Manifest.transposed.tsv  # Package manifest
+│   │   ├── Files.tsv     # File registry
+│   │   └── ...           # Data files (Items, Creatures, Spells, etc.)
+│   └── expansion/        # Expansion package (depends on core)
+│       ├── Manifest.transposed.tsv  # Expansion manifest
+│       ├── Files.tsv     # Expansion file registry
+│       └── ...           # Expansion data files
+├── spec/                 # Test suite
+├── parsers.lua           # Main type system API
+├── manifest_loader.lua   # Package loading orchestration
+├── tsv_model.lua         # TSV parsing with validation
+└── reformatter.lua       # Data file reformatter and exporter
+```
+
+## Running Tests
+
+```bash
+# Windows
+run_tests.cmd
+
+# Unix/WSL
+./run_tests.sh
+
+# Or directly with busted
+busted spec/
+```
+
+### Testing the TypeSpec Grammar
+
+The type specification syntax is defined in an ANTLR4 grammar file (`TypeSpec.g4`). To test the grammar parser against exported schema files:
+
+```bash
+# Windows (from the antlr directory)
+cd antlr
+build_test.cmd
+
+# Linux/macOS/WSL (from the antlr directory)
+cd antlr
+./build_test.sh
+```
+
+**Prerequisites:**
+- Java JDK installed
+- Download `antlr-4.13.2-complete.jar` from https://www.antlr.org/download/antlr-4.13.2-complete.jar into the `antlr` directory
+- Run the reformatter with an export option first to generate `exported/schema.tsv`
+
+The test scripts will:
+1. Generate the ANTLR parser from `TypeSpec.g4`
+2. Compile the parser and test harness
+3. Parse all type specifications from `exported/schema.tsv` and report any failures
 
 ## License
 

@@ -429,13 +429,13 @@ local function parse_type_record(badVal, xparsed, type_spec)
     return result, type_spec, xparsed
 end
 
--- Warns about deprecated usage of "number" type (should use "float" or "integer" instead)
+-- Informs about usage of "number" type (prefer "float" or "integer" for most cases)
 local function warnIfDeprecatedNumber(type_spec, orig_type_spec)
-    -- Only warn after module setup is complete (not during initialization)
+    -- Only inform after module setup is complete (not during initialization)
     if state.settingUp then
         return
     end
-    -- Only warn once per unique type specification
+    -- Only inform once per unique type specification
     if state.WARNED_TYPES[orig_type_spec] then
         return
     end
@@ -443,8 +443,9 @@ local function warnIfDeprecatedNumber(type_spec, orig_type_spec)
     local resolved = utils.resolve(type_spec)
     if resolved == "number" then
         state.WARNED_TYPES[orig_type_spec] = true
-        state.logger:warn("Deprecated: using 'number' type in '" .. orig_type_spec ..
-            "'. Consider using 'float' (for decimal values) or 'integer'/'long' (for whole numbers) instead.")
+        state.logger:info("Using 'number' type in '" .. orig_type_spec
+            .. "'. 'float' is preferred for decimal values (integers are formatted as N.0);"
+            .. " 'number' allows mixed integer/decimal formatting.")
     end
 end
 

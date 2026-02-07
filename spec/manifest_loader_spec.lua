@@ -15,10 +15,6 @@ local after_each = busted.after_each
 local file_util = require("file_util")
 local manifest_loader = require("manifest_loader")
 local error_reporting = require("error_reporting")
-local parsers = require("parsers")
-
--- Register the superType alias (normally defined in core manifest)
-parsers.registerAlias(error_reporting.badValGen(), 'superType', 'type_spec|nil')
 
 -- Simple path join function
 local function path_join(...)
@@ -45,7 +41,7 @@ description:markdown	A test package for manifest_loader tests
 ]]
 
 -- Files descriptor content
-local FILES_DESC = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 TestData.tsv	TestData		true			1	Test data file
 ]]
 
@@ -63,12 +59,12 @@ blue	The color blue
 ]]
 
 -- Files descriptor with enum
-local FILES_DESC_WITH_ENUM = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC_WITH_ENUM = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 ColorEnum.tsv	ColorEnum	enum	true			1	Color enumeration
 ]]
 
 -- Files descriptor with constants (publishContext and publishColumn)
-local FILES_DESC_WITH_CONSTANTS = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC_WITH_CONSTANTS = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Constants.tsv	ConstantDef		true	gameConstants	value	1	Game constants
 ]]
 
@@ -203,7 +199,7 @@ name:string	Package A
 version:version	1.0.0
 description:markdown	First package
 ]]
-      local FILES_A = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_A = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataA.tsv	DataA		true			1	Data file A
 ]]
       local DATA_A = [[name:identifier	val:number
@@ -224,7 +220,7 @@ version:version	1.0.0
 description:markdown	Second package
 dependencies:{{package_id,cmp_version}}|nil	{'PkgA','>=1.0.0'}
 ]]
-      local FILES_B = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_B = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataB.tsv	DataB		true			1	Data file B
 ]]
       local DATA_B = [[name:identifier	val:number
@@ -379,7 +375,7 @@ name:string	Mixed Package
 version:version	0.1.0
 description:markdown	Package with mixed file types
 ]]
-      local FILES_MIXED = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_MIXED = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Data.tsv	MixedData		true			1	TSV data file
 ]]
       local DATA_MIXED = [[name:identifier	val:number
@@ -442,7 +438,7 @@ description:markdown	Package testing priority order
       -- Medium (priority 5) uses BASE_VALUE in an expression.
       -- High (priority 10) uses the result from Medium in an expression.
       -- If priority order is wrong, the expressions will fail or produce wrong values.
-      local FILES_PRIO = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_PRIO = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Low.tsv	LowPrio		true		value	1	Low priority - defines BASE_VALUE
 Medium.tsv	MediumPrio		true		value	5	Medium priority - uses BASE_VALUE
 High.tsv	HighPrio		true			10	High priority - uses MEDIUM_VALUE
@@ -510,7 +506,7 @@ name:string	Package P
 version:version	1.0.0
 description:markdown	First package (no deps)
 ]]
-      local FILES_P = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_P = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataP.tsv	DataP		true			1	Data file P
 ]]
       local DATA_P = [[name:identifier	val:number
@@ -531,7 +527,7 @@ version:version	1.0.0
 description:markdown	Second package (load after P)
 load_after:{package_id}|nil	'PkgP'
 ]]
-      local FILES_Q = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_Q = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataQ.tsv	DataQ		true			1	Data file Q
 ]]
       local DATA_Q = [[name:identifier	val:number
@@ -561,7 +557,7 @@ version:version	2.3.4
 description:markdown	Package with detailed info
 url:http|nil	http://example.com/infopkg
 ]]
-      local FILES_INFO = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_INFO = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Info.tsv	InfoData		true			1	Info data
 ]]
       local DATA_INFO = [[name:identifier	val:number

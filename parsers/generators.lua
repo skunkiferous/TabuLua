@@ -136,7 +136,13 @@ function M.get_array_parser(elem_type, elem_parser)
             if  utils.expectTSV(context) and state.refs.extendsOrRestrict(elem_type, 'string') and
                 value ~= nil and value ~= '' and value:sub(1,1) ~= '"' and value:sub(1,1) ~= "'"
                 then
-                state.logger:warn("Assuming " .. value .. " is a single unquoted string")
+                if value:sub(1,1) == '{' and value:sub(-1) == '}' then
+                    state.logger:warn("Value " .. value
+                        .. " is wrapped in {} but array braces are added automatically;"
+                        .. " remove the outer {}")
+                else
+                    state.logger:warn("Assuming " .. value .. " is a single unquoted string")
+                end
                 return {value}, value
             end
             --{<type>}

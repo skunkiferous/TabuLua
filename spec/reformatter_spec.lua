@@ -14,11 +14,6 @@ local after_each = busted.after_each
 
 local file_util = require("file_util")
 local reformatter = require("reformatter")
-local error_reporting = require("error_reporting")
-local parsers = require("parsers")
-
--- Register the superType alias (normally defined in core manifest)
-parsers.registerAlias(error_reporting.badValGen(), 'superType', 'type_spec|nil')
 
 -- Simple path join function
 local function path_join(...)
@@ -36,7 +31,7 @@ description:markdown	A test package for reformatter tests
 ]]
 
 -- Files descriptor content
-local FILES_DESC = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 TestData.tsv	TestData		true			1	Test data file
 ]]
 
@@ -394,7 +389,7 @@ name:string	Package 2
 version:version	0.2.0
 description:markdown	Second package
 ]]
-      local FILES_DESC2 = [[fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_DESC2 = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 OtherData.tsv	OtherData		true			1	Other data file
 ]]
       local OTHER_DATA = [[name:identifier	count:integer

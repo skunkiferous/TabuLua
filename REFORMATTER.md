@@ -100,29 +100,29 @@ exported/
 
 ## Examples
 
-**Important:** Specify package directories directly (directories containing `Manifest.transposed.tsv` or `Files.tsv`), not parent directories. For example, use `tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/` instead of just `tutorial/core/ tutorial/expansion/`.
+**Important:** Specify package directories directly (directories containing `Manifest.transposed.tsv` or `Files.tsv`), not parent directories. For example, use `tutorial/core/ tutorial/expansion/` instead of just `tutorial/`.
 
 ### Basic reformatting (no export)
 ```bash
-lua reformatter.lua tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
+lua reformatter.lua tutorial/core/ tutorial/expansion/
 ```
 Processes all TSV files in the specified package directories and reformats them in-place if changes are detected.
 
 ### Export to JSON (natural format)
 ```bash
-lua reformatter.lua --file=json tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
+lua reformatter.lua --file=json tutorial/core/ tutorial/expansion/
 ```
 Reformats files and exports as JSON to `exported/json-json-natural/`.
 
 ### Export to JSON with type preservation
 ```bash
-lua reformatter.lua --file=json --data=json-typed tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
+lua reformatter.lua --file=json --data=json-typed tutorial/core/ tutorial/expansion/
 ```
 Exports as JSON (typed format) to `exported/json-json-typed/`.
 
 ### Export as TSV with Lua literals
 ```bash
-lua reformatter.lua --file=tsv --data=lua tutorial/core/ tutorial/expansion/core/ tutorial/core/ tutorial/expansion/expansion/
+lua reformatter.lua --file=tsv --data=lua tutorial/core/ tutorial/expansion/
 ```
 Exports as TSV with Lua literals to `exported/tsv-lua/`.
 

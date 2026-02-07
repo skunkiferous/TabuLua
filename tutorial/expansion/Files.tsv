@@ -1,4 +1,4 @@
-fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
+fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
 BossType.tsv	BossType	enum	true			10	Boss encounter categories for the Shadow Realm						
 Boss.tsv	Boss		true			100	Boss creatures with enhanced stats and type inheritance						
 ExpansionItem.tsv	ExpansionItem		true			200	New expansion items using core enums and custom types					"self.price.parsed > 0 or 'price must be positive'"	

@@ -269,8 +269,12 @@ end
 --- @return string|nil The actual file path, or nil if not found
 local function findFilePath(lcfn, tsv_files)
     for path in pairs(tsv_files) do
-        if path:lower():sub(-#lcfn) == lcfn then
-            return path
+        local lpath = path:lower()
+        if lpath:sub(-#lcfn) == lcfn then
+            local pos = #lpath - #lcfn
+            if pos == 0 or lpath:sub(pos, pos) == "/" or lpath:sub(pos, pos) == "\\" then
+                return path
+            end
         end
     end
     return nil

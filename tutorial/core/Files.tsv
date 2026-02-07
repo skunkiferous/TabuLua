@@ -1,4 +1,4 @@
-fileName:string	typeName:type_spec	superType:superType	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
+fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
 Element.tsv	Element	enum	true			10	Elemental damage and resistance types used throughout the game						
 Files.tsv	Files		true	Files		0	This file; describes all core data files						
 Rarity.tsv	Rarity	enum	true			20	Item rarity levels that affect drop rates and pricing						

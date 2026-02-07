@@ -106,7 +106,9 @@ local function orderFilesByPriorities(files, priorities)
         return aPriority < bPriority
     end)
     for _,file in ipairs(keys(missingPriority)) do
-        logger:warn("No priority found for " .. file)
+        if not hasExtension(file, "lua") then
+            logger:warn("No priority found for " .. file)
+        end
     end
     logger:debug("Sorted files: "..table.concat(files, ", "))
 end
@@ -326,7 +328,11 @@ end
 
 -- Reads a non-TSV/CSV file and stores its content
 local function processUnknownFile(file_name, raw_files, badVal)
-    logger:warn("Don't know how to process " .. file_name)
+    if hasExtension(file_name, "lua") then
+        logger:info("Loading code library: " .. file_name)
+    else
+        logger:warn("Don't know how to process " .. file_name)
+    end
     local content, err = readFile(file_name)
     if not content then
         badVal(nil, "File could not be read: " .. err)
