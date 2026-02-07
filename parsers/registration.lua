@@ -67,7 +67,7 @@ function M.registerAlias(badVal, name, type_spec)
         if already == type_spec then
             -- Already registered to same type
             -- Validate that registration worked ...
-            assert(parseType(nullBadVal, name, false),
+            assert(parseType(badVal, name, false),
                 "Parser "..type_spec.." aliased to name '" .. name .. "' not found!")
             return true
         end
@@ -85,7 +85,7 @@ function M.registerAlias(badVal, name, type_spec)
         "Parser "..type_spec.." still contains 'extends'")
     state.ALIASES[name] = utils.resolve(type_spec)
     -- Validate that registration worked ...
-    assert(parseType(nullBadVal, name, false),
+    assert(parseType(badVal, name, false),
         "Parser "..type_spec.." aliased to name '" .. name .. "' not found!")
     state.logger:info("Registered alias: " .. name .. " -> " .. type_spec)
     return true

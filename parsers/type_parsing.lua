@@ -430,7 +430,7 @@ local function parse_type_record(badVal, xparsed, type_spec)
 end
 
 -- Informs about usage of "number" type (prefer "float" or "integer" for most cases)
-local function warnIfDeprecatedNumber(type_spec, orig_type_spec)
+local function warnDontUseNumber(badVal, type_spec, orig_type_spec)
     -- Only inform after module setup is complete (not during initialization)
     if state.settingUp then
         return
@@ -443,8 +443,11 @@ local function warnIfDeprecatedNumber(type_spec, orig_type_spec)
     local resolved = utils.resolve(type_spec)
     if resolved == "number" then
         state.WARNED_TYPES[orig_type_spec] = true
+        local source = badVal.source_name
+        if not source or source == "" then source = "?" end
         state.logger:info("Using 'number' type in '" .. orig_type_spec
-            .. "'. 'float' is preferred for decimal values (integers are formatted as N.0);"
+            .. "' in " .. source
+            .. ". 'float' is preferred for decimal values (integers are formatted as N.0);"
             .. " 'number' allows mixed integer/decimal formatting.")
     end
 end
@@ -462,7 +465,7 @@ parse_type = function(badVal, parsed, log_unknown)
     local result = state.PARSERS[utils.resolve(type_spec)]
     if result then
         -- Type already exists in cache, check for deprecated usage
-        warnIfDeprecatedNumber(type_spec, orig_type_spec)
+        warnDontUseNumber(badVal, type_spec, orig_type_spec)
     end
     if not result then
         if state.UNKNOWN_TYPES[type_spec] then
@@ -478,7 +481,7 @@ parse_type = function(badVal, parsed, log_unknown)
             type_spec = parsed.value
             tmp_result = state.PARSERS[utils.resolve(type_spec)]
             if tmp_result then
-                warnIfDeprecatedNumber(type_spec, orig_type_spec)
+                warnDontUseNumber(badVal, type_spec, orig_type_spec)
             end
         elseif tag == "array" then
             tmp_result = parse_type_array(badVal, parsed, type_spec)
