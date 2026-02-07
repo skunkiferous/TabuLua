@@ -8,7 +8,7 @@ local logger = require( "named_logger").getLogger(NAME)
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 5, 0)
+local VERSION = semver(0, 5, 2)
 
 -- Returns the module version
 local function getVersion()
