@@ -407,6 +407,82 @@ describe("parsers - union types", function()
     end)
   end)
 
+  describe("extendsOrRestrict for union common ancestor", function()
+    local log_messages = {}
+    local badVal
+
+    before_each(function()
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+    end)
+
+    it("should recognize union of number subtypes as extending number", function()
+      -- integer and float both extend number
+      assert.is_true(parsers.extendsOrRestrict("integer|float", "number"))
+
+      -- ubyte and ushort both extend integer
+      assert.is_true(parsers.extendsOrRestrict("ubyte|ushort", "integer"))
+
+      -- ubyte extends integer->number, float extends number
+      assert.is_true(parsers.extendsOrRestrict("ubyte|float", "number"))
+
+      assert.same({}, log_messages)
+    end)
+
+    it("should recognize union of string subtypes as extending string", function()
+      -- text and markdown both extend string (markdown extends text extends string)
+      assert.is_true(parsers.extendsOrRestrict("text|markdown", "string"))
+
+      assert.same({}, log_messages)
+    end)
+
+    it("should reject when not all members extend the parent", function()
+      -- float does not extend integer
+      assert.is_false(parsers.extendsOrRestrict("ubyte|float", "integer"))
+
+      -- string does not extend number
+      assert.is_false(parsers.extendsOrRestrict("integer|string", "number"))
+
+      assert.same({}, log_messages)
+    end)
+
+    it("should reject unions containing nil", function()
+      -- nil does not extend number
+      assert.is_false(parsers.extendsOrRestrict("integer|float|nil", "number"))
+
+      -- nil does not extend string
+      assert.is_false(parsers.extendsOrRestrict("text|markdown|nil", "string"))
+
+      assert.same({}, log_messages)
+    end)
+
+    it("should work with custom types extending a common ancestor", function()
+      -- Register custom types extending integer and float
+      parsers.restrictWithValidator(badVal, "integer", "IntUnit",
+        function(n) return n >= 0 end)
+      parsers.restrictWithValidator(badVal, "float", "FloatUnit",
+        function(n) return n >= 0 end)
+
+      -- Both extend number through their respective parents
+      assert.is_true(parsers.extendsOrRestrict("IntUnit|FloatUnit", "number"))
+
+      -- FloatUnit does not extend integer
+      assert.is_false(parsers.extendsOrRestrict("IntUnit|FloatUnit", "integer"))
+
+      assert.same({}, log_messages)
+    end)
+
+    it("should preserve existing union-extends-union behavior", function()
+      -- integer|float still extends union (structural kind)
+      assert.is_true(parsers.extendsOrRestrict("integer|float", "union"))
+
+      -- subset relationship still works
+      assert.is_true(parsers.extendsOrRestrict("integer|float", "integer|float|string"))
+
+      assert.same({}, log_messages)
+    end)
+  end)
+
   describe("getComparator for optional types", function()
     it("should return comparators for optional types", function()
         local optNumCmp = parsers.getComparator("number|nil")

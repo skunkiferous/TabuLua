@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   that extend `number`. When `ancestor` is set, `parent` defaults to `type_spec` (can be
   overridden). Enables the "Quantity pattern" for pairing unit type names with numeric values.
 - Tutorial expansion now demonstrates the `ancestor` constraint with an `intTypeName` custom type.
+- `extendsOrRestrict()` now recognizes union types as extending a common ancestor when all
+  member types extend that ancestor. For example, a union `integer|float` is now recognized
+  as extending `number`, and `ubyte|ushort` as extending `integer`. Unions containing `nil`
+  are excluded (since `nil` does not extend any base type). This also improves SQL type mapping
+  for such unions (e.g., `REAL` instead of `TEXT` for numeric unions).
+- Guards in `registerTypesFromSpec` to reject union types as parents for scalar constraints
+  (numeric, string, enum, ancestor). Union parents remain valid for expression-based validators.
 
 ### Fixed
 

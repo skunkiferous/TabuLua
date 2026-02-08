@@ -381,11 +381,24 @@ local function childTupleExtendsParent(childFields, parentFields)
 end
 
 -- Returns true, if childUTypes only contains types in parentUTypes,
--- or child is a single type equal to one of the parent types
-local function childUnionExtendsParent(childUTypes, parentUTypes, child)
+-- or child is a single type equal to one of the parent types,
+-- or all child union members extend the (non-union) parent type.
+local function childUnionExtendsParent(childUTypes, parentUTypes, child, parent)
     if childUTypes then
-        if isSubSetSequence(parentUTypes, childUTypes, true) then
-            return true
+        if parentUTypes then
+            if isSubSetSequence(parentUTypes, childUTypes, true) then
+                return true
+            end
+        else
+            -- Union extends a non-union parent if ALL members extend that parent
+            local allExtend = true
+            for i = 1, #childUTypes do
+                if not typeSameOrExtends(childUTypes[i], parent) then
+                    allExtend = false
+                    break
+                end
+            end
+            if allExtend then return true end
         end
     end
     if parentUTypes then
@@ -429,7 +442,7 @@ function M.extendsOrRestrict(child, parent)
     end
     local childUTypes = M.unionTypes(child)
     local parentUTypes = M.unionTypes(parent)
-    if childUnionExtendsParent(childUTypes, parentUTypes, child) then
+    if childUnionExtendsParent(childUTypes, parentUTypes, child, parent) then
         return true
     end
     if pc then

@@ -884,6 +884,10 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                     utils.log(badVal, 'type', parent,
                         'ancestor constraint requires a parent type that extends string')
                     success = false
+                elseif introspection.unionTypes(parent) then
+                    utils.log(badVal, 'type', parent,
+                        'ancestor constraint cannot be applied to union types')
+                    success = false
                 else
                     local parser = M.restrictToTypeExtending(badVal, parent, name, spec.ancestor)
                     if not parser then
@@ -902,6 +906,10 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                     utils.log(badVal, 'type', parent,
                         'min/max constraints require a type that extends number')
                     success = false
+                elseif introspection.unionTypes(parent) then
+                    utils.log(badVal, 'type', parent,
+                        'numeric constraints cannot be applied to union types')
+                    success = false
                 else
                     local parser = M.restrictNumber(badVal, parent, spec.min, spec.max, name)
                     if not parser then
@@ -913,6 +921,10 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                 if not introspection.typeSameOrExtends(parent, "string") then
                     utils.log(badVal, 'type', parent,
                         'minLen/maxLen/pattern constraints require a type that extends string')
+                    success = false
+                elseif introspection.unionTypes(parent) then
+                    utils.log(badVal, 'type', parent,
+                        'string constraints cannot be applied to union types')
                     success = false
                 else
                     local parser = M.restrictString(badVal, parent, spec.minLen, spec.maxLen,
@@ -926,6 +938,10 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                 if not introspection.extendsOrRestrict(parent, "enum") then
                     utils.log(badVal, 'type', parent,
                         'values constraint requires a type that extends enum')
+                    success = false
+                elseif introspection.unionTypes(parent) then
+                    utils.log(badVal, 'type', parent,
+                        'enum constraints cannot be applied to union types')
                     success = false
                 else
                     local parser = M.restrictEnum(badVal, parent, spec.values, name)

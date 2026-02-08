@@ -248,7 +248,9 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 | Union | `<type1>\|<type2>\|...` | One of several types. Use `nil` as last type for "optional" values. `string` if present must be last (but before `nil`) |
 | Enum | `{enum:<label1>\|<label2>\|...}` | Enumerated set of valid string labels |
 
-> **SQL Export:** Union columns are exported as `TEXT` in SQL. When all member types are basic (non-table) types, values are serialized as strings. When the union contains a table type, values are JSON-encoded (same as standalone `table` columns). If the union includes `nil`, the column is nullable; otherwise it is `NOT NULL`.
+> **Type hierarchy:** A union type is considered to extend a base type when **all** of its member types extend that base type. For example, `integer|float` extends `number`, and `ubyte|ushort` extends `integer`. Unions containing `nil` do not extend any base type (since `nil` itself does not extend anything).
+>
+> **SQL Export:** When all member types of a union share a common base type, the union column is mapped to that base type's SQL type (e.g., `integer|float` maps to `REAL`, `ubyte|ushort` maps to `BIGINT`). Otherwise, union columns are exported as `TEXT` in SQL. When all member types are basic (non-table) types, values are serialized as strings. When the union contains a table type, values are JSON-encoded (same as standalone `table` columns). If the union includes `nil`, the column is nullable; otherwise it is `NOT NULL`.
 
 ### Special Types
 
