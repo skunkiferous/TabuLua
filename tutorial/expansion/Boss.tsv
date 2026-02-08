@@ -1,8 +1,10 @@
-name:name	bossType:BossType	level:bossLevel	hitPoints:bossHp	element:advancedElement	bossStats:{extends:BaseStats,enrageThreshold:integer}	spawnPos:{extends,Point2D,float}	reward:integer|string	lootTable:{name}	description:text
+name:name	bossType:BossType	level:bossLevel	hitPoints:bossHp	hpType:intTypeName	element:advancedElement	bossStats:{extends:BaseStats,enrageThreshold:integer}	spawnPos:{extends,Point2D,float}	reward:integer|string	lootTable:{name}	description:text
 # ^ This file demonstrates several advanced features:
 # ^ bossType: references BossType enum defined in THIS expansion package
 # ^ level: uses 'bossLevel' (extends core's 'level' which extends ubyte; chained custom type, min=50)
 # ^ hitPoints: uses 'bossHp' (extends core's 'hitPoints'; expression validator >= 1000)
+# ^ hpType: uses 'intTypeName' (ANCESTOR CONSTRAINT - only accepts names of types extending integer)
+# ^   Valid values include: hitPoints, bossHp, bossLevel, ubyte, uint, etc.
 # ^ element: uses 'advancedElement' (restricts core Element enum to Shadow, Light, Fire)
 # ^ bossStats: RECORD INHERITANCE via {extends:BaseStats,enrageThreshold:integer}
 # ^   BaseStats is {attack:integer,defense:integer,speed:integer} defined in core Manifest.
@@ -11,6 +13,6 @@ name:name	bossType:BossType	level:bossLevel	hitPoints:bossHp	element:advancedEle
 # ^   Point2D is {float,float} defined in core Manifest. Extends to {float,float,float} (3D).
 # ^ reward: NON-TRIVIAL UNION integer|string - gold amount (integer) OR special reward name (string)
 # ^ lootTable: array {name} referencing item names from core package
-shadowLord	Overlord	60	5000	Shadow	attack=80,defense=40,enrageThreshold=1500,speed=30	-20.0,50.0,10.0	2500	"shadowCloak","manaPotion","legendaryBlade"	The lord of the shadow realm, master of darkness
-infernalGuardian	Guardian	55	3000	Fire	attack=60,defense=70,enrageThreshold=1000,speed=20	100.0,0.0,5.0	uniqueFireArmor	"fireStaff","healthPotion"	An ancient fire guardian bound to protect the realm gate
-lightbringer	Ancient	75	8000	Light	attack=100,defense=50,enrageThreshold=2000,speed=40	0.0,0.0,100.0	5000	"legendaryBlade","earthAmulet","healthPotion"	The primordial being of pure light, final boss of the expansion
+shadowLord	Overlord	60	5000	bossHp	Shadow	attack=80,defense=40,enrageThreshold=1500,speed=30	-20.0,50.0,10.0	2500	"shadowCloak","manaPotion","legendaryBlade"	The lord of the shadow realm, master of darkness
+infernalGuardian	Guardian	55	3000	hitPoints	Fire	attack=60,defense=70,enrageThreshold=1000,speed=20	100.0,0.0,5.0	uniqueFireArmor	"fireStaff","healthPotion"	An ancient fire guardian bound to protect the realm gate
+lightbringer	Ancient	75	8000	bossHp	Light	attack=100,defense=50,enrageThreshold=2000,speed=40	0.0,0.0,100.0	5000	"legendaryBlade","earthAmulet","healthPotion"	The primordial being of pure light, final boss of the expansion

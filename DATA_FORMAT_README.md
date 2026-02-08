@@ -800,7 +800,8 @@ Each custom type is defined as a record with the following fields:
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `name` | The name of the custom type (required) |
-| `parent` | `type_spec` | The parent type to extend (required) |
+| `parent` | `type_spec\|nil` | The parent type to extend (required unless `ancestor` is set, in which case it defaults to `type_spec`) |
+| `ancestor` | `type_spec\|nil` | Value must be a type name extending this ancestor type (see below) |
 | `min` | `number\|nil` | Minimum value (for numeric types) |
 | `max` | `number\|nil` | Maximum value (for numeric types) |
 | `minLen` | `integer\|nil` | Minimum string length (for string types) |
@@ -811,12 +812,13 @@ Each custom type is defined as a record with the following fields:
 
 #### Constraint Types
 
-Custom types support four categories of constraints, which are **mutually exclusive** (cannot be mixed):
+Custom types support five categories of constraints, which are **mutually exclusive** (cannot be mixed):
 
 1. **Numeric constraints** (`min`, `max`): For types extending `number` or `integer`
 2. **String constraints** (`minLen`, `maxLen`, `pattern`): For types extending `string`
 3. **Enum constraints** (`values`): For types extending an enum type
 4. **Expression constraints** (`validate`): For any parent type, using a Lua expression
+5. **Ancestor constraints** (`ancestor`): Value must be a registered type name extending the specified ancestor
 
 If no constraints are specified, the custom type becomes a simple alias to the parent type.
 
@@ -874,19 +876,54 @@ The `validate` field allows custom validation logic using a Lua expression. The 
 {name="productCode",parent="string",validate="value:match('^[A-Z][A-Z][A-Z]%d%d$') ~= nil or 'must match XXX00 format'"}
 ```
 
+#### Ancestor-Based Type Constraints
+
+The `ancestor` field defines a type whose values must be **names of registered types** that extend (or are equal to) the specified ancestor type. This is useful for constraining a field to only accept type names from a specific type family, without requiring a full generics system.
+
+When `ancestor` is set, the `parent` field defaults to `type_spec` (which validates that the value is a syntactically valid type specification). You can override `parent` with `type`, `name`, or another string-based type if desired.
+
+**Examples:**
+
+```text
+# Accept only type names extending number (e.g., "integer", "float", "kilogram", "metre")
+{name="numericUnit",ancestor="number"}
+
+# Same, but using "name" parent (restricts values to simple dotted identifiers)
+{name="numericUnit",parent="name",ancestor="number"}
+
+# Accept only type names extending integer (e.g., "ubyte", "uint", "hitPoints")
+{name="intTypeName",ancestor="integer"}
+
+# Accept only type names extending string (e.g., "ascii", "text", "markdown")
+{name="stringTypeName",ancestor="string"}
+```
+
+This enables the **Quantity pattern**: a record pairing a unit type name with a numeric value:
+
+```text
+# Define a type for numeric unit names
+custom_types:{custom_type_def}|nil  {name="numericUnit",ancestor="number"}
+
+# Then use it in a data file column header to define a Quantity-like record:
+#   reward.unit:numericUnit  reward.value:float
+#   kilogram                 3.5
+#   metre                    100.0
+```
+
 #### Example
 
 In `Manifest.transposed.tsv`:
 
 ```text
-custom_types:{custom_type_def}|nil  {name="positiveInt",parent="integer",min=1},{name="percentage",parent="number",min=0,max=100},{name="shortName",parent="string",minLen=1,maxLen=20}
+custom_types:{custom_type_def}|nil  {name="positiveInt",parent="integer",min=1},{name="percentage",parent="number",min=0,max=100},{name="shortName",parent="string",minLen=1,maxLen=20},{name="numericUnit",ancestor="number"}
 ```
 
-This defines three custom types:
+This defines four custom types:
 
 - `positiveInt`: An integer that must be >= 1
 - `percentage`: A number between 0 and 100 (inclusive)
 - `shortName`: A string with 1 to 20 characters
+- `numericUnit`: A type name that must extend `number` (e.g., `kilogram`, `float`, `integer`)
 
 #### Using Custom Types
 

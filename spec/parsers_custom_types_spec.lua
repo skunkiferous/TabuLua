@@ -634,4 +634,132 @@ describe("parsers - registerTypesFromSpec", function()
     end)
   end)
 
+  describe("ancestor type restrictions", function()
+    it("should register type with ancestor constraint (default parent)", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Register a type whose values must be type names extending "number"
+      local specs = {{ name = "ctNumericType", ancestor = "number" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      local parser = parsers.parseType(badVal, "ctNumericType")
+      assert.is_not_nil(parser)
+
+      -- Valid: built-in types that extend number
+      assert.equals("integer", parser(badVal, "integer", "tsv"))
+      assert.equals("float", parser(badVal, "float", "tsv"))
+      assert.equals("number", parser(badVal, "number", "tsv"))  -- same type counts
+
+      -- Invalid: types that don't extend number
+      assert.is_nil(parser(badVal, "string", "tsv"))
+      assert.is_nil(parser(badVal, "boolean", "tsv"))
+    end)
+
+    it("should register type with explicit parent override", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Use "name" as parent instead of default "type_spec"
+      local specs = {{ name = "ctNumericName", parent = "name", ancestor = "number" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      local parser = parsers.parseType(badVal, "ctNumericName")
+      assert.is_not_nil(parser)
+
+      -- Valid: type name extending number
+      assert.equals("integer", parser(badVal, "integer", "tsv"))
+
+      -- Invalid: not extending number
+      assert.is_nil(parser(badVal, "string", "tsv"))
+    end)
+
+    it("should accept custom type aliases extending the ancestor", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+
+      -- First register a custom alias extending integer
+      local aliasSpecs = {{ name = "ctMyInt", parent = "integer" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, aliasSpecs))
+
+      -- Now register an ancestor-constrained type for "integer" ancestry
+      local specs = {{ name = "ctIntegerTypeName", ancestor = "integer" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      local parser = parsers.parseType(badVal, "ctIntegerTypeName")
+      assert.is_not_nil(parser)
+
+      -- Valid: custom alias that extends integer
+      assert.equals("ctMyInt", parser(badVal, "ctMyInt", "tsv"))
+      assert.equals("integer", parser(badVal, "integer", "tsv"))
+
+      -- Also valid: built-in integer subtypes
+      assert.equals("ubyte", parser(badVal, "ubyte", "tsv"))
+      assert.equals("uint", parser(badVal, "uint", "tsv"))
+
+      -- Invalid: float extends number but not integer
+      assert.is_nil(parser(badVal, "float", "tsv"))
+    end)
+
+    it("should reject unknown type names", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctKnownNumeric", ancestor = "number" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+
+      local parser = parsers.parseType(badVal, "ctKnownNumeric")
+      assert.is_not_nil(parser)
+
+      -- Unknown type names should be rejected
+      assert.is_nil(parser(badVal, "notARegisteredType", "tsv"))
+      assert.is_nil(parser(badVal, "unknownUnit", "tsv"))
+    end)
+
+    it("should reject ancestor constraint on non-string parent", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctBadAncestor", parent = "integer", ancestor = "number" }}
+      assert.is_false(parsers.registerTypesFromSpec(badVal, specs))
+      assert.is_true(#log_messages > 0)
+    end)
+
+    it("should reject non-existent ancestor type", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctBadAncestorType", ancestor = "nonExistentType" }}
+      assert.is_false(parsers.registerTypesFromSpec(badVal, specs))
+      assert.is_true(#log_messages > 0)
+    end)
+
+    it("should reject mixing ancestor with other constraints", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- Mix ancestor with numeric constraint
+      local specs = {{ name = "ctMixedAncestor", parent = "string", ancestor = "number", min = 0 }}
+      assert.is_false(parsers.registerTypesFromSpec(badVal, specs))
+      assert.is_true(#log_messages > 0)
+    end)
+
+    it("should work with string ancestor", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctStringType", ancestor = "string" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      local parser = parsers.parseType(badVal, "ctStringType")
+      assert.is_not_nil(parser)
+
+      -- Valid: types extending string
+      assert.equals("ascii", parser(badVal, "ascii", "tsv"))
+      assert.equals("text", parser(badVal, "text", "tsv"))
+      assert.equals("string", parser(badVal, "string", "tsv"))
+
+      -- Invalid: non-string types
+      assert.is_nil(parser(badVal, "integer", "tsv"))
+      assert.is_nil(parser(badVal, "boolean", "tsv"))
+    end)
+  end)
+
 end)

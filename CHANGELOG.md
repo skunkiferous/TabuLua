@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `base64` module: pure-Lua RFC 4648 Base64 encode/decode with `encode()`, `decode()`, and
   `isValid()` functions.
 - Tutorial `Icon.tsv` with 8x8 monochrome pixel art icons demonstrating both binary data types.
+- New `ancestor` constraint for custom type definitions. Allows defining types whose values must
+  be names of registered types extending a specified ancestor type. For example,
+  `{name="numericUnit",ancestor="number"}` accepts only type names like `kilogram` or `metre`
+  that extend `number`. When `ancestor` is set, `parent` defaults to `type_spec` (can be
+  overridden). Enables the "Quantity pattern" for pairing unit type names with numeric values.
+- Tutorial expansion now demonstrates the `ancestor` constraint with an `intTypeName` custom type.
 
 ### Fixed
 

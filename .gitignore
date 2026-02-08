@@ -27,3 +27,4 @@ Thumbs.db
 test_errors.txt
 test_results.txt
 .claude/settings.local.json
+data

@@ -773,17 +773,18 @@ function M.registerDerivedParsers()
 
     -- Define the custom type definition record type used in manifest custom_types field.
     -- Fields (alphabetically ordered for normalization):
+    --   ancestor: type_spec|nil - value must be a type name extending this ancestor
     --   max: number|nil - maximum value (for number types)
     --   maxLen: integer|nil - maximum string length (for string types)
     --   min: number|nil - minimum value (for number types)
     --   minLen: integer|nil - minimum string length (for string types)
     --   name: name - the name of the custom type
-    --   parent: type_spec - the parent type to extend/restrict
+    --   parent: type_spec|nil - the parent type to extend/restrict (defaults to type_spec when ancestor is set)
     --   pattern: string|nil - regex pattern (for string types)
     --   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
     --   values: {string}|nil - allowed values (for enum types)
     registration.registerAlias(ownBadVal, 'custom_type_def',
-        '{max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec,pattern:string|nil,validate:string|nil,values:{string}|nil}')
+        '{ancestor:type_spec|nil,max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,validate:string|nil,values:{string}|nil}')
 
     -- ============================================================
     -- Validator Types for Row, File, and Package Validators
