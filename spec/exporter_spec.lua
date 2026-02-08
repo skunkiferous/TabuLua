@@ -346,6 +346,128 @@ describe("exporter", function()
             -- Should contain CREATE TABLE statement
             assert.is_truthy(content:match("CREATE TABLE"))
         end)
+
+        it("should map union of basic types to TEXT column", function()
+            -- Union of basic types (integer|string) should become TEXT
+            local header = {
+                {name = "id", type = "string", idx = 1, parsed = "id"},
+                {name = "reward", type = "integer|string", idx = 2, parsed = "reward"},
+            }
+            header.__source = path_join(temp_dir, "union_test.tsv")
+            header.__dataset = {}
+            for _, col in ipairs(header) do col.header = header end
+
+            local row1 = {{parsed = "quest1"}, {parsed = 100}}
+            local row2 = {{parsed = "quest2"}, {parsed = "gold_ring"}}
+            local tsv = {header, row1, row2}
+            header.__dataset = tsv
+
+            local process_files = {
+                tsv_files = {["union_test.tsv"] = tsv},
+                raw_files = {["union_test.tsv"] = "id:string\treward:integer|string\nquest1\t100\nquest2\tgold_ring"},
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportSQL(process_files, exportParams)
+            assert.is_true(success)
+
+            local content = file_util.readFile(path_join(temp_dir, "union_test.sql"))
+            assert.is_not_nil(content)
+            -- reward column should be TEXT NOT NULL (union of basic types, not optional)
+            assert.is_truthy(content:match('"reward" TEXT NOT NULL'))
+        end)
+
+        it("should map optional union of basic types to TEXT column without NOT NULL", function()
+            -- Union with nil suffix (integer|string|nil) should become TEXT (nullable)
+            local header = {
+                {name = "id", type = "string", idx = 1, parsed = "id"},
+                {name = "reward", type = "integer|string|nil", idx = 2, parsed = "reward"},
+            }
+            header.__source = path_join(temp_dir, "union_opt_test.tsv")
+            header.__dataset = {}
+            for _, col in ipairs(header) do col.header = header end
+
+            local row1 = {{parsed = "quest1"}, {parsed = 100}}
+            local row2 = {{parsed = "quest2"}, {parsed = nil}}
+            local tsv = {header, row1, row2}
+            header.__dataset = tsv
+
+            local process_files = {
+                tsv_files = {["union_opt_test.tsv"] = tsv},
+                raw_files = {["union_opt_test.tsv"] = "id:string\treward:integer|string|nil\nquest1\t100\nquest2\t"},
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportSQL(process_files, exportParams)
+            assert.is_true(success)
+
+            local content = file_util.readFile(path_join(temp_dir, "union_opt_test.sql"))
+            assert.is_not_nil(content)
+            -- reward column should be TEXT without NOT NULL (optional union)
+            assert.is_truthy(content:match('"reward" TEXT[^%w]'))
+            assert.is_falsy(content:match('"reward" TEXT NOT NULL'))
+        end)
+
+        it("should map union containing table type to TEXT column", function()
+            -- Union with a table type (table|string) should use table's SQL type (TEXT)
+            local header = {
+                {name = "id", type = "string", idx = 1, parsed = "id"},
+                {name = "data", type = "table|string", idx = 2, parsed = "data"},
+            }
+            header.__source = path_join(temp_dir, "union_table_test.tsv")
+            header.__dataset = {}
+            for _, col in ipairs(header) do col.header = header end
+
+            local row1 = {{parsed = "item1"}, {parsed = "simple"}}
+            local row2 = {{parsed = "item2"}, {parsed = {key = "value"}}}
+            local tsv = {header, row1, row2}
+            header.__dataset = tsv
+
+            local process_files = {
+                tsv_files = {["union_table_test.tsv"] = tsv},
+                raw_files = {["union_table_test.tsv"] = "id:string\tdata:table|string\nitem1\tsimple\nitem2\t{key=\"value\"}"},
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportSQL(process_files, exportParams)
+            assert.is_true(success)
+
+            local content = file_util.readFile(path_join(temp_dir, "union_table_test.sql"))
+            assert.is_not_nil(content)
+            -- data column should be TEXT NOT NULL (union containing table)
+            assert.is_truthy(content:match('"data" TEXT NOT NULL'))
+        end)
+
+        it("should map optional union containing table type to TEXT without NOT NULL", function()
+            -- Union with a table type and nil (table|nil) should be nullable TEXT
+            local header = {
+                {name = "id", type = "string", idx = 1, parsed = "id"},
+                {name = "data", type = "table|nil", idx = 2, parsed = "data"},
+            }
+            header.__source = path_join(temp_dir, "union_table_nil_test.tsv")
+            header.__dataset = {}
+            for _, col in ipairs(header) do col.header = header end
+
+            local row1 = {{parsed = "item1"}, {parsed = {key = "value"}}}
+            local row2 = {{parsed = "item2"}, {parsed = nil}}
+            local tsv = {header, row1, row2}
+            header.__dataset = tsv
+
+            local process_files = {
+                tsv_files = {["union_table_nil_test.tsv"] = tsv},
+                raw_files = {["union_table_nil_test.tsv"] = "id:string\tdata:table|nil\nitem1\t{key=\"value\"}\nitem2\t"},
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportSQL(process_files, exportParams)
+            assert.is_true(success)
+
+            local content = file_util.readFile(path_join(temp_dir, "union_table_nil_test.sql"))
+            assert.is_not_nil(content)
+            -- data column should be TEXT without NOT NULL (optional union with table)
+            assert.is_truthy(content:match('"data" TEXT[^%w]'))
+            assert.is_falsy(content:match('"data" TEXT NOT NULL'))
+        end)
     end)
 
     describe("exportXML", function()

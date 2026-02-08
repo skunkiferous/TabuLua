@@ -248,6 +248,8 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 | Union | `<type1>\|<type2>\|...` | One of several types. Use `nil` as last type for "optional" values. `string` if present must be last (but before `nil`) |
 | Enum | `{enum:<label1>\|<label2>\|...}` | Enumerated set of valid string labels |
 
+> **SQL Export:** Union columns are exported as `TEXT` in SQL. When all member types are basic (non-table) types, values are serialized as strings. When the union contains a table type, values are JSON-encoded (same as standalone `table` columns). If the union includes `nil`, the column is nullable; otherwise it is `NOT NULL`.
+
 ### Special Types
 
 | Type | Description |

@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - SQL exporter crash on exploded column names with bracket notation (e.g., `materials[1]`).
   Replaced `isName()` assertion with sanitization for SQL column identifiers.
 - SQL exporter crash when `header.__source` or `header.__dataset` is nil.
+- SQL exporter now handles union column types (e.g., `integer|string`) and type aliases
+  resolving to unions (e.g., `super_type` → `type_spec|nil`). Union columns are mapped to
+  `TEXT` in SQL; unions containing a table type use JSON encoding (same as standalone `table`
+  columns). Previously these produced "Unknown column type" errors.
 
 ## [0.5.2] - 2026-02-07
 

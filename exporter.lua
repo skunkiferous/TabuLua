@@ -47,6 +47,7 @@ local parsers = require("parsers")
 local extendsOrRestrict = parsers.extendsOrRestrict
 local parseType = parsers.parseType
 local registerAlias = parsers.registerAlias
+local unionTypes = parsers.unionTypes
 
 local error_reporting = require("error_reporting")
 local badValGen = error_reporting.badValGen
@@ -608,6 +609,26 @@ local function colToSQL(col)
                         sqlType = sqlType .. " NOT NULL"
                     end
                     break
+                end
+            end
+        end
+        -- Try union types: e.g. integer|string, or aliases resolving to unions like super_type -> type_spec|nil
+        if sqlType == nil then
+            local uTypes = unionTypes(colType)
+            if uTypes then
+                local hasTable = false
+                for _, ut in ipairs(uTypes) do
+                    if ut == "nil" then
+                        optional = true
+                    elseif ut == "table" or extendsOrRestrict(ut, "table") then
+                        hasTable = true
+                    end
+                end
+                -- Union of basic types: all values serialized as strings -> TEXT
+                -- Union containing a table type: same as table column type (JSON-encoded TEXT)
+                sqlType = sql_types[hasTable and "table" or "string"]
+                if not optional and not sqlType:find("NOT NULL") then
+                    sqlType = sqlType .. " NOT NULL"
                 end
             end
         end
