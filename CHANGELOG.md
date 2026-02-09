@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   for such unions (e.g., `REAL` instead of `TEXT` for numeric unions).
 - Guards in `registerTypesFromSpec` to reject union types as parents for scalar constraints
   (numeric, string, enum, ancestor). Union parents remain valid for expression-based validators.
+- New `number_type` built-in type: a restricted `type_spec` that only accepts names of types
+  extending `number` (e.g., `integer`, `float`, `long`, `percent`, or custom numeric types).
+  Enables type-safe references to numeric type families.
+- New `tagged_number` built-in type: a validated `{number_type,number}` tuple, similar to `any` but
+  restricted to numeric types. Validates that the value matches the declared number type
+  (e.g., `"integer",5` is valid but `"integer",3.5` is rejected). Supports the Quantity pattern
+  for pairing unit type names with numeric values.
+- New `quantity` built-in type: compact string format `<number><number_type>` (e.g., `3.5kilogram`,
+  `100metre`, `-5integer`). Parsed to the same `{type_name, number}` structure as `tagged_number`.
+  Extends `tagged_number`.
 
 ### Fixed
 

@@ -783,13 +783,17 @@ end
 -- Returns the parser function if successful, nil otherwise.
 function M.restrictToTypeExtending(badVal, parentName, newParserName, ancestorSpec)
     local parent = parseType(badVal, parentName)
-    if not parent then return nil end
+    if not parent then
+        utils.log(badVal, 'type', parentName,
+            'parent('..tostring(parentName)..') must be a valid, registered type specification')
+        return nil
+    end
 
     -- Validate that ancestorSpec is a known type
     local ancestorParser = parseType(badVal, ancestorSpec)
     if not ancestorParser then
         utils.log(badVal, 'type', ancestorSpec,
-            'ancestor must be a valid, registered type specification')
+            'ancestor('..tostring(ancestorSpec)..') must be a valid, registered type specification')
         return nil
     end
 

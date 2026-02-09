@@ -826,6 +826,73 @@ function M.registerDerivedParsers()
     
     -- Helper type for creating "Files.tsv"
     registration.registerAlias(ownBadVal, 'super_type', 'type_spec|nil')
+
+    -- A "type_spec" limited to "number" and types that extend number
+    assert(registration.restrictToTypeExtending(ownBadVal, 'type_spec', 'number_type', 'number'))
+
+    -- A type similar to "any" but that only accept values of type "number"
+    registration.restrictWithValidator(ownBadVal, '{number_type,number}', 'tagged_number',
+    function(parsed)
+        local expected_type = parsed[1]
+        local parsed_value = parsed[2]
+        local parser = parseType(nullBadVal, expected_type)
+        if not parser then
+            return 'Bad number type: ' .. expected_type
+        end
+        local validated, _ = generators.callParser(parser, nullBadVal, parsed_value, "parsed")
+        if validated == nil then
+            return 'Value does not match expected type ' .. expected_type
+        end
+        return true
+    end)
+
+    -- "quantity" is a string "<number><number_type>", e.g. "3.5kilogram", parsed to {type, number}
+    -- Similar to "percent" (string input -> structured output), but produces a tagged_number tuple.
+    local nt_parser = parseType(nullBadVal, 'number_type')
+    assert(nt_parser)
+    state.PARSERS.quantity = function(badVal, value, context)
+        if utils.expectTSV(context) then
+            -- TSV: parse "<number><type_name>" string
+            local num_str, type_name = string.match(tostring(value),
+                "^(%-?%d+%.?%d*)(%a[%a%d_.]*)$")
+            if not num_str or not type_name then
+                utils.log(badVal, 'quantity', value,
+                    "expected format: <number><type_name> (e.g. '3.5kilogram')")
+                return nil, tostring(value)
+            end
+            -- Validate type_name is a valid number_type
+            local parsed_type = generators.callParser(nt_parser, badVal, type_name, "tsv")
+            if not parsed_type then
+                return nil, tostring(value)
+            end
+            -- Parse the number using the declared type's parser
+            local type_parser = parseType(nullBadVal, parsed_type)
+            if not type_parser then
+                utils.log(badVal, 'quantity', value,
+                    'Bad number type: ' .. parsed_type)
+                return nil, tostring(value)
+            end
+            local parsed_num, reformatted_num = generators.callParser(
+                type_parser, nullBadVal, num_str, "tsv")
+            if parsed_num == nil then
+                utils.log(badVal, 'quantity', value,
+                    'Value does not match expected type ' .. parsed_type)
+                return nil, tostring(value)
+            end
+            return {parsed_type, parsed_num}, reformatted_num .. parsed_type
+        else
+            -- Parsed context: value should be a table {type_name, number}
+            -- Delegate to tagged_number parser for validation
+            local tn_parser = parseType(nullBadVal, 'tagged_number')
+            local parsed, _ = generators.callParser(tn_parser, badVal, value, "parsed")
+            if parsed == nil then
+                return nil, tostring(value)
+            end
+            return parsed, tostring(parsed[2]) .. parsed[1]
+        end
+    end
+    generators.extendsOrRestrictsType('quantity', 'tagged_number')
+    generators.registerComparator('quantity', generators.getCompInternal('tagged_number'))
 end
 
 return M

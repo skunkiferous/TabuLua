@@ -258,6 +258,9 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 |------|-------------|
 | `raw` | Pre-defined union: `boolean\|number\|table\|string\|nil` |
 | `any` | Tagged union: `{type,raw}` — a tuple storing both the type name and the raw value, validated to ensure the value matches the declared type |
+| `number_type` | A restricted `type_spec` that only accepts names of types extending `number` (e.g., `integer`, `float`, `long`, `percent`, or custom numeric types like `kilogram`) |
+| `tagged_number` | Tagged numeric union: `{number_type,number}` — like `any` but restricted to numeric types. Validates that the value matches the declared number type (e.g., `"integer",5` is valid but `"integer",3.5` is rejected) |
+| `quantity` | Compact string format `<number><number_type>` (e.g., `3.5kilogram`, `100metre`, `-5integer`). Parsed to the same `{type_name, number}` structure as `tagged_number`. Extends `tagged_number` |
 | `nil` | Just the nil value (only used in unions for "optional" values) |
 | `true` | Just the true value (only valid as `<type2>` in maps, for Lua-style "sets") |
 | `package_id` | Alias for `name`; used as the package identifier in manifests |
