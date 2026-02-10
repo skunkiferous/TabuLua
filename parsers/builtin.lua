@@ -827,7 +827,7 @@ function M.registerDerivedParsers()
     registration.registerAlias(ownBadVal, 'super_type', 'type_spec|nil')
 
     -- A "type_spec" limited to "number" and types that extend number
-    assert(registration.restrictToTypeExtending(ownBadVal, 'type_spec', 'number_type', 'number'))
+    registration.registerAlias(ownBadVal, 'number_type', '{extends:number}')
 
     -- A type similar to "any" but that only accept values of type "number"
     registration.restrictWithValidator(ownBadVal, '{number_type,number}', 'tagged_number',
