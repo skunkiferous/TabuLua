@@ -26,19 +26,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `base64` module: pure-Lua RFC 4648 Base64 encode/decode with `encode()`, `decode()`, and
   `isValid()` functions.
 - Tutorial `Icon.tsv` with 8x8 monochrome pixel art icons demonstrating both binary data types.
-- New `ancestor` constraint for custom type definitions. Allows defining types whose values must
-  be names of registered types extending a specified ancestor type. For example,
-  `{name="numericUnit",ancestor="number"}` accepts only type names like `kilogram` or `metre`
-  that extend `number`. When `ancestor` is set, `parent` defaults to `type_spec` (can be
-  overridden). Enables the "Quantity pattern" for pairing unit type names with numeric values.
-- Tutorial expansion now demonstrates the `ancestor` constraint with an `intTypeName` custom type.
+- New bare `{extends,<type>}` type spec syntax. When the extends syntax is used without additional
+  fields (e.g., `{extends,number}` or `{extends:number}`), it defines a type whose values must be
+  names of registered types extending the specified ancestor. Usable anywhere a type spec is valid
+  (column headers, inline, manifests). Replaces the previous `ancestor` field in `custom_type_def`.
+  For example, `{name="numericUnit",parent="{extends,number}"}` accepts only type names like
+  `kilogram` or `metre` that extend `number`. Enables the "Quantity pattern" for pairing unit type
+  names with numeric values.
+- Tutorial expansion now demonstrates bare extends with an `intTypeName` custom type.
 - `extendsOrRestrict()` now recognizes union types as extending a common ancestor when all
   member types extend that ancestor. For example, a union `integer|float` is now recognized
   as extending `number`, and `ubyte|ushort` as extending `integer`. Unions containing `nil`
   are excluded (since `nil` does not extend any base type). This also improves SQL type mapping
   for such unions (e.g., `REAL` instead of `TEXT` for numeric unions).
 - Guards in `registerTypesFromSpec` to reject union types as parents for scalar constraints
-  (numeric, string, enum, ancestor). Union parents remain valid for expression-based validators.
+  (numeric, string, enum). Union parents remain valid for expression-based validators.
 - New `number_type` built-in type: a restricted `type_spec` that only accepts names of types
   extending `number` (e.g., `integer`, `float`, `long`, `percent`, or custom numeric types).
   Enables type-safe references to numeric type families.

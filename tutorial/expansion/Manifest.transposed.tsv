@@ -15,8 +15,8 @@ url:http|nil
 # bossLevel: extends 'level' (which itself extends ubyte min=1,max=99) adding min=50
 # bossHp: extends 'hitPoints' (which extends integer min=0) adding expression validator
 # advancedElement: a focused enum for shadow realm content (Fire, Light, Shadow only)
-# intTypeName: ancestor constraint - accepts only names of types extending integer
-custom_types:{custom_type_def}|nil	{name="advancedElement",parent="{enum:Fire|Light|Shadow}"},{ancestor="integer",name="intTypeName"},{min=50,name="bossLevel",parent="level"},{name="bossHp",parent="hitPoints",validate="value >= 1000 or 'boss HP must be at least 1000'"}
+# intTypeName: bare extends constraint - accepts only names of types extending integer
+custom_types:{custom_type_def}|nil	{name="advancedElement",parent="{enum:Fire|Light|Shadow}"},{name="intTypeName",parent="{extends,integer}"},{min=50,name="bossLevel",parent="level"},{name="bossHp",parent="hitPoints",validate="value >= 1000 or 'boss HP must be at least 1000'"}
 # Expansion-specific code library
 code_libraries:{{name,string}}|nil	{"bossLib","libs/bossLib.lua"}
 # DEPENDENCIES: hard requirement on tutorial.core version >=1.0.0

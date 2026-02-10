@@ -80,9 +80,6 @@ function M.registerAlias(badVal, name, type_spec)
             "' is already exists")
         return false
     end
-    local resolved = utils.resolve(type_spec)
-    assert(resolved:sub(1, 8) ~= '{extends',
-        "Parser "..type_spec.." still contains 'extends'")
     state.ALIASES[name] = utils.resolve(type_spec)
     -- Validate that registration worked ...
     assert(parseType(badVal, name, false),
@@ -845,13 +842,6 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
     for _, spec in ipairs(typeSpecs) do
         local name = spec.name
         local parent = spec.parent
-        local hasAncestorConstraint = spec.ancestor ~= nil
-
-        -- Default parent to "type_spec" when ancestor is set
-        if hasAncestorConstraint and (parent == nil or parent == "") then
-            parent = "type_spec"
-        end
-
         if type(name) ~= "string" or name == "" then
             utils.log(badVal, 'name', name, 'type name must be a non-empty string')
             success = false
@@ -871,7 +861,6 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             if hasStringConstraints then constraintCount = constraintCount + 1 end
             if hasEnumConstraints then constraintCount = constraintCount + 1 end
             if hasExpressionConstraint then constraintCount = constraintCount + 1 end
-            if hasAncestorConstraint then constraintCount = constraintCount + 1 end
 
             if constraintCount == 0 then
                 -- No constraints - just register as an alias
@@ -880,24 +869,8 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                 end
             elseif constraintCount > 1 then
                 utils.log(badVal, 'spec', name,
-                    'cannot mix constraint types (numeric, string, enum, expression, ancestor) in the same type definition')
+                    'cannot mix constraint types (numeric, string, enum, expression) in the same type definition')
                 success = false
-            elseif hasAncestorConstraint then
-                -- Ancestor constraint - value must be a type name extending the ancestor
-                if not introspection.typeSameOrExtends(parent, "string") then
-                    utils.log(badVal, 'type', parent,
-                        'ancestor constraint requires a parent type that extends string')
-                    success = false
-                elseif introspection.unionTypes(parent) then
-                    utils.log(badVal, 'type', parent,
-                        'ancestor constraint cannot be applied to union types')
-                    success = false
-                else
-                    local parser = M.restrictToTypeExtending(badVal, parent, name, spec.ancestor)
-                    if not parser then
-                        success = false
-                    end
-                end
             elseif hasExpressionConstraint then
                 -- Expression-based validator
                 local parser = M.restrictWithExpression(badVal, parent, name, spec.validate)

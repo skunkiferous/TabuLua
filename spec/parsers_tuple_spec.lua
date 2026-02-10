@@ -188,15 +188,15 @@ describe("parsers - tuple types", function()
       }, log_messages)
     end)
 
-    it("should require at least one additional type", function()
+    it("bare extends should create ancestor constraint parser", function()
       assert(parsers.registerAlias(badVal, "Point2DT", "{number,number}"))
 
       local parser = parsers.parseType(badVal, "{extends,Point2DT}")
-      assert.is_nil(parser)
-
-      assert.same({
-        "Bad extends  in test on line 1: '{extends,Point2DT}' (extends in tuple requires length of at least 3)"
-      }, log_messages)
+      assert.is_not_nil(parser)
+      -- Bare extends: values must be type names extending Point2DT
+      -- Point2DT itself should be accepted
+      local parsed, _ = parser(badVal, "Point2DT")
+      assert.are.equal("Point2DT", parsed)
     end)
 
     it("should validate additional types are valid", function()

@@ -54,7 +54,36 @@ local function parse_type_tuple(badVal, xparsed, type_spec)
     local start_index = 1
     if #parsed >= 1 and type(parsed[1]) == "table" and parsed[1].tag == "name"
         and parsed[1].value == "extends" then
-        if #parsed < 3 then
+        if #parsed == 2 then
+            -- Bare extends: {extends,<ancestor>}
+            -- Values must be type names extending the ancestor
+            local ancestor_spec = utils.serializeType(parsed[2])
+            local type_spec_parser = state.refs.parseType(badVal, 'type_spec')
+            if not type_spec_parser then return nil end
+            local ancestor_parser = state.refs.parseType(badVal, ancestor_spec)
+            if not ancestor_parser then
+                utils.log(badVal, 'extends', type_spec,
+                    "ancestor type does not exist: " .. ancestor_spec)
+                return nil
+            end
+            result = function(badVal2, value, context)
+                local parsed_val, reformatted = generators.callParser(
+                    type_spec_parser, badVal2, value, context)
+                if parsed_val == nil then return nil, reformatted end
+                if parsed_val ~= ancestor_spec
+                    and not state.refs.extendsOrRestrict(parsed_val, ancestor_spec) then
+                    utils.log(badVal2, type_spec, value,
+                        "'" .. tostring(parsed_val)
+                        .. "' is not a type that extends " .. ancestor_spec)
+                    return nil, reformatted
+                end
+                return parsed_val, reformatted
+            end
+            generators.registerComparator(type_spec,
+                generators.getCompInternal('type_spec'))
+            state.NEVER_TABLE[type_spec] = true
+            return result, type_spec, xparsed
+        elseif #parsed < 3 then
             utils.log(badVal, 'extends', type_spec,
             "extends in tuple requires length of at least 3")
             return nil
@@ -262,8 +291,16 @@ local function parse_type_map(badVal, xparsed, type_spec)
             if kt == "enum" then
                 return get_enum_parser(badVal, parsed, type_spec)
             elseif kt == "extends" then
-                utils.log(badVal, 'record', type_spec,
-                "extends record must have at least one additional field")
+                -- Bare extends in record syntax: {extends:<type>}
+                -- Normalize to tuple form {extends,<type>} and delegate
+                local ancestor_spec = utils.serializeType(value_type)
+                local normalized = "{extends," .. ancestor_spec .. "}"
+                local norm_result = state.refs.parseType(badVal, normalized)
+                if norm_result then
+                    state.COMPARATORS[type_spec] = state.COMPARATORS[normalized]
+                    state.NEVER_TABLE[type_spec] = true
+                end
+                return norm_result
             else
                 local key_parse, key_spec = parse_type(badVal, key_type)
                 if not isNeverTable(key_spec) then
@@ -528,9 +565,7 @@ parse_type = function(badVal, parsed, log_unknown)
             state.UNKNOWN_TYPES[type_spec] = true
         end
     end
-    if result ~= nil and type_spec ~= nil and type_spec:sub(1, 8) == '{extends' then
-        error("type_spec not correctly resolved: " .. orig_type_spec)
-    end
+    -- Note: bare extends type specs like {extends,number} are valid and start with '{extends'
     return result, type_spec
 end
 

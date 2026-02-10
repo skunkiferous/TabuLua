@@ -296,15 +296,15 @@ describe("parsers - record types", function()
       }, log_messages)
     end)
 
-    it("should require at least one additional field", function()
+    it("bare extends should create ancestor constraint parser", function()
       assert(parsers.registerAlias(badVal, "Person", "{name:string,age:number}"))
 
       local parser = parsers.parseType(badVal, "{extends:Person}")
-      assert.is_nil(parser)
-
-      assert.same({
-        "Bad record  in test on line 1: '{extends:Person}' (extends record must have at least one additional field)"
-      }, log_messages)
+      assert.is_not_nil(parser)
+      -- Bare extends: values must be type names extending Person
+      -- Person itself should be accepted
+      local parsed, _ = parser(badVal, "Person")
+      assert.are.equal("Person", parsed)
     end)
 
     it("should validate additional field names are identifiers", function()
