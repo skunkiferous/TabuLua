@@ -847,6 +847,7 @@ function M.registerDerivedParsers()
 
     -- "quantity" is a string "<number><number_type>", e.g. "3.5kilogram", parsed to {type, number}
     -- Similar to "percent" (string input -> structured output), but produces a tagged_number tuple.
+    -- Note that 'quantity' does NOT support 'percent' input, as it explicitly matches "normal numbers"
     local nt_parser = parseType(nullBadVal, 'number_type')
     assert(nt_parser)
     state.PARSERS.quantity = function(badVal, value, context)

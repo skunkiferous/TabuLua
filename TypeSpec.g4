@@ -80,6 +80,9 @@ atomicType
  * Numeric extension types:
  *   percent, ratio
  *
+ * Tagged numeric types:
+ *   number_type, tagged_number, quantity
+ *
  * Special types:
  *   raw (boolean|number|table|string|nil), nil, true, table
  */
@@ -104,6 +107,16 @@ bracedType
       // Enumeration type: {enum:label1|label2|...}
       // Examples: {enum:red|green|blue}, {enum:north|south|east|west}
       // Values must be one of the specified string literals
+
+    | LBRACE EXTENDS COMMA typeName RBRACE                       # BareExtendsTuple
+      // Bare extends (tuple form): {extends,<type>}
+      // Ancestor constraint: values must be names of registered types
+      // extending the specified type. E.g., {extends,number} accepts
+      // "integer", "float", "kilogram", etc.
+
+    | LBRACE EXTENDS COLON typeName RBRACE                       # BareExtendsRecord
+      // Bare extends (record form): {extends:<type>}
+      // Same semantics as tuple form; normalized to {extends,<type>}
 
     | LBRACE EXTENDS COMMA typeName (COMMA unionType)+ RBRACE    # TupleExtends
       // Tuple inheritance: {extends,BaseTuple,additionalType1,additionalType2}
@@ -338,4 +351,14 @@ COMMENT
  *
  *   Input: "{enum:red|green|blue}"
  *   AST:   { tag: "enum", value: ["red", "green", "blue"] }
+ *
+ *   Input: "{extends,number}"
+ *   AST:   { tag: "tuple", value: [
+ *            { tag: "name", value: "extends" },
+ *            { tag: "name", value: "number" }
+ *          ]}
+ *   Note: Bare extends produces a 2-element tuple at the AST level.
+ *         Semantic analysis distinguishes it from tuple inheritance
+ *         (which has 3+ elements) and creates an ancestor constraint
+ *         parser instead.
  */

@@ -28,3 +28,11 @@ test_errors.txt
 test_results.txt
 .claude/settings.local.json
 data
+.antlr/TypeSpec.interp
+.antlr/TypeSpec.tokens
+.antlr/TypeSpecBaseListener.java
+.antlr/TypeSpecLexer.interp
+.antlr/TypeSpecLexer.java
+.antlr/TypeSpecLexer.tokens
+.antlr/TypeSpecListener.java
+.antlr/TypeSpecParser.java
