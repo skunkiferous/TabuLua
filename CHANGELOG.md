@@ -51,6 +51,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `quantity` built-in type: compact string format `<number><number_type>` (e.g., `3.5kilogram`,
   `100metre`, `-5integer`). Parsed to the same `{type_name, number}` structure as `tagged_number`.
   Extends `tagged_number`.
+- New `INTERNAL_MODEL.md` documenting the internal Lua table structures for cells, columns,
+  headers, rows, datasets, packages, exploded structures, and the processing pipeline.
+- New `USER_DATA_VIEW.md` documenting the external/user view of data from the perspective of
+  cell expressions, COG scripts, and validators, including helper function reference and sandbox
+  built-ins summary.
+
+### Changed
+
+- **Breaking**: Validators now provide parsed values directly, consistent with cell expressions.
+  `self.colName` in validators returns the parsed value (e.g., a number) instead of a cell object.
+  All `.parsed` access in validator expressions must be removed:
+  - Before: `self.price.parsed > 0 or 'price must be positive'`
+  - After: `self.price > 0 or 'price must be positive'`
+  - Custom predicates in helper functions are also affected:
+    - Before: `all(rows, function(r) return r.price.parsed > 0 end)`
+    - After: `all(rows, function(r) return r.price > 0 end)`
+- `validator_helpers` functions (`unique`, `sum`, `min`, `max`, `avg`, `lookup`, `groupBy`)
+  now expect rows with parsed values directly accessible via `row[column]`, instead of
+  cell objects requiring `row[column].parsed`.
+- Data Access Reference section extracted from `DATA_FORMAT_README.md` into standalone
+  `USER_DATA_VIEW.md`.
 
 ### Fixed
 

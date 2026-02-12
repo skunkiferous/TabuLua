@@ -3,7 +3,7 @@ Element.tsv	Element	enum	true			10	Elemental damage and resistance types used th
 Files.tsv	Files		true	Files		0	This file; describes all core data files						
 Rarity.tsv	Rarity	enum	true			20	Item rarity levels that affect drop rates and pricing						
 Constant.tsv	Constant		true		value	50	Game balance constants published for use in expressions across other files						
-Item.tsv	Item		true	Item		100	Core game items with complex types, enums, and arrays				ItemLocalized	"self.price.parsed > 0 or 'price must be positive'","self.weight.parsed > 0 or 'weight must be positive'",{expr="self.price.parsed < 10000 or 'price seems unusually high'",level="warn"}	{expr="count(rows) <= 500 or 'too many items for core package'",level="warn"}
+Item.tsv	Item		true	Item		100	Core game items with complex types, enums, and arrays				ItemLocalized	"self.price > 0 or 'price must be positive'","self.weight > 0 or 'weight must be positive'",{expr="self.price < 10000 or 'price seems unusually high'",level="warn"}	{expr="count(rows) <= 500 or 'too many items for core package'",level="warn"}
 Item.en.tsv	ItemEN		false			101	English display names and descriptions for items (joined into Item.tsv)	Item.tsv	name				
 Icon.tsv	Icon		true			150	Pixel art icons stored as hex and base64 binary data						
 Creature.tsv	Creature		true	Creature		200	Monsters and enemies with exploded columns for stats, position, drops, and resistances						

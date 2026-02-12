@@ -22,6 +22,52 @@ local validator_helpers = require("validator_helpers")
 
 local logger = require("named_logger").getLogger(NAME)
 
+-- ============================================================
+-- Row Wrapping for Validators
+-- ============================================================
+
+--- Wraps a single row so that accessing a column returns the parsed value
+--- directly, instead of the internal cell object. This makes validator code
+--- consistent with cell expressions, where `self.colName` returns the parsed value.
+--- @param row table The raw row (read-only, containing cell objects)
+--- @return table A proxy that auto-unwraps cells to their parsed values
+local function wrapRowForValidation(row)
+    return setmetatable({}, {
+        __index = function(_, k)
+            local val = row[k]
+            if type(val) == "table" and getmetatable(val) == "cell" then
+                return val.parsed
+            end
+            return val
+        end,
+        __newindex = function()
+            error("attempt to update a read-only row", 2)
+        end,
+    })
+end
+
+--- Wraps an array of rows eagerly (so that ipairs works).
+--- @param rows table Array of raw rows
+--- @return table Array of wrapped rows
+local function wrapRowsForValidation(rows)
+    local wrapped = {}
+    for i, row in ipairs(rows) do
+        wrapped[i] = wrapRowForValidation(row)
+    end
+    return wrapped
+end
+
+--- Wraps a files map (filename -> rows array) for package validators.
+--- @param files table Map of file names to their row arrays
+--- @return table Map with wrapped row arrays
+local function wrapFilesForValidation(files)
+    local wrapped = {}
+    for name, rows in pairs(files) do
+        wrapped[name] = wrapRowsForValidation(rows)
+    end
+    return wrapped
+end
+
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
 local function getVersion()
@@ -183,9 +229,10 @@ local function runRowValidators(validators, row, rowIndex, fileName, badVal, ext
     end
 
     local warnings = {}
+    local wrappedRow = wrapRowForValidation(row)
     local context = {
-        self = row,
-        row = row,
+        self = wrappedRow,
+        row = wrappedRow,
         rowIndex = rowIndex,
         fileName = fileName,
     }
@@ -235,9 +282,10 @@ local function runFileValidators(validators, rows, fileName, badVal, extraEnv)
     end
 
     local warnings = {}
+    local wrappedRows = wrapRowsForValidation(rows)
     local context = {
-        rows = rows,
-        file = rows,
+        rows = wrappedRows,
+        file = wrappedRows,
         fileName = fileName,
         count = #rows,
     }
@@ -287,9 +335,10 @@ local function runPackageValidators(validators, files, packageId, badVal, extraE
     end
 
     local warnings = {}
+    local wrappedFiles = wrapFilesForValidation(files)
     local context = {
-        files = files,
-        package = files,
+        files = wrappedFiles,
+        package = wrappedFiles,
         packageId = packageId,
     }
 

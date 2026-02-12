@@ -11,31 +11,9 @@ local it = busted.it
 local validator_executor = require("validator_executor")
 local error_reporting = require("error_reporting")
 
--- Cell metatable mimicking tsv_model's cell_mt
-local cell_mt = {
-    __index = function(t, k)
-        if k == "value" then return t[1]
-        elseif k == "evaluated" then return t[2]
-        elseif k == "parsed" then return t[3]
-        elseif k == "reformatted" then return t[4]
-        end
-        return nil
-    end,
-    __tostring = function(t) return tostring(t[4]) end,
-    __type = "cell"
-}
-
-local function makeCell(parsed)
-    local s = tostring(parsed)
-    return setmetatable({s, s, parsed, s}, cell_mt)
-end
-
+-- Creates a plain value row (validators now see parsed values directly)
 local function makeRow(map)
-    local row = {}
-    for k, v in pairs(map) do
-        row[k] = makeCell(v)
-    end
-    return row
+    return map
 end
 
 -- Returns a "badVal" object that stores errors in the given table
@@ -170,7 +148,7 @@ describe("validator_executor", function()
     it("should access context self", function()
       local row = makeRow({price = 50})
       local isValid, msg = validator_executor.executeValidator(
-        "self.price.parsed > 0 or 'price must be positive'",
+        "self.price > 0 or 'price must be positive'",
         {self = row}, 1000)
       assert.is_true(isValid)
     end)
@@ -178,7 +156,7 @@ describe("validator_executor", function()
     it("should fail with context self", function()
       local row = makeRow({price = -5})
       local isValid, msg = validator_executor.executeValidator(
-        "self.price.parsed > 0 or 'price must be positive'",
+        "self.price > 0 or 'price must be positive'",
         {self = row}, 1000)
       assert.is_false(isValid)
       assert.are.equal("price must be positive", msg)
@@ -286,7 +264,7 @@ describe("validator_executor", function()
       local badVal = mockBadVal(log_messages)
       local row = makeRow({price = 10})
       local success, warnings = validator_executor.runRowValidators(
-        {"self.price.parsed > 0 or 'price must be positive'"},
+        {"self.price > 0 or 'price must be positive'"},
         row, 2, "test.tsv", badVal)
       assert.is_true(success)
       assert.are.equal(0, #warnings)
@@ -298,7 +276,7 @@ describe("validator_executor", function()
       local badVal = mockBadVal(log_messages)
       local row = makeRow({price = -5})
       local success, warnings = validator_executor.runRowValidators(
-        {"self.price.parsed > 0 or 'price must be positive'"},
+        {"self.price > 0 or 'price must be positive'"},
         row, 2, "test.tsv", badVal)
       assert.is_false(success)
       assert.are.equal(1, badVal.errors)
@@ -309,7 +287,7 @@ describe("validator_executor", function()
       local badVal = mockBadVal(log_messages)
       local row = makeRow({price = 5000})
       local success, warnings = validator_executor.runRowValidators(
-        {{expr = "self.price.parsed < 1000 or 'price seems high'", level = "warn"}},
+        {{expr = "self.price < 1000 or 'price seems high'", level = "warn"}},
         row, 2, "test.tsv", badVal)
       assert.is_true(success)
       assert.are.equal(1, #warnings)
@@ -324,8 +302,8 @@ describe("validator_executor", function()
       local row = makeRow({price = -5, count = -1})
       local success, warnings = validator_executor.runRowValidators(
         {
-          "self.price.parsed > 0 or 'price must be positive'",
-          "self.count.parsed >= 0 or 'count cannot be negative'",
+          "self.price > 0 or 'price must be positive'",
+          "self.count >= 0 or 'count cannot be negative'",
         },
         row, 2, "test.tsv", badVal)
       assert.is_false(success)
@@ -339,8 +317,8 @@ describe("validator_executor", function()
       local row = makeRow({price = 5000, count = 999})
       local success, warnings = validator_executor.runRowValidators(
         {
-          {expr = "self.price.parsed < 1000 or 'price high'", level = "warn"},
-          {expr = "self.count.parsed < 100 or 'count high'", level = "warn"},
+          {expr = "self.price < 1000 or 'price high'", level = "warn"},
+          {expr = "self.count < 100 or 'count high'", level = "warn"},
         },
         row, 2, "test.tsv", badVal)
       assert.is_true(success)

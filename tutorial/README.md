@@ -386,7 +386,7 @@ user-defined fields (e.g., for age ratings, mod categories, or other metadata).
 #### Files.tsv
 
 Registers expansion data files. Note the **row validator** on ExpansionItem.tsv:
-`"self.price.parsed > 0 or 'price must be positive'"`, showing that validators work
+`"self.price > 0 or 'price must be positive'"`, showing that validators work
 identically in expansion packages.
 
 ---

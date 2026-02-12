@@ -24,15 +24,15 @@ end
 -- ============================================================
 
 --- Checks if all values in a column are unique across rows.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @return boolean True if all values are unique, false otherwise
 local function unique(rows, column)
     local seen = {}
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil then
-            local key = serialize(cell.parsed)
+        local val = row[column]
+        if val ~= nil then
+            local key = serialize(val)
             if seen[key] then
                 return false
             end
@@ -43,37 +43,31 @@ local function unique(rows, column)
 end
 
 --- Sums numeric values in a column.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @return number Sum of all numeric values in the column
 local function sum(rows, column)
     local total = 0
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil then
-            local value = cell.parsed
-            if type(value) == "number" then
-                total = total + value
-            end
+        local val = row[column]
+        if type(val) == "number" then
+            total = total + val
         end
     end
     return total
 end
 
 --- Finds the minimum value in a column.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @return number|nil Minimum value or nil if no numeric values
 local function min(rows, column)
     local result = nil
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil then
-            local value = cell.parsed
-            if type(value) == "number" then
-                if result == nil or value < result then
-                    result = value
-                end
+        local val = row[column]
+        if type(val) == "number" then
+            if result == nil or val < result then
+                result = val
             end
         end
     end
@@ -81,19 +75,16 @@ local function min(rows, column)
 end
 
 --- Finds the maximum value in a column.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @return number|nil Maximum value or nil if no numeric values
 local function max(rows, column)
     local result = nil
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil then
-            local value = cell.parsed
-            if type(value) == "number" then
-                if result == nil or value > result then
-                    result = value
-                end
+        local val = row[column]
+        if type(val) == "number" then
+            if result == nil or val > result then
+                result = val
             end
         end
     end
@@ -101,20 +92,17 @@ local function max(rows, column)
 end
 
 --- Calculates the average value in a column.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @return number|nil Average value or nil if no numeric values
 local function avg(rows, column)
     local total = 0
     local n = 0
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil then
-            local value = cell.parsed
-            if type(value) == "number" then
-                total = total + value
-                n = n + 1
-            end
+        local val = row[column]
+        if type(val) == "number" then
+            total = total + val
+            n = n + 1
         end
     end
     if n == 0 then
@@ -219,14 +207,13 @@ end
 -- ============================================================
 
 --- Finds a row where a column equals a specific value.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @param value any Value to search for
 --- @return table|nil Matching row or nil
 local function lookup(rows, column, value)
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil and cell.parsed == value then
+        if row[column] == value then
             return row
         end
     end
@@ -234,15 +221,15 @@ local function lookup(rows, column, value)
 end
 
 --- Groups rows by the value of a column.
---- @param rows table Array of row objects
+--- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @return table Map of column value -> array of rows with that value
 local function groupBy(rows, column)
     local result = {}
     for _, row in ipairs(rows) do
-        local cell = row[column]
-        if cell ~= nil then
-            local keyStr = serialize(cell.parsed)
+        local val = row[column]
+        if val ~= nil then
+            local keyStr = serialize(val)
             if not result[keyStr] then
                 result[keyStr] = {}
             end

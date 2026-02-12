@@ -445,13 +445,13 @@ In **cell expressions** (values starting with `=`), `self.columnName` returns th
 =self.price * 1.1
 ```
 
-In **row validators** (see [Row, File, and Package Validators](#row-file-and-package-validators)), `self` is the full row object. Each cell is a record with multiple forms, so you must use `.parsed` to access the value:
+In **validators** (see [Row, File, and Package Validators](#row-file-and-package-validators)), `self.columnName` also returns the parsed value directly:
 
 ```text
-self.price.parsed > 0 or 'price must be positive'
+self.price > 0 or 'price must be positive'
 ```
 
-This difference exists because expressions run during cell parsing (values are plain), while validators run after the full row is parsed (cells retain metadata).
+All user code contexts provide the same view: field names and indexes map to parsed values.
 
 ## COG Code Generation
 
@@ -986,14 +986,14 @@ Configured in `Files.tsv` via the `rowValidators` column:
 
 ```tsv
 fileName:string	typeName:type_spec	rowValidators:{validator_spec}|nil
-Items.tsv	Item	{"self.minLevel.parsed <= self.maxLevel.parsed or 'minLevel must be <= maxLevel'",{expr="self.price.parsed < 10000 or 'price seems high'",level="warn"}}
+Items.tsv	Item	{"self.minLevel <= self.maxLevel or 'minLevel must be <= maxLevel'",{expr="self.price < 10000 or 'price seems high'",level="warn"}}
 ```
 
 More readable Lua format:
 ```lua
 {
-    "self.minLevel.parsed <= self.maxLevel.parsed or 'minLevel must be <= maxLevel'",  -- error (default)
-    {expr = "self.price.parsed < 10000 or 'price seems unusually high'", level = "warn"},  -- warning
+    "self.minLevel <= self.maxLevel or 'minLevel must be <= maxLevel'",  -- error (default)
+    {expr = "self.price < 10000 or 'price seems unusually high'", level = "warn"},  -- warning
 }
 ```
 
@@ -1042,7 +1042,7 @@ Configured in `Manifest.transposed.tsv` via the `package_validators` field:
 **Example in Manifest.transposed.tsv:**
 
 ```tsv
-package_validators:{validator_spec}|nil	{"all(files['items.tsv'], function(item) return any(files['categories.tsv'], function(cat) return cat.id.parsed == item.category.parsed end) end) or 'all items must reference valid category'"}
+package_validators:{validator_spec}|nil	{"all(files['items.tsv'], function(item) return any(files['categories.tsv'], function(cat) return cat.id == item.category end) end) or 'all items must reference valid category'"}
 ```
 
 ### Validator Helper Functions
@@ -1093,11 +1093,11 @@ Row validators run per-row, so complex validators will slow parsing. File and pa
 
 ```
 [ERROR] Row validation failed in Items.tsv row 42:
-  Validator: self.minLevel.parsed <= self.maxLevel.parsed or 'minLevel must be <= maxLevel'
+  Validator: self.minLevel <= self.maxLevel or 'minLevel must be <= maxLevel'
   Error: minLevel must be <= maxLevel
 
 [WARN] Row validation warning in Items.tsv row 15:
-  Validator: self.price.parsed < 10000 or 'price seems unusually high'
+  Validator: self.price < 10000 or 'price seems unusually high'
   Warning: price seems unusually high
 ```
 

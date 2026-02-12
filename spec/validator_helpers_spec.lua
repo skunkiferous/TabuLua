@@ -10,33 +10,9 @@ local it = busted.it
 
 local validator_helpers = require("validator_helpers")
 
--- Cell metatable mimicking tsv_model's cell_mt
-local cell_mt = {
-    __index = function(t, k)
-        if k == "value" then return t[1]
-        elseif k == "evaluated" then return t[2]
-        elseif k == "parsed" then return t[3]
-        elseif k == "reformatted" then return t[4]
-        end
-        return nil
-    end,
-    __tostring = function(t) return tostring(t[4]) end,
-    __type = "cell"
-}
-
---- Creates a mock cell with the given parsed value.
-local function makeCell(parsed)
-    local s = tostring(parsed)
-    return setmetatable({s, s, parsed, s}, cell_mt)
-end
-
---- Creates a mock row from a table of {column_name = parsed_value, ...}.
+--- Creates a plain value row (helpers now work with parsed values directly).
 local function makeRow(map)
-    local row = {}
-    for k, v in pairs(map) do
-        row[k] = makeCell(v)
-    end
-    return row
+    return map
 end
 
 describe("validator_helpers", function()
@@ -275,7 +251,7 @@ describe("validator_helpers", function()
         makeRow({val = 20}),
         makeRow({val = 30}),
       }
-      local pred = function(row) return row.val.parsed > 15 end
+      local pred = function(row) return row.val > 15 end
       assert.are.equal(2, validator_helpers.count(rows, pred))
     end)
 
@@ -284,7 +260,7 @@ describe("validator_helpers", function()
         makeRow({val = 1}),
         makeRow({val = 2}),
       }
-      local pred = function(row) return row.val.parsed > 100 end
+      local pred = function(row) return row.val > 100 end
       assert.are.equal(0, validator_helpers.count(rows, pred))
     end)
 
@@ -313,7 +289,7 @@ describe("validator_helpers", function()
         makeRow({val = 20}),
       }
       assert.is_true(validator_helpers.all(rows, function(row)
-        return row.val.parsed > 0
+        return row.val > 0
       end))
     end)
 
@@ -324,7 +300,7 @@ describe("validator_helpers", function()
         makeRow({val = 20}),
       }
       assert.is_false(validator_helpers.all(rows, function(row)
-        return row.val.parsed > 0
+        return row.val > 0
       end))
     end)
 
@@ -340,7 +316,7 @@ describe("validator_helpers", function()
         makeRow({val = 10}),
       }
       assert.is_true(validator_helpers.any(rows, function(row)
-        return row.val.parsed > 0
+        return row.val > 0
       end))
     end)
 
@@ -350,7 +326,7 @@ describe("validator_helpers", function()
         makeRow({val = -2}),
       }
       assert.is_false(validator_helpers.any(rows, function(row)
-        return row.val.parsed > 0
+        return row.val > 0
       end))
     end)
 
@@ -366,7 +342,7 @@ describe("validator_helpers", function()
         makeRow({val = -2}),
       }
       assert.is_true(validator_helpers.none(rows, function(row)
-        return row.val.parsed > 0
+        return row.val > 0
       end))
     end)
 
@@ -376,7 +352,7 @@ describe("validator_helpers", function()
         makeRow({val = 10}),
       }
       assert.is_false(validator_helpers.none(rows, function(row)
-        return row.val.parsed > 0
+        return row.val > 0
       end))
     end)
 
@@ -393,11 +369,11 @@ describe("validator_helpers", function()
         makeRow({val = 20}),
       }
       local result = validator_helpers.filter(rows, function(row)
-        return row.val.parsed > 8
+        return row.val > 8
       end)
       assert.are.equal(2, #result)
-      assert.are.equal(10, result[1].val.parsed)
-      assert.are.equal(20, result[2].val.parsed)
+      assert.are.equal(10, result[1].val)
+      assert.are.equal(20, result[2].val)
     end)
 
     it("should return empty table when no rows match", function()
@@ -406,7 +382,7 @@ describe("validator_helpers", function()
         makeRow({val = 2}),
       }
       local result = validator_helpers.filter(rows, function(row)
-        return row.val.parsed > 100
+        return row.val > 100
       end)
       assert.are.equal(0, #result)
     end)
@@ -425,10 +401,10 @@ describe("validator_helpers", function()
         makeRow({val = 20}),
       }
       local result = validator_helpers.find(rows, function(row)
-        return row.val.parsed > 5
+        return row.val > 5
       end)
       assert.is_not_nil(result)
-      assert.are.equal(10, result.val.parsed)
+      assert.are.equal(10, result.val)
     end)
 
     it("should return nil when no row matches", function()
@@ -437,7 +413,7 @@ describe("validator_helpers", function()
         makeRow({val = 2}),
       }
       local result = validator_helpers.find(rows, function(row)
-        return row.val.parsed > 100
+        return row.val > 100
       end)
       assert.is_nil(result)
     end)
@@ -461,7 +437,7 @@ describe("validator_helpers", function()
       }
       local result = validator_helpers.lookup(rows, "name", "Bob")
       assert.is_not_nil(result)
-      assert.are.equal(25, result.age.parsed)
+      assert.are.equal(25, result.age)
     end)
 
     it("should return nil when value not found", function()
@@ -485,7 +461,7 @@ describe("validator_helpers", function()
       }
       local result = validator_helpers.lookup(rows, "id", 2)
       assert.is_not_nil(result)
-      assert.are.equal("second", result.name.parsed)
+      assert.are.equal("second", result.name)
     end)
 
     it("should skip nil cells", function()
@@ -495,7 +471,7 @@ describe("validator_helpers", function()
       }
       local result = validator_helpers.lookup(rows, "name", "found")
       assert.is_not_nil(result)
-      assert.are.equal("found", result.name.parsed)
+      assert.are.equal("found", result.name)
     end)
   end)
 
