@@ -11,12 +11,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+
 ### Fixed
 
 ## [0.5.3] - 2026-02-07
 
 ### Added
 
+- New writable `ctx` table available in all validator types (row, file, package). Enables
+  validators to accumulate state across invocations — for example, a row validator can track
+  seen values to check column uniqueness without being written as a file validator. Row validators
+  share one `ctx` per file across all rows; file and package validators share one `ctx` across
+  all their expressions.
+- New `INTERNAL_MODEL.md` documenting the internal Lua table structures for cells, columns,
+  headers, rows, datasets, packages, exploded structures, and the processing pipeline.
+- New `USER_DATA_VIEW.md` documenting the external/user view of data from the perspective of
+  cell expressions, COG scripts, and validators, including helper function reference and sandbox
+  built-ins summary.
 - New `hexbytes` built-in type extending `ascii` for hex-encoded binary data. Validates even length
   and hex characters only, normalizes to uppercase. Exported as native binary (MessagePack) or
   BLOB with `X'...'` literals (SQL).
@@ -26,8 +37,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `base64` module: pure-Lua RFC 4648 Base64 encode/decode with `encode()`, `decode()`, and
   `isValid()` functions.
 - Tutorial `Icon.tsv` with 8x8 monochrome pixel art icons demonstrating both binary data types.
-- New bare `{extends,<type>}` type spec syntax. When the extends syntax is used without additional
-  fields (e.g., `{extends,number}` or `{extends:number}`), it defines a type whose values must be
+- New bare `{extends,<type>}` type spec syntax. When the extends syntax is used without additional  fields (e.g., `{extends,number}` or `{extends:number}`), it defines a type whose values must be
   names of registered types extending the specified ancestor. Usable anywhere a type spec is valid
   (column headers, inline, manifests). Replaces the previous `ancestor` field in `custom_type_def`.
   For example, `{name="numericUnit",parent="{extends,number}"}` accepts only type names like
@@ -59,6 +69,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **Breaking**: Validators now provide parsed values directly, consistent with cell expressions.
+  `self.colName` in validators returns the parsed value (e.g., a number) instead of a cell object.
+  All `.parsed` access in validator expressions must be removed:
+  - Before: `self.price.parsed > 0 or 'price must be positive'`
+  - After: `self.price > 0 or 'price must be positive'`
+  - Custom predicates in helper functions are also affected:
+    - Before: `all(rows, function(r) return r.price.parsed > 0 end)`
+    - After: `all(rows, function(r) return r.price > 0 end)`
+- `validator_helpers` functions (`unique`, `sum`, `min`, `max`, `avg`, `lookup`, `groupBy`)
+  now expect rows with parsed values directly accessible via `row[column]`, instead of
+  cell objects requiring `row[column].parsed`.
+- Data Access Reference section extracted from `DATA_FORMAT_README.md` into standalone
+  `USER_DATA_VIEW.md`.
 - **Breaking**: Validators now provide parsed values directly, consistent with cell expressions.
   `self.colName` in validators returns the parsed value (e.g., a number) instead of a cell object.
   All `.parsed` access in validator expressions must be removed:

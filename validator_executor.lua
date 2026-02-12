@@ -165,6 +165,7 @@ local function createValidatorEnv(context, extraEnv)
     if context.rowIndex then env.rowIndex = context.rowIndex end
     if context.fileName then env.fileName = context.fileName end
     if context.packageId then env.packageId = context.packageId end
+    if context.ctx then env.ctx = context.ctx end
 
     return env
 end
@@ -221,9 +222,10 @@ end
 --- @param fileName string Name of the file being validated
 --- @param badVal table Error reporting object
 --- @param extraEnv table|nil Additional environment variables (contexts, libraries)
+--- @param ctx table|nil Writable context table shared across rows (created by caller)
 --- @return boolean True if all error-level validators passed
 --- @return table Array of warning messages
-local function runRowValidators(validators, row, rowIndex, fileName, badVal, extraEnv)
+local function runRowValidators(validators, row, rowIndex, fileName, badVal, extraEnv, ctx)
     if not validators or #validators == 0 then
         return true, {}
     end
@@ -235,6 +237,7 @@ local function runRowValidators(validators, row, rowIndex, fileName, badVal, ext
         row = wrappedRow,
         rowIndex = rowIndex,
         fileName = fileName,
+        ctx = ctx or {},
     }
 
     for _, spec in ipairs(validators) do
@@ -282,12 +285,14 @@ local function runFileValidators(validators, rows, fileName, badVal, extraEnv)
     end
 
     local warnings = {}
+    local ctx = {}
     local wrappedRows = wrapRowsForValidation(rows)
     local context = {
         rows = wrappedRows,
         file = wrappedRows,
         fileName = fileName,
         count = #rows,
+        ctx = ctx,
     }
 
     for _, spec in ipairs(validators) do
@@ -335,11 +340,13 @@ local function runPackageValidators(validators, files, packageId, badVal, extraE
     end
 
     local warnings = {}
+    local ctx = {}
     local wrappedFiles = wrapFilesForValidation(files)
     local context = {
         files = wrappedFiles,
         package = wrappedFiles,
         packageId = packageId,
+        ctx = ctx,
     }
 
     for _, spec in ipairs(validators) do

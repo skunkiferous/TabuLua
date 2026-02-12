@@ -634,11 +634,12 @@ local function runAllValidators(tsv_files, joinMeta, packages, package_order, lo
         -- Run row validators
         if rowValidators and #rowValidators > 0 then
             badVal.source_name = file_name
+            local rowCtx = {}  -- writable context shared across all rows
             for i, row in ipairs(dataRows) do
                 -- Row index is i+1 because header is row 1
                 local rowIndex = i + 1
                 local success, warnings = runRowValidators(
-                    rowValidators, row, rowIndex, file_name, badVal, loadEnv)
+                    rowValidators, row, rowIndex, file_name, badVal, loadEnv, rowCtx)
                 for _, w in ipairs(warnings) do
                     allWarnings[#allWarnings + 1] = w
                 end

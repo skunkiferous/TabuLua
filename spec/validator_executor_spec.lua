@@ -503,6 +503,140 @@ describe("validator_executor", function()
   end)
 
   -- ============================================================
+  -- Writable ctx table
+  -- ============================================================
+
+  describe("writable ctx", function()
+
+    describe("in row validators", function()
+      it("should be available and writable", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local row = makeRow({val = 1})
+        local ctx = {}
+        local success, warnings = validator_executor.runRowValidators(
+          {"(function() ctx.seen = true; return true end)()"},
+          row, 2, "test.tsv", badVal, nil, ctx)
+        assert.is_true(success)
+        assert.is_true(ctx.seen)
+      end)
+
+      it("should persist across multiple rows with same ctx", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local ctx = {}
+
+        -- First row: initialize counter
+        local row1 = makeRow({val = 10})
+        validator_executor.runRowValidators(
+          {"(function() ctx.total = (ctx.total or 0) + self.val; return true end)()"},
+          row1, 2, "test.tsv", badVal, nil, ctx)
+
+        -- Second row: accumulate
+        local row2 = makeRow({val = 20})
+        validator_executor.runRowValidators(
+          {"(function() ctx.total = (ctx.total or 0) + self.val; return true end)()"},
+          row2, 3, "test.tsv", badVal, nil, ctx)
+
+        assert.are.equal(30, ctx.total)
+      end)
+
+      it("should support uniqueness checking pattern", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local ctx = {}
+        local validator = "(function() ctx.ids = ctx.ids or {}; if ctx.ids[self.id] then return 'duplicate id: ' .. tostring(self.id) end; ctx.ids[self.id] = true; return true end)()"
+
+        -- First row: unique
+        local row1 = makeRow({id = "a"})
+        local success1 = validator_executor.runRowValidators(
+          {validator}, row1, 2, "test.tsv", badVal, nil, ctx)
+        assert.is_true(success1)
+
+        -- Second row: unique
+        local row2 = makeRow({id = "b"})
+        local success2 = validator_executor.runRowValidators(
+          {validator}, row2, 3, "test.tsv", badVal, nil, ctx)
+        assert.is_true(success2)
+
+        -- Third row: duplicate
+        local row3 = makeRow({id = "a"})
+        local success3 = validator_executor.runRowValidators(
+          {validator}, row3, 4, "test.tsv", badVal, nil, ctx)
+        assert.is_false(success3)
+      end)
+
+      it("should default to empty table when ctx not provided", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local row = makeRow({val = 1})
+        -- No ctx argument - should not error
+        local success, warnings = validator_executor.runRowValidators(
+          {"type(ctx) == 'table'"},
+          row, 2, "test.tsv", badVal)
+        assert.is_true(success)
+      end)
+    end)
+
+    describe("in file validators", function()
+      it("should be available and writable", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local rows = {makeRow({val = 1})}
+        local success, warnings = validator_executor.runFileValidators(
+          {"(function() ctx.cached = sum(rows, 'val'); return true end)()"},
+          rows, "test.tsv", badVal)
+        assert.is_true(success)
+      end)
+
+      it("should persist across multiple file validator expressions", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local rows = {
+          makeRow({val = 10}),
+          makeRow({val = 20}),
+        }
+        local success, warnings = validator_executor.runFileValidators(
+          {
+            "(function() ctx.total = sum(rows, 'val'); return true end)()",
+            "ctx.total == 30 or 'cached total mismatch'",
+          },
+          rows, "test.tsv", badVal)
+        assert.is_true(success)
+        assert.are.equal(0, #warnings)
+      end)
+    end)
+
+    describe("in package validators", function()
+      it("should be available and writable", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local files = {["items.tsv"] = {makeRow({val = 1})}}
+        local success, warnings = validator_executor.runPackageValidators(
+          {"(function() ctx.checked = true; return true end)()"},
+          files, "pkg.test", badVal)
+        assert.is_true(success)
+      end)
+
+      it("should persist across multiple package validator expressions", function()
+        local log_messages = {}
+        local badVal = mockBadVal(log_messages)
+        local files = {
+          ["items.tsv"] = {makeRow({val = 5}), makeRow({val = 15})},
+        }
+        local success, warnings = validator_executor.runPackageValidators(
+          {
+            "(function() ctx.itemCount = count(files['items.tsv']); return true end)()",
+            "ctx.itemCount == 2 or 'wrong item count'",
+          },
+          files, "pkg.test", badVal)
+        assert.is_true(success)
+        assert.are.equal(0, #warnings)
+      end)
+    end)
+  end)
+
+  -- ============================================================
   -- Module API
   -- ============================================================
 

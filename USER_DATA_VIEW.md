@@ -102,6 +102,7 @@ Row validators run on each row after all cells are parsed. Like cell expressions
 | `self` / `row` | The current row. `self.colName` returns the **parsed value** |
 | `rowIndex` | 1-based row index |
 | `fileName` | Name of the file being validated |
+| `ctx` | Writable table for accumulating state across rows (see [Writable Context](#writable-context-ctx)) |
 | Published contexts | Data from earlier-loaded files |
 | Code libraries | By name (e.g., `gameLib`) |
 
@@ -134,6 +135,7 @@ File validators run once per file, after all rows are parsed.
 | `rows` / `file` | Array of all data rows in the file. Each element is a row object |
 | `fileName` | Name of the file |
 | `count` | Number of data rows (convenience for `#rows`) |
+| `ctx` | Writable table for accumulating state across validator expressions (see [Writable Context](#writable-context-ctx)) |
 | Published contexts | Data from earlier-loaded files |
 | Code libraries | By name |
 | Helper functions | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy` |
@@ -162,6 +164,7 @@ Package validators run once per package, after all files in the package are load
 |----------|-------------|
 | `files` / `package` | Table mapping lowercase file names to their data row arrays |
 | `packageId` | Package identifier string |
+| `ctx` | Writable table for accumulating state across validator expressions (see [Writable Context](#writable-context-ctx)) |
 | Published contexts | All published data (including from dependency packages) |
 | Code libraries | By name |
 | Helper functions | Same as file validators |
@@ -183,6 +186,50 @@ end) or 'all items must reference a valid category'
 ```
 
 **Operation quota:** 100,000 operations per package.
+
+## Writable Context (`ctx`)
+
+All validator types provide a writable `ctx` table for accumulating state across invocations. Unlike rows and files (which are read-only), `ctx` is a plain Lua table that validators can freely read and write.
+
+### Scope
+
+| Validator Type | `ctx` Scope |
+|----------------|-------------|
+| **Row validators** | One `ctx` per file, shared across all rows and all row validator expressions |
+| **File validators** | One `ctx` per file, shared across all file validator expressions |
+| **Package validators** | One `ctx` per package, shared across all package validator expressions |
+
+### Examples
+
+**Row validator — uniqueness checking:**
+
+```text
+(function()
+    ctx.ids = ctx.ids or {}
+    if ctx.ids[self.sku] then return 'duplicate sku: ' .. tostring(self.sku) end
+    ctx.ids[self.sku] = true
+    return true
+end)()
+```
+
+**File validator — caching an expensive computation:**
+
+```text
+-- First validator: compute and cache
+(function() ctx.totalWeight = sum(rows, 'weight'); return ctx.totalWeight <= 10000 or 'total weight too high' end)()
+
+-- Second validator: reuse cached value
+ctx.totalWeight <= sum(rows, 'price') or 'weight must not exceed price sum'
+```
+
+**Package validator — cross-file state:**
+
+```text
+(function()
+    ctx.itemCount = count(files['items.tsv'])
+    return ctx.itemCount > 0 or 'package must have items'
+end)()
+```
 
 ## Helper Function Reference
 

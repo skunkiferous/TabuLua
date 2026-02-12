@@ -976,8 +976,8 @@ Configured in `Files.tsv` via the `rowValidators` column:
 **Expression Context:**
 
 - `self` / `row` - The current row (columns accessible as `self.columnName`)
-- Don't forget that the value of a column is a table containing multiple "forms" of the value. Usually, you will want the "parsed" form.
 - `rowIndex` - 1-based index of the current row
+- `ctx` - Writable table shared across all rows in the file, for accumulating state
 - Published contexts from earlier-loaded files
 - Code libraries defined in the manifest
 - Standard sandbox utilities (`math`, `string`, etc.)
@@ -1010,6 +1010,7 @@ Configured in `Files.tsv` via the `fileValidators` column:
 - `rows` / `file` - Array of all parsed rows in the file
 - `fileName` - Name of the current file
 - `count` - Number of rows
+- `ctx` - Writable table shared across all file validator expressions
 - Published contexts from earlier-loaded files
 - Code libraries defined in the manifest
 - Helper functions (see below)
@@ -1035,6 +1036,7 @@ Configured in `Manifest.transposed.tsv` via the `package_validators` field:
 
 - `files` / `package` - Table mapping file names to their row arrays
 - `packageId` - The package identifier
+- `ctx` - Writable table shared across all package validator expressions
 - All published contexts (including from dependency packages)
 - Code libraries defined in the manifest
 - Helper functions (see below)
