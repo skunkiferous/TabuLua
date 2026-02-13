@@ -18,29 +18,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- A single `_` is no longer a valid identifier or name. This affects all name validation
-  (type names, aliases, record field names, enum labels, column names).
-- Type names and type aliases cannot end with `_`. This creates a namespace distinction:
-  record field names can end with `_`, ensuring they never collide with type names.
-- `self` is now a reserved name: it cannot be used as a type name, type alias, record field name,
-  or enum label. This prevents conflicts with the `self` keyword used in validator expression
-  evaluation.
-- `_<INTEGER>` patterns (`_0`, `_1`, `_2`, ...) are now reserved for tuples: they cannot be used
-  as type names, type aliases, record field names, or enum labels. These names are used internally
-  for tuple field access (e.g., `tuple._1`, `tuple._2`).
-- New `isReservedName(s)` predicate: returns true if the value is a reserved name (`self`).
-- New `isTupleFieldName(s)` predicate: returns true if the value matches the tuple field name
-  pattern `_<INTEGER>` (e.g., `_0`, `_1`, `_42`).
-- New writable `ctx` table available in all validator types (row, file, package). Enables
-  validators to accumulate state across invocations — for example, a row validator can track
-  seen values to check column uniqueness without being written as a file validator. Row validators
-  share one `ctx` per file across all rows; file and package validators share one `ctx` across
-  all their expressions.
-- New `INTERNAL_MODEL.md` documenting the internal Lua table structures for cells, columns,
-  headers, rows, datasets, packages, exploded structures, and the processing pipeline.
-- New `USER_DATA_VIEW.md` documenting the external/user view of data from the perspective of
-  cell expressions, COG scripts, and validators, including helper function reference and sandbox
-  built-ins summary.
 - New `hexbytes` built-in type extending `ascii` for hex-encoded binary data. Validates even length
   and hex characters only, normalizes to uppercase. Exported as native binary (MessagePack) or
   BLOB with `X'...'` literals (SQL).
@@ -50,13 +27,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `base64` module: pure-Lua RFC 4648 Base64 encode/decode with `encode()`, `decode()`, and
   `isValid()` functions.
 - Tutorial `Icon.tsv` with 8x8 monochrome pixel art icons demonstrating both binary data types.
-- New bare `{extends,<type>}` type spec syntax. When the extends syntax is used without additional  fields (e.g., `{extends,number}` or `{extends:number}`), it defines a type whose values must be
+- New bare `{extends,<type>}` type spec syntax. When the extends syntax is used without additional
+  fields (e.g., `{extends,number}` or `{extends:number}`), it defines a type whose values must be
   names of registered types extending the specified ancestor. Usable anywhere a type spec is valid
-  (column headers, inline, manifests). Replaces the previous `ancestor` field in `custom_type_def`.
-  For example, `{name="numericUnit",parent="{extends,number}"}` accepts only type names like
-  `kilogram` or `metre` that extend `number`. Enables the "Quantity pattern" for pairing unit type
-  names with numeric values.
-- Tutorial expansion now demonstrates bare extends with an `intTypeName` custom type.
+  (column headers, inline, manifests). For example, `{name="numericUnit",parent="{extends,number}"}`
+  accepts only type names like `kilogram` or `metre` that extend `number`. Enables the "Quantity
+  pattern" for pairing unit type names with numeric values.
 - `extendsOrRestrict()` now recognizes union types as extending a common ancestor when all
   member types extend that ancestor. For example, a union `integer|float` is now recognized
   as extending `number`, and `ubyte|ushort` as extending `integer`. Unions containing `nil`
@@ -74,6 +50,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `quantity` built-in type: compact string format `<number><number_type>` (e.g., `3.5kilogram`,
   `100metre`, `-5integer`). Parsed to the same `{type_name, number}` structure as `tagged_number`.
   Extends `tagged_number`.
+- Tutorial expansion now demonstrates bare extends with an `intTypeName` custom type.
+- New writable `ctx` table available in all validator types (row, file, package). Enables
+  validators to accumulate state across invocations — for example, a row validator can track
+  seen values to check column uniqueness without being written as a file validator. Row validators
+  share one `ctx` per file across all rows; file and package validators share one `ctx` across
+  all their expressions.
+- New `isReservedName(s)` predicate: returns true if the value is a reserved name (`self`).
+- New `isTupleFieldName(s)` predicate: returns true if the value matches the tuple field name
+  pattern `_<INTEGER>` (e.g., `_0`, `_1`, `_42`).
 - New `INTERNAL_MODEL.md` documenting the internal Lua table structures for cells, columns,
   headers, rows, datasets, packages, exploded structures, and the processing pipeline.
 - New `USER_DATA_VIEW.md` documenting the external/user view of data from the perspective of
@@ -82,19 +67,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
-- **Breaking**: Validators now provide parsed values directly, consistent with cell expressions.
-  `self.colName` in validators returns the parsed value (e.g., a number) instead of a cell object.
-  All `.parsed` access in validator expressions must be removed:
-  - Before: `self.price.parsed > 0 or 'price must be positive'`
-  - After: `self.price > 0 or 'price must be positive'`
-  - Custom predicates in helper functions are also affected:
-    - Before: `all(rows, function(r) return r.price.parsed > 0 end)`
-    - After: `all(rows, function(r) return r.price > 0 end)`
-- `validator_helpers` functions (`unique`, `sum`, `min`, `max`, `avg`, `lookup`, `groupBy`)
-  now expect rows with parsed values directly accessible via `row[column]`, instead of
-  cell objects requiring `row[column].parsed`.
-- Data Access Reference section extracted from `DATA_FORMAT_README.md` into standalone
-  `USER_DATA_VIEW.md`.
+- **Breaking**: A single `_` is no longer a valid identifier or name. This affects all name
+  validation (type names, aliases, record field names, enum labels, column names).
+- **Breaking**: Type names and type aliases cannot end with `_`. This creates a namespace
+  distinction: record field names can end with `_`, ensuring they never collide with type names.
+- **Breaking**: `self` is now a reserved name: it cannot be used as a type name, type alias,
+  record field name, or enum label. This prevents conflicts with the `self` keyword used in
+  validator expression evaluation.
+- **Breaking**: `_<INTEGER>` patterns (`_0`, `_1`, `_2`, ...) are now reserved for tuples: they
+  cannot be used as type names, type aliases, record field names, or enum labels. These names are
+  used internally for tuple field access (e.g., `tuple._1`, `tuple._2`).
 - **Breaking**: Validators now provide parsed values directly, consistent with cell expressions.
   `self.colName` in validators returns the parsed value (e.g., a number) instead of a cell object.
   All `.parsed` access in validator expressions must be removed:
@@ -111,6 +93,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Windows absolute path handling in file operations (exporter, manifest loader, type parsing).
 - SQL exporter crash on exploded column names with bracket notation (e.g., `materials[1]`).
   Replaced `isName()` assertion with sanitization for SQL column identifiers.
 - SQL exporter crash when `header.__source` or `header.__dataset` is nil.
