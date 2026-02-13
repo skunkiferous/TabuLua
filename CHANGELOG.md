@@ -9,15 +9,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+
 ### Changed
 
 
 ### Fixed
 
-## [0.5.3] - 2026-02-07
+## [0.6.0] - 2026-02-13
 
 ### Added
 
+- `self` is now a reserved name: it cannot be used as a type name, type alias, record field name,
+  or enum label. This prevents conflicts with the `self` keyword used in validator expression
+  evaluation.
+- `_<INTEGER>` patterns (`_0`, `_1`, `_2`, ...) are now reserved for tuples: they cannot be used
+  as type names, type aliases, record field names, or enum labels. These names are used internally
+  for tuple field access (e.g., `tuple._1`, `tuple._2`).
+- New `isReservedName(s)` predicate: returns true if the value is a reserved name (`self`).
+- New `isTupleFieldName(s)` predicate: returns true if the value matches the tuple field name
+  pattern `_<INTEGER>` (e.g., `_0`, `_1`, `_42`).
 - New writable `ctx` table available in all validator types (row, file, package). Enables
   validators to accumulate state across invocations — for example, a row validator can track
   seen values to check column uniqueness without being written as a file validator. Row validators

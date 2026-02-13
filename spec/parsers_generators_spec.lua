@@ -74,6 +74,20 @@ describe("parsers - generator functions", function()
             assert.is_false(result)
         end)
 
+        it("should reject reserved name 'self'", function()
+            assert.is_false(parsers.registerAlias(badVal, "self", "string"))
+            assert.is_true(#log_messages > 0)
+            assert.truthy(log_messages[1]:find("reserved name"))
+        end)
+
+        it("should reject tuple field names as alias names", function()
+            assert.is_false(parsers.registerAlias(badVal, "_1", "string"))
+            assert.is_false(parsers.registerAlias(badVal, "_0", "number"))
+            assert.is_false(parsers.registerAlias(badVal, "_42", "boolean"))
+            assert.is_true(#log_messages > 0)
+            assert.truthy(log_messages[1]:find("reserved for tuples"))
+        end)
+
         it("should allow re-registering same alias with same type", function()
             log_messages = {}
             assert.is_true(parsers.registerAlias(badVal, "genTestSame", "{string}"))

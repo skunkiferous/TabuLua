@@ -22,6 +22,7 @@ local keys = table_utils.keys
 local predicates = require("predicates")
 local isName = predicates.isName
 local isIdentifier = predicates.isIdentifier
+local isTupleFieldName = predicates.isTupleFieldName
 
 --- Checks if a value is a valid exploded column name (dot-separated path).
 --- An exploded column name is a valid "name" (dot-separated identifiers) that
@@ -187,11 +188,10 @@ local function isTupleStructure(fields)
         if type(name) ~= "string" then
             return false, nil
         end
-        local idx = name:match("^_(%d+)$")
-        if not idx then
+        if not isTupleFieldName(name) then
             return false, nil
         end
-        indices[#indices + 1] = tonumber(idx)
+        indices[#indices + 1] = tonumber(name:sub(2))
     end
     if #indices == 0 then
         return false, nil

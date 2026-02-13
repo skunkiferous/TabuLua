@@ -8,6 +8,8 @@ local predicates = require("predicates")
 local isName = predicates.isName
 local isIdentifier = predicates.isIdentifier
 local isValueKeyword = predicates.isValueKeyword
+local isReservedName = predicates.isReservedName
+local isTupleFieldName = predicates.isTupleFieldName
 local isFullSeq = predicates.isFullSeq
 
 local sparse_sequence = require("sparse_sequence")
@@ -62,6 +64,16 @@ function M.checkAcceptableParserName(badVal, name, checkUnused)
     if isValueKeyword(name) and not state.settingUp then
         utils.log(badVal, 'type', name, "Parser name '" .. tostring(name) ..
             "' cannot be a keyword")
+        return false
+    end
+    if isReservedName(name) then
+        utils.log(badVal, 'type', name, "Parser name '" .. tostring(name) ..
+            "' is a reserved name")
+        return false
+    end
+    if isTupleFieldName(name) then
+        utils.log(badVal, 'type', name, "Parser name '" .. tostring(name) ..
+            "' is reserved for tuples")
         return false
     end
     if checkUnused then
@@ -433,6 +445,14 @@ function M.registerEnumParserInternal(badVal, enum_labels)
             if isValueKeyword(l) then
                 utils.log(badVal, 'enum_label', e,
                     'enum_labels[i] cannot be a keyword: '..e)
+                fail = true
+            elseif isReservedName(l) then
+                utils.log(badVal, 'enum_label', e,
+                    'enum_labels[i] cannot be a reserved name: '..e)
+                fail = true
+            elseif isTupleFieldName(l) then
+                utils.log(badVal, 'enum_label', e,
+                    'enum_labels[i] is reserved for tuples: '..e)
                 fail = true
             elseif lower_2_enum[l] then
                 utils.log(badVal, 'enum_label', e,

@@ -149,10 +149,18 @@ describe("parsers - record types", function()
           typeParser(badVal, "{true:string,age:number}"))
       assert_parser_found(nil, "{invalid-name:string,age:number}",
           typeParser(badVal, "{invalid-name:string,age:number}"))
+      -- Reserved name "self" should be rejected
+      assert_parser_found(nil, "{age:number,self:string}",
+          typeParser(badVal, "{self:string,age:number}"))
+      -- Tuple field names should be rejected
+      assert_parser_found(nil, "{_1:string,age:number}",
+          typeParser(badVal, "{_1:string,age:number}"))
 
       assert.same({
           "Bad record  in test on line 1: '{age:number,true:string}' (field name cannot be a keyword: true)",
-          "Bad type  in test on line 1: '{invalid-name:string,age:number}' (Cannot parse type specification)"
+          "Bad type  in test on line 1: '{invalid-name:string,age:number}' (Cannot parse type specification)",
+          "Bad record  in test on line 1: '{age:number,self:string}' (field name cannot be a reserved name: self)",
+          "Bad record  in test on line 1: '{_1:string,age:number}' (field name is reserved for tuples: _1)"
       }, log_messages)
     end)
 

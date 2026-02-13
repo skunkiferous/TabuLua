@@ -2,7 +2,7 @@
 
 ## Naming Conventions
 
-We assume type names are defined using **Pascal Case** convention. We also assume that type names don't contain dashes (`-`), though underscores (`_`) are allowed.
+We assume type names are defined using **Pascal Case** convention. We also assume that type names don't contain dashes (`-`), though underscores (`_`) are allowed. The name `self` is reserved and cannot be used as a type name, type alias, record field name, or enum label. Names matching the tuple field pattern `_<INTEGER>` (e.g., `_0`, `_1`, `_2`) are also reserved.
 
 Data file names should usually represent a type name. Since the type name is normally singular (as it represents *one* value of that type), the type name part of the file name should also be singular.
 
@@ -181,6 +181,7 @@ This defines `player` as a record containing an `inventory` array: `{inventory:{
 ### Restrictions
 
 - Each path segment must be a valid identifier (letters, digits, underscores; starting with letter or underscore)
+- The name `self` and tuple field patterns (`_0`, `_1`, `_2`, ...) are reserved and cannot be used as field names, type names, type aliases, or enum labels
 - Tuple indices must start at `_1` and be consecutive (no gaps)
 - You cannot have both an exploded column (e.g., `location.level`) and a non-exploded column with the same root name (e.g., `location`)
 - All columns in an exploded group share the same root and are processed together
@@ -597,6 +598,8 @@ All predicate functions are available for validation. These are pure functions t
 | `isValidRegex(p)` | Valid Lua pattern |
 | `isValidHttpUrl(u)` | Valid HTTP/HTTPS URL |
 | `isPercent(v)` | Valid percent format |
+| `isReservedName(s)` | Reserved name (`self`) |
+| `isTupleFieldName(s)` | Tuple field name pattern (`_0`, `_1`, `_2`, ...) |
 | `isValueKeyword(v)` | String is Lua keyword ("nil", "false", "true") |
 
 **Example:**

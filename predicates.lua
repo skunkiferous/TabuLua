@@ -334,6 +334,16 @@ local function isValueKeyword(value)
     return value == "nil" or value == "false" or value == "true"
 end
 
+-- Returns true if the value is a reserved name (cannot be used as type, alias, or field name)
+local function isReservedName(value)
+    return value == "self"
+end
+
+-- Returns true if the value matches the tuple field name pattern: _0, _1, _2, ...
+local function isTupleFieldName(value)
+    return type(value) == "string" and value:match("^_%d+$") ~= nil
+end
+
 local function isPercent(value)
     if type(value) ~= "string" then
         return false
@@ -481,6 +491,8 @@ local API = {
     isNumber=isNumber,
     isPath=isPath,
     isPercent=isPercent,
+    isReservedName=isReservedName,
+    isTupleFieldName=isTupleFieldName,
     isPositiveInteger=isPositiveInteger,
     isPositiveNumber=isPositiveNumber,
     isString=isString,

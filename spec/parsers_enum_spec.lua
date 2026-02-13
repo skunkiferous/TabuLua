@@ -102,6 +102,8 @@ describe("parsers - enum types", function()
       assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, 123))
       assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, true))
       assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "nil")) -- Reserved keyword
+      assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "self")) -- Reserved name
+      assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "_1")) -- Tuple field name
 
       assert.same({
         "Bad type  in test on line 1: '2Color' (Parser name '2Color' format is not valid)",
@@ -109,7 +111,9 @@ describe("parsers - enum types", function()
         "Bad type  in test on line 1: '' (Parser name '' format is not valid)",
         "Bad type  in test on line 1: '123' (Parser name '123' must be a string, but was number)",
         "Bad type  in test on line 1: 'true' (Parser name 'true' must be a string, but was boolean)",
-        "Bad type  in test on line 1: 'nil' (Parser name 'nil' cannot be a keyword)"
+        "Bad type  in test on line 1: 'nil' (Parser name 'nil' cannot be a keyword)",
+        "Bad type  in test on line 1: 'self' (Parser name 'self' is a reserved name)",
+        "Bad type  in test on line 1: '_1' (Parser name '_1' is reserved for tuples)"
       }, log_messages)
     end)
 
@@ -119,7 +123,9 @@ describe("parsers - enum types", function()
       assert.is_nil(parsers.registerEnumParser(badVal, {123, "Green"}, "ColorB"))
       assert.is_nil(parsers.registerEnumParser(badVal, {"Red", "red"}, "ColorC")) -- Case-insensitive duplicate
       assert.is_nil(parsers.registerEnumParser(badVal, {"true", "false"}, "ColorD")) -- Reserved keywords
-      assert.is_nil(parsers.registerEnumParser(badVal, "Not_A_Table", "ColorE"))
+      assert.is_nil(parsers.registerEnumParser(badVal, {"Self", "Other"}, "ColorE")) -- Reserved name (case-insensitive)
+      assert.is_nil(parsers.registerEnumParser(badVal, {"_1", "_2"}, "ColorF")) -- Tuple field names
+      assert.is_nil(parsers.registerEnumParser(badVal, "Not_A_Table", "ColorG"))
 
       assert.same({
         "Bad enum_label  in test on line 1: '2Red' (enum_labels[i] must be an identifier: 2Red)",
@@ -128,6 +134,9 @@ describe("parsers - enum types", function()
         "Bad enum_label  in test on line 1: 'red' (enum_labels[i] must be unique: red)",
         "Bad enum_label  in test on line 1: 'true' (enum_labels[i] cannot be a keyword: true)",
         "Bad enum_label  in test on line 1: 'false' (enum_labels[i] cannot be a keyword: false)",
+        "Bad enum_label  in test on line 1: 'Self' (enum_labels[i] cannot be a reserved name: Self)",
+        "Bad enum_label  in test on line 1: '_1' (enum_labels[i] is reserved for tuples: _1)",
+        "Bad enum_label  in test on line 1: '_2' (enum_labels[i] is reserved for tuples: _2)",
         "Bad enum_labels  in test on line 1: 'Not_A_Table' (enum_labels must be a table string: string)"
       }, log_messages)
     end)
