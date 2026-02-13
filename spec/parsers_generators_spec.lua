@@ -88,6 +88,13 @@ describe("parsers - generator functions", function()
             assert.truthy(log_messages[1]:find("reserved for tuples"))
         end)
 
+        it("should reject type names ending with '_'", function()
+            assert.is_false(parsers.registerAlias(badVal, "MyType_", "string"))
+            assert.is_false(parsers.registerAlias(badVal, "foo.bar_", "string"))
+            assert.is_true(#log_messages > 0)
+            assert.truthy(log_messages[1]:find("cannot end with '_'"))
+        end)
+
         it("should allow re-registering same alias with same type", function()
             log_messages = {}
             assert.is_true(parsers.registerAlias(badVal, "genTestSame", "{string}"))

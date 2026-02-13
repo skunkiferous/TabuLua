@@ -76,6 +76,11 @@ function M.checkAcceptableParserName(badVal, name, checkUnused)
             "' is reserved for tuples")
         return false
     end
+    if name:sub(-1) == "_" then
+        utils.log(badVal, 'type', name, "Parser name '" .. tostring(name) ..
+            "' cannot end with '_'")
+        return false
+    end
     if checkUnused then
         if state.PARSERS[name] or state.ALIASES[name] then
             utils.log(badVal, 'type', name, "Parser name '" .. name ..

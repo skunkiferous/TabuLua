@@ -180,8 +180,9 @@ This defines `player` as a record containing an `inventory` array: `{inventory:{
 
 ### Restrictions
 
-- Each path segment must be a valid identifier (letters, digits, underscores; starting with letter or underscore)
+- Each path segment must be a valid identifier (letters, digits, underscores; starting with letter or underscore). A single `_` is not a valid identifier
 - The name `self` and tuple field patterns (`_0`, `_1`, `_2`, ...) are reserved and cannot be used as field names, type names, type aliases, or enum labels
+- Type names and type aliases cannot end with `_` (record field names can, ensuring they never collide with type names)
 - Tuple indices must start at `_1` and be consecutive (no gaps)
 - You cannot have both an exploded column (e.g., `location.level`) and a non-exploded column with the same root name (e.g., `location`)
 - All columns in an exploded group share the same root and are processed together
@@ -322,7 +323,7 @@ There are multiple types extending `string`:
 | `markdown` | Extends `text`; used for markdown-formatted text |
 | `cmp_version` | Extends `ascii`; version comparison format: `<op>x.y.z` (e.g., `>=1.0.0`), used for version requirements |
 | `http` | Standard HTTP(S) URL format |
-| `identifier` | Extends `name`; standard identifier format: `[_a-zA-Z][_a-zA-Z0-9]*` |
+| `identifier` | Extends `name`; standard identifier format: `[_a-zA-Z][_a-zA-Z0-9]*` (a single `_` alone is not valid) |
 | `name` | Extends `ascii`; dotted identifier: `<identifier1>.<identifier2>...<identifierN>` |
 | `type` | Extends `ascii`; a `type_spec` which is validated against previously-defined types |
 | `type_spec` | Extends `ascii`; represents a type specification using the syntax defined here |
@@ -588,8 +589,8 @@ All predicate functions are available for validation. These are pure functions t
 | `isTrue(v)` | Value is literally `true` |
 | `isFalse(v)` | Value is literally `false` |
 | `isComparable(v)` | Value is string or number |
-| `isIdentifier(s)` | Valid Lua identifier format |
-| `isName(s)` | Valid name (identifier or dot-separated identifiers) |
+| `isIdentifier(s)` | Valid Lua identifier format (single `_` excluded) |
+| `isName(s)` | Valid name (identifier or dot-separated identifiers; no component may be a single `_`) |
 | `isFileName(s)` | Valid file name |
 | `isPath(v)` | Valid Unix-style file path |
 | `isVersion(v)` | Valid semantic version string |

@@ -54,12 +54,13 @@ local function isName(str)
     if type(str) ~= "string" then
         return false
     end
-    if str:match("^[%a_][%w_]*$") or str:match("^[%a_][%w_]*%.[%a_][%w_]*$") then
-        return true
+    -- Fast path for single identifiers (most common case)
+    if str:match("^[%a_][%w_]*$") then
+        return str ~= "_"
     end
     local words = split(str, ".")
     for _, word in ipairs(words) do
-        if not word:match("^[%a_][%w_]*$") then
+        if word == "_" or not word:match("^[%a_][%w_]*$") then
             return false
         end
     end
@@ -70,7 +71,7 @@ end
 --- @param s any The value to check
 --- @return boolean True if s is a valid Lua identifier, false otherwise
 local function isIdentifier(s)
-    return type(s) == "string" and (string.match(s, "^[%a_][%w_]*$") and true or false)
+    return type(s) == "string" and s ~= "_" and (string.match(s, "^[%a_][%w_]*$") and true or false)
 end
 
 --- Checks if a value is a basic Lua type (number, string, boolean, or nil).

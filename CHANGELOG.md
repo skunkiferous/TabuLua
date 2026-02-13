@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-
 ### Changed
 
 
@@ -19,6 +18,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- A single `_` is no longer a valid identifier or name. This affects all name validation
+  (type names, aliases, record field names, enum labels, column names).
+- Type names and type aliases cannot end with `_`. This creates a namespace distinction:
+  record field names can end with `_`, ensuring they never collide with type names.
 - `self` is now a reserved name: it cannot be used as a type name, type alias, record field name,
   or enum label. This prevents conflicts with the `self` keyword used in validator expression
   evaluation.

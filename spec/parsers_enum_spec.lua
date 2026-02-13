@@ -104,6 +104,7 @@ describe("parsers - enum types", function()
       assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "nil")) -- Reserved keyword
       assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "self")) -- Reserved name
       assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "_1")) -- Tuple field name
+      assert.is_nil(registerEnumParser(badVal, {"Red", "Green"}, "MyEnum_")) -- Trailing underscore
 
       assert.same({
         "Bad type  in test on line 1: '2Color' (Parser name '2Color' format is not valid)",
@@ -113,7 +114,8 @@ describe("parsers - enum types", function()
         "Bad type  in test on line 1: 'true' (Parser name 'true' must be a string, but was boolean)",
         "Bad type  in test on line 1: 'nil' (Parser name 'nil' cannot be a keyword)",
         "Bad type  in test on line 1: 'self' (Parser name 'self' is a reserved name)",
-        "Bad type  in test on line 1: '_1' (Parser name '_1' is reserved for tuples)"
+        "Bad type  in test on line 1: '_1' (Parser name '_1' is reserved for tuples)",
+        "Bad type  in test on line 1: 'MyEnum_' (Parser name 'MyEnum_' cannot end with '_')"
       }, log_messages)
     end)
 
