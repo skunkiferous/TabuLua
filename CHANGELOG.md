@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   baselines, and category/test filtering. Includes both Windows (`run_bad_input_tests.cmd`) and
   Unix/WSL (`run_bad_input_tests.sh`) runners.
 
+- **Pre-commit check script** (`pre_commit_check.sh`, `pre_commit_check.cmd`) that runs all
+  quality gates in sequence: unit tests, tutorial export checks (JSON, SQL+MPK, Lua, TSV reformat),
+  and bad input tests. Supports `--quick` mode to skip export checks.
+
 ### Changed
 
 ### Fixed
