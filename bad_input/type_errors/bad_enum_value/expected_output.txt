@@ -1,0 +1,4 @@
+TS	ERROR	[reformatter]	Reformatting errors: 2
+TS	ERROR	[tsv_model]	Bad Status status, col 2 in {DIR}/Data.tsv on line 3 (item2): 'NonExistent'
+TS	ERROR	[tsv_model]	Bad Status status, col 2 in {DIR}/Data.tsv on line 4 (item3): 'deleted'
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

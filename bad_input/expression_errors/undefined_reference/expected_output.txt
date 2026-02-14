@@ -1,0 +1,8 @@
+TS	ERROR	[reformatter]	Reformatting errors: 4
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 2 (item1): '=ghost_variable * 2'
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 2 (item1): '=ghost_variable * 2' (Failed to evaluate: C:/lua/systree/share/lua/5.4/sandbox.lua:170: [string "return (ghost_variable * 2)"]:1: attempt to perform arithmetic on a nil value (global 'ghost_variable'))
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 3 (item2): '=self.nonexistent + 1'
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 3 (item2): '=self.nonexistent + 1' (Failed to evaluate: C:/lua/systree/share/lua/5.4/sandbox.lua:170: [string "return (self.nonexistent + 1)"]:1: attempt to perform arithmetic on a nil value (field 'nonexistent'))
+TS	ERROR	[tsv_model]	Failed to evaluate: return (ghost_variable * 2) : C:/lua/systree/share/lua/5.4/sandbox.lua:170: [string "return (ghost_variable * 2)"]:1: attempt to perform arithmetic on a nil value (global 'ghost_variable')
+TS	ERROR	[tsv_model]	Failed to evaluate: return (self.nonexistent + 1) : C:/lua/systree/share/lua/5.4/sandbox.lua:170: [string "return (self.nonexistent + 1)"]:1: attempt to perform arithmetic on a nil value (field 'nonexistent')
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

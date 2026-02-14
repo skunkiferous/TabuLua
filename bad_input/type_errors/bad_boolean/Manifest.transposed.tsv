@@ -1,0 +1,4 @@
+package_id:package_id	test.type.boolean
+name:string	Test Bad Boolean
+version:version	1.0.0
+description:markdown	Invalid boolean values

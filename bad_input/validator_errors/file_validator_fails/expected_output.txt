@@ -1,0 +1,4 @@
+TS	ERROR	[reformatter]	Reformatting errors: 1
+TS	ERROR	[reformatter]	value, col 2 in {DIR}/Data.tsv on line 0: 'count(rows) >= 5 or 'must have at least 5 rows'' (must have at least 5 rows)
+TS	ERROR	[validator_executor]	[ERROR] File validation failed in {DIR}/Data.tsv: must have at least 5 rows
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

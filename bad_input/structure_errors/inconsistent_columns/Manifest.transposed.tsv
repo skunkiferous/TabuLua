@@ -1,0 +1,4 @@
+package_id:package_id	test.structure.columns
+name:string	Test Inconsistent Columns
+version:version	1.0.0
+description:markdown	Rows with wrong number of columns

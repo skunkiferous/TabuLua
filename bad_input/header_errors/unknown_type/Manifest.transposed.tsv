@@ -1,0 +1,4 @@
+package_id:package_id	test.header.unknowntype
+name:string	Test Unknown Type
+version:version	1.0.0
+description:markdown	Column header references unknown type

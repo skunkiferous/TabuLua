@@ -1,0 +1,5 @@
+package_id:package_id	test.manifest.badcustomtype
+name:string	Test Bad Custom Type
+version:version	1.0.0
+description:markdown	Custom type with nonexistent parent
+custom_types:{custom_type_def}|nil	{name="BadType",parent="nonexistent_type_xyz"}

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Bad input test framework** in `bad_input/` for integration-level testing of error detection
+  and reporting quality. Contains 25 test cases across 8 categories (cli_errors, manifest_errors,
+  files_tsv_errors, type_errors, header_errors, structure_errors, expression_errors,
+  validator_errors). Each test case is a mini-package with deliberate errors; the runner copies
+  files to a temp directory, runs the reformatter, normalizes output (stripping timestamps and
+  paths), and compares against stored expected output. Supports `--update` mode for generating
+  baselines, and category/test filtering. Includes both Windows (`run_bad_input_tests.cmd`) and
+  Unix/WSL (`run_bad_input_tests.sh`) runners.
+
 ### Changed
 
 ### Fixed

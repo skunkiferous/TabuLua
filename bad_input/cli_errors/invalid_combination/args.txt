@@ -1,0 +1,1 @@
+--log-level=error --file=json --data=lua tutorial/core/

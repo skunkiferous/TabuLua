@@ -1,0 +1,5 @@
+TS	ERROR	[reformatter]	Bad record value, col 2 in {DIR}/Data.tsv on line 0: '{name:identifier,value:nonexistent_type_xyz}' (field type is invalid: nonexistent_type_xyz)
+TS	ERROR	[reformatter]	Reformatting errors: 2
+TS	ERROR	[tsv_model]	Bad type_spec value, col 2 in {DIR}/Data.tsv on line 1: 'nonexistent_type_xyz' (unknown/bad type)
+TS	WARN	[manifest_loader]	Failed to register type Data = {name:identifier,value:nonexistent_type_xyz}
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

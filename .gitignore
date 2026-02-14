@@ -22,6 +22,9 @@ exported/
 .DS_Store
 Thumbs.db
 
+# Bad input test artifacts
+bad_input/**/actual_output.txt
+
 # Lua bytecode
 *.luac
 test_errors.txt

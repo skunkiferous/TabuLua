@@ -1,0 +1,4 @@
+package_id:package_id	test.files.duptype
+name:string	Test Duplicate Type Names
+version:version	1.0.0
+description:markdown	Two files claim the same type name

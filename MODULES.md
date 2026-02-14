@@ -21,6 +21,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | *(none)* |
+| [normalize_output](#normalize_output) | Normalizes reformatter output for bad input test comparison | *(none — standalone CLI script)* |
 | [number_identifiers](#number_identifiers) | Numeric/string identifier conversion | error_reporting, read_only |
 | [parsers](#parsers) | Main entry point for type parsing system | parsers.*, read_only |
 | [parsers.builtin](#parsersbuiltin) | Built-in type parsers (boolean, number, string, etc.) | base64, error_reporting, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils |
@@ -185,6 +186,16 @@ Orchestrates package loading: discovers packages, resolves dependencies, registe
 Logging system with named loggers, multiple log levels (DEBUG, INFO, WARN, ERROR), and configurable output targets.
 
 **Dependencies:** *(none - uses external `logging` library)*
+
+---
+
+### normalize_output
+
+**File:** [bad_input/normalize_output.lua](bad_input/normalize_output.lua)
+
+Standalone CLI script for the bad input test framework. Normalizes reformatter output for repeatable comparison by stripping timestamps, normalizing path separators to forward slashes, replacing temp directory paths with `{DIR}`, and sorting lines to handle non-deterministic Lua table iteration order.
+
+**Dependencies:** *(none — standalone CLI script, not part of the main module system)*
 
 ---
 

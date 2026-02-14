@@ -1,0 +1,4 @@
+package_id:package_id	test.structure.empty
+name:string	Test Empty Data File
+version:version	1.0.0
+description:markdown	Data file is completely empty

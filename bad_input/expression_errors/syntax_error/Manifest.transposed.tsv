@@ -1,0 +1,4 @@
+package_id:package_id	test.expr.syntax
+name:string	Test Expression Syntax Error
+version:version	1.0.0
+description:markdown	Cell expression with syntax error

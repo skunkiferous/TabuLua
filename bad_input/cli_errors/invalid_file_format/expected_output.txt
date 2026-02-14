@@ -1,0 +1,4 @@
+
+TS	ERROR	[reformatter]	Unknown file format: bogus
+TS	ERROR	[reformatter]	Valid formats: json, lua, mpk, sql, tsv, xml
+Use 'lua reformatter.lua' without arguments to see usage.

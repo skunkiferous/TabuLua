@@ -1,0 +1,3 @@
+TS	ERROR	[manifest_loader]	Could not resolve package dependencies. Aborting.
+TS	ERROR	[reformatter]	Bad {custom_type_def}|nil custom_types, col 2 in {DIR}/Manifest.transposed.tsv on line 2 (package_id:package_id): 'nonexistent_type_xyz' (unknown/bad type)
+TS	ERROR	[reformatter]	manifest_loader failed to process files in {DIR}

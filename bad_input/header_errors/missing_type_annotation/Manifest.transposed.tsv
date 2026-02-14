@@ -1,0 +1,4 @@
+package_id:package_id	test.header.notype
+name:string	Test Missing Type Annotation
+version:version	1.0.0
+description:markdown	Column headers without type annotations

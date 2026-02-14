@@ -1,0 +1,3 @@
+name:identifier	value:integer	extra:string
+item1	10
+item2	20	bonus	unexpected_fourth_column

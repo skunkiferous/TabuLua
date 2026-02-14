@@ -1,0 +1,6 @@
+TS	ERROR	[reformatter]	Reformatting errors: 2
+TS	ERROR	[reformatter]	price, col 2 in {DIR}/Data.tsv on line 3: 'self.price > 0 or 'price must be positive'' (price must be positive)
+TS	ERROR	[reformatter]	price, col 2 in {DIR}/Data.tsv on line 4: 'self.price > 0 or 'price must be positive'' (price must be positive)
+TS	ERROR	[validator_executor]	[ERROR] Row validation failed in {DIR}/Data.tsv row 3: price must be positive
+TS	ERROR	[validator_executor]	[ERROR] Row validation failed in {DIR}/Data.tsv row 4: price must be positive
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

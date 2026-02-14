@@ -1,0 +1,12 @@
+	(...tail calls...)
+	./error_reporting.lua:201: in function <./error_reporting.lua:183>
+	./manifest_loader.lua:311: in upvalue 'processSingleTSVFile'
+	./manifest_loader.lua:351: in upvalue 'loadOtherFiles'
+	./manifest_loader.lua:434: in upvalue 'processOrderedFiles'
+	./manifest_loader.lua:731: in field 'processFiles'
+	[C]: in ?
+	[C]: in function 'error'
+	reformatter.lua:400: in local 'processFiles'
+	reformatter.lua:584: in main chunk
+LUA: C:/lua/systree/share/lua/5.4/sandbox.lua:148: [string "return (1 + + 2)"]:1: unexpected symbol near '+'
+stack traceback:

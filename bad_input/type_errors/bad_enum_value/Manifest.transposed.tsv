@@ -1,0 +1,4 @@
+package_id:package_id	test.type.badenum
+name:string	Test Bad Enum Value
+version:version	1.0.0
+description:markdown	Referencing non-existent enum member

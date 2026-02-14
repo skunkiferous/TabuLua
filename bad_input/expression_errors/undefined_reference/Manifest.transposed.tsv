@@ -1,0 +1,4 @@
+package_id:package_id	test.expr.undef
+name:string	Test Undefined Reference
+version:version	1.0.0
+description:markdown	Expression references non-existent variable

@@ -1,0 +1,4 @@
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed
+TS	WARN	[reformatter]	Multiple types with name 'sametype' in {DIR}/Files.tsv, {DIR}/Files.tsv
+TS	WARN	[reformatter]	typeName 'SameType' in {DIR}/Files.tsv should match fileName 'Alpha.tsv' without extension
+TS	WARN	[reformatter]	typeName 'SameType' in {DIR}/Files.tsv should match fileName 'Beta.tsv' without extension

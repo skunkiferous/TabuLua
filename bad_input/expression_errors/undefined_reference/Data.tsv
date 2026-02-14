@@ -1,0 +1,3 @@
+name:identifier	value:float
+item1	=ghost_variable * 2
+item2	=self.nonexistent + 1

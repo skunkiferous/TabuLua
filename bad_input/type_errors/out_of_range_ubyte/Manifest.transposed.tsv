@@ -1,0 +1,4 @@
+package_id:package_id	test.type.ubyte
+name:string	Test Out of Range ubyte
+version:version	1.0.0
+description:markdown	Values outside ubyte range 0-255

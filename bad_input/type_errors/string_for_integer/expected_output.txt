@@ -1,0 +1,6 @@
+TS	ERROR	[reformatter]	Reformatting errors: 3
+TS	ERROR	[tsv_model]	Bad integer value, col 2 in {DIR}/Data.tsv on line 2 (item1): 'hello'
+TS	ERROR	[tsv_model]	Bad integer value, col 2 in {DIR}/Data.tsv on line 3 (item2): '3.14'
+TS	ERROR	[tsv_model]	Bad integer value, col 2 in {DIR}/Data.tsv on line 4 (item3): 'nil' (context was 'tsv', was expecting a string)
+TS	WARN	[reformatter]	Content of {DIR}/Data.tsv has changed
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

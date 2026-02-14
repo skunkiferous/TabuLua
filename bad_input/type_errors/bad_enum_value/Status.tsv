@@ -1,0 +1,4 @@
+name:identifier	description:text
+Active	Currently active
+Inactive	Not active
+Pending	Waiting for action

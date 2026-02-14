@@ -1,0 +1,4 @@
+package_id:package_id	test.type.stringint
+name:string	Test String For Integer
+version:version	1.0.0
+description:markdown	String value where integer expected

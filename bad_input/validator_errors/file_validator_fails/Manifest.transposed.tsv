@@ -1,0 +1,4 @@
+package_id:package_id	test.validator.file
+name:string	Test File Validator Fails
+version:version	1.0.0
+description:markdown	File validator rejects data

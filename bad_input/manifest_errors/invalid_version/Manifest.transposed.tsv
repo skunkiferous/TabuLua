@@ -1,0 +1,4 @@
+package_id:package_id	test.manifest.badversion
+name:string	Test Invalid Version
+version:version	not_a_version
+description:markdown	Version is not valid semver

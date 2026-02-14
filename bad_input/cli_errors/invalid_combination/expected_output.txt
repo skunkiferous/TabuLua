@@ -1,0 +1,4 @@
+
+TS	ERROR	[reformatter]	Invalid combination: --file=json --data=lua
+TS	ERROR	[reformatter]	Valid data formats for json: json-typed, json-natural
+Use 'lua reformatter.lua' without arguments to see usage.

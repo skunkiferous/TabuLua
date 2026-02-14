@@ -1,0 +1,4 @@
+package_id:package_id	test.header.badspec
+name:string	Test Invalid Type Spec
+version:version	1.0.0
+description:markdown	Column header with malformed type specification

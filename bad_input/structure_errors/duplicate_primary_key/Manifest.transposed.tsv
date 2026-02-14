@@ -1,0 +1,4 @@
+package_id:package_id	test.structure.dupkey
+name:string	Test Duplicate Primary Key
+version:version	1.0.0
+description:markdown	Two rows with the same primary key

@@ -1,0 +1,5 @@
+TS	ERROR	[reformatter]	Reformatting errors: 3
+TS	ERROR	[tsv_model]	Bad ubyte value, col 2 in {DIR}/Data.tsv on line 2 (item1): '999'
+TS	ERROR	[tsv_model]	Bad ubyte value, col 2 in {DIR}/Data.tsv on line 3 (item2): '-1'
+TS	ERROR	[tsv_model]	Bad ubyte value, col 2 in {DIR}/Data.tsv on line 4 (item3): '256'
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed
