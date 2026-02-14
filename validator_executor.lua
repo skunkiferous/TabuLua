@@ -146,6 +146,9 @@ local function createValidatorEnv(context, extraEnv)
         find = validator_helpers.find,
         lookup = validator_helpers.lookup,
         groupBy = validator_helpers.groupBy,
+        -- Type introspection helpers
+        listMembersOfTag = validator_helpers.listMembersOfTag,
+        isMemberOfTag = validator_helpers.isMemberOfTag,
     }
 
     -- Add any extra context variables

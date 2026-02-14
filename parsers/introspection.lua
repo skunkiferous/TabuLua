@@ -412,6 +412,23 @@ local function childUnionExtendsParent(childUTypes, parentUTypes, child, parent)
     return false
 end
 
+-- Checks if child is a transitive member of parent tag (following nested tag memberships).
+-- Uses a visited set to prevent infinite loops in case of cycles.
+local function isTransitiveTagMember(parent, child, visited)
+    local members = state.TAG_MEMBERS[parent]
+    if not members then return false end
+    if members[child] then return true end
+    if not visited then visited = {} end
+    visited[parent] = true
+    for member, _ in pairs(members) do
+        if state.TAG_MEMBERS[member] and not visited[member]
+            and isTransitiveTagMember(member, child, visited) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Returns true, if the child type extends the parent type.
 function M.extendsOrRestrict(child, parent)
     local pc = M.typeParent(child)
@@ -422,6 +439,10 @@ function M.extendsOrRestrict(child, parent)
         if pc == child then
             error("Type cannot extend itself: " .. child)
         end
+    end
+    -- Check type tag membership (child is a member of parent tag, directly or transitively)
+    if isTransitiveTagMember(parent, child) then
+        return true
     end
     local childRFields = M.recordFieldTypes(child)
     local parentRFields = M.recordFieldTypes(parent)
@@ -447,6 +468,39 @@ function M.extendsOrRestrict(child, parent)
     end
     if pc then
         return M.extendsOrRestrict(pc, parent)
+    end
+    return false
+end
+
+-- Returns a sorted array of member type names for a type tag, or nil if not a tag.
+function M.listMembersOfTag(tagName)
+    local members = state.TAG_MEMBERS[tagName]
+    if not members then return nil end
+    local result = {}
+    for name, _ in pairs(members) do
+        result[#result + 1] = name
+    end
+    table.sort(result)
+    return result
+end
+
+-- Returns true if typeName is a member of the type tag tagName.
+-- Checks direct membership, subtype membership (e.g., ubyte via integer),
+-- and transitive tag membership (e.g., kilogram via MassUnit which is a member of Unit).
+-- Returns false if tagName is not a tag, or if typeName is not a member.
+function M.isMemberOfTag(tagName, typeName)
+    if type(tagName) ~= "string" or type(typeName) ~= "string" then
+        return false
+    end
+    local members = state.TAG_MEMBERS[tagName]
+    if not members then return false end
+    if members[typeName] then return true end
+    -- Check if typeName extends any member (subtype check),
+    -- or is a member of a nested tag (transitive tag membership via extendsOrRestrict)
+    for member, _ in pairs(members) do
+        if typeSameOrExtends(typeName, member) then
+            return true
+        end
     end
     return false
 end

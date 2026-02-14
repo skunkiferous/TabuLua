@@ -273,9 +273,12 @@ Each entry in `manifest.custom_types` has:
 | `max` | `number\|nil` | Maximum value (numeric types) |
 | `minLen` | `integer\|nil` | Minimum string length |
 | `maxLen` | `integer\|nil` | Maximum string length |
+| `members` | `table\|nil` | Type tag members (set of type names) |
 | `pattern` | `string\|nil` | Lua pattern constraint |
 | `values` | `table\|nil` | Allowed enum values |
 | `validate` | `string\|nil` | Expression-based validator |
+
+When `members` is present, the custom type is a **type tag** — a named group of types sharing a common ancestor. The `parent` field specifies the required ancestor, and `members` lists the type names belonging to the tag. Type tags support cross-package merging: if the same tag name is declared in multiple packages with the same ancestor, their members are merged additively. Members can themselves be type tags (nested/transitive tagging); when a member is a tag, its ancestor must be compatible (same or a subtype of the parent tag's ancestor). Membership is checked transitively through nested tags. The internal state tables `TAG_MEMBERS` (tag name → set of member names) and `TAG_ANCESTOR` (tag name → ancestor type name) track tag registrations.
 
 ---
 
@@ -418,7 +421,7 @@ The complete processing pipeline, in order:
 
 1. **Collect files** from directories (filtered by supported extensions)
 2. **Extract and load manifest files** (`Manifest.transposed.tsv`)
-3. **Register custom types** from manifests
+3. **Register custom types** from manifests (including type tags with cross-package member merging)
 4. **Load code libraries** from manifests into `loadEnv`
 5. **Resolve package dependencies** (topological sort)
 6. **Load file descriptors** (`Files.tsv`) in package dependency order

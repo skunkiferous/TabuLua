@@ -114,4 +114,10 @@ M.RECORD_PARSERS = {}
 -- All built-in parsers (populated after setup)
 M.BUILT_IN = {}
 
+-- Maps type tag names to their member sets: tag_name -> {member1=true, member2=true, ...}
+M.TAG_MEMBERS = {}
+
+-- Maps type tag names to their ancestor type: tag_name -> ancestor_name
+M.TAG_ANCESTOR = {}
+
 return M

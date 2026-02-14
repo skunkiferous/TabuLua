@@ -775,15 +775,16 @@ function M.registerDerivedParsers()
     -- Fields (alphabetically ordered for normalization):
     --   max: number|nil - maximum value (for number types)
     --   maxLen: integer|nil - maximum string length (for string types)
+    --   members: {name}|nil - type tag members (type names that belong to this tag)
     --   min: number|nil - minimum value (for number types)
     --   minLen: integer|nil - minimum string length (for string types)
     --   name: name - the name of the custom type
-    --   parent: type_spec|nil - the parent type to extend/restrict
+    --   parent: type_spec|nil - the parent type to extend/restrict (required ancestor for tags)
     --   pattern: string|nil - regex pattern (for string types)
     --   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
     --   values: {string}|nil - allowed values (for enum types)
     registration.registerAlias(ownBadVal, 'custom_type_def',
-        '{max:number|nil,maxLen:integer|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,validate:string|nil,values:{string}|nil}')
+        '{max:number|nil,maxLen:integer|nil,members:{name}|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,validate:string|nil,values:{string}|nil}')
 
     -- ============================================================
     -- Validator Types for Row, File, and Package Validators

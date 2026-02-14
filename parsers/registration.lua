@@ -774,11 +774,131 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
     return newParser
 end
 
+-- Extracts the ancestor type name from a parent spec.
+-- Handles both "{extends,X}" / "{extends:X}" forms and plain type names.
+local function extractTagAncestor(parent)
+    return parent:match("^{extends[,:](.+)}$") or parent
+end
+
+-- Delegate to the public API in introspection
+local function isMemberOfTag(tagName, typeName)
+    return introspection.isMemberOfTag(tagName, typeName)
+end
+
+-- Registers a type tag with the given name, ancestor, and members.
+-- In merge mode (tag already exists), adds new members to the existing tag.
+-- Returns true if successful, false otherwise.
+local function registerTypeTag(badVal, name, parent, members)
+    local ancestor = extractTagAncestor(parent)
+
+    -- Validate ancestor is a registered type
+    if not parseType(nullBadVal, ancestor, false) then
+        utils.log(badVal, 'type', ancestor,
+            "type tag '" .. name .. "': ancestor type '" .. ancestor .. "' is not registered")
+        return false
+    end
+
+    -- Validate members is a non-empty table
+    if type(members) ~= "table" or #members == 0 then
+        utils.log(badVal, 'spec', name,
+            "type tag '" .. name .. "': members must be a non-empty array of type names")
+        return false
+    end
+
+    -- Validate all members are registered types extending the ancestor
+    local memberSet = {}
+    for _, member in ipairs(members) do
+        if type(member) ~= "string" or member == "" then
+            utils.log(badVal, 'name', tostring(member),
+                "type tag '" .. name .. "': member must be a non-empty string")
+            return false
+        end
+        if not parseType(nullBadVal, member, false) then
+            utils.log(badVal, 'type', member,
+                "type tag '" .. name .. "': member '" .. member .. "' is not a registered type")
+            return false
+        end
+        if state.TAG_MEMBERS[member] then
+            -- Member is itself a tag; check that its ancestor is compatible
+            if not introspection.typeSameOrExtends(state.TAG_ANCESTOR[member], ancestor) then
+                utils.log(badVal, 'type', member,
+                    "type tag '" .. name .. "': tag member '" .. member
+                    .. "' has incompatible ancestor '" .. state.TAG_ANCESTOR[member]
+                    .. "' (expected '" .. ancestor .. "' or a subtype)")
+                return false
+            end
+        elseif not introspection.typeSameOrExtends(member, ancestor) then
+            utils.log(badVal, 'type', member,
+                "type tag '" .. name .. "': member '" .. member
+                .. "' does not extend ancestor '" .. ancestor .. "'")
+            return false
+        end
+        memberSet[member] = true
+    end
+
+    -- Check for merge mode (tag already exists)
+    if state.TAG_MEMBERS[name] then
+        -- Validate ancestor matches
+        if state.TAG_ANCESTOR[name] ~= ancestor then
+            utils.log(badVal, 'type', ancestor,
+                "type tag '" .. name .. "': ancestor mismatch — expected '"
+                .. state.TAG_ANCESTOR[name] .. "' but got '" .. ancestor .. "'")
+            return false
+        end
+        -- Merge new members into existing tag
+        for member, _ in pairs(memberSet) do
+            state.TAG_MEMBERS[name][member] = true
+        end
+        state.logger:info("Merged members into type tag: " .. name)
+        return true
+    end
+
+    -- New tag mode: register parser directly (not as alias, so parseType finds our wrapper)
+    if not generators.checkAcceptableParserName(badVal, name, false) then
+        return false
+    end
+
+    -- Get the base parser for {extends,<ancestor>}
+    local extends_spec = "{extends," .. ancestor .. "}"
+    local base_parser = parseType(nullBadVal, extends_spec, false)
+    if not base_parser then
+        utils.log(badVal, 'type', extends_spec,
+            "type tag '" .. name .. "': failed to create base parser")
+        return false
+    end
+
+    -- Store tag info
+    state.TAG_ANCESTOR[name] = ancestor
+    state.TAG_MEMBERS[name] = memberSet
+
+    -- Register the membership-checking parser directly in PARSERS
+    state.PARSERS[name] = function(badVal2, value, context)
+        local parsed, reformatted = generators.callParser(base_parser, badVal2, value, context)
+        if parsed == nil then return nil, reformatted end
+        if not isMemberOfTag(name, parsed) then
+            utils.log(badVal2, name, value,
+                "'" .. tostring(parsed) .. "' is not a member of type tag '" .. name .. "'")
+            return nil, reformatted
+        end
+        return parsed, reformatted
+    end
+
+    -- Set up comparator and NEVER_TABLE (same as bare extends types)
+    generators.registerComparator(name, generators.getCompInternal('type_spec'))
+    state.NEVER_TABLE[name] = true
+
+    -- Register extends relationship so type introspection (e.g., SQL export) works
+    generators.extendsOrRestrictsType(name, "name")
+
+    state.logger:info("Registered type tag: " .. name .. " (ancestor: " .. ancestor .. ")")
+    return true
+end
+
 -- Registers custom types from a data-driven specification.
 -- typeSpecs is a sequence of records with fields:
 --   name: string - the name of the new type
---   parent: string|nil - the parent type specification (defaults to "type_spec" when ancestor is set)
---   ancestor: string|nil - value must be a type name extending this ancestor
+--   parent: string|nil - the parent type specification (required ancestor for tags)
+--   members: {name}|nil - type tag members (mutually exclusive with other constraints)
 --   min: number|nil - minimum value (for number types)
 --   max: number|nil - maximum value (for number types)
 --   minLen: integer|nil - minimum string length (for string types)
@@ -809,6 +929,7 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             local hasStringConstraints = spec.minLen ~= nil or spec.maxLen ~= nil or spec.pattern ~= nil
             local hasEnumConstraints = spec.values ~= nil
             local hasExpressionConstraint = spec.validate ~= nil
+            local hasTagMembers = spec.members ~= nil
 
             -- Count how many constraint types are specified
             local constraintCount = 0
@@ -816,6 +937,7 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             if hasStringConstraints then constraintCount = constraintCount + 1 end
             if hasEnumConstraints then constraintCount = constraintCount + 1 end
             if hasExpressionConstraint then constraintCount = constraintCount + 1 end
+            if hasTagMembers then constraintCount = constraintCount + 1 end
 
             if constraintCount == 0 then
                 -- No constraints - just register as an alias
@@ -824,8 +946,13 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                 end
             elseif constraintCount > 1 then
                 utils.log(badVal, 'spec', name,
-                    'cannot mix constraint types (numeric, string, enum, expression) in the same type definition')
+                    'cannot mix constraint types (numeric, string, enum, expression, members) in the same type definition')
                 success = false
+            elseif hasTagMembers then
+                -- Type tag with explicit member list
+                if not registerTypeTag(badVal, name, parent, spec.members) then
+                    success = false
+                end
             elseif hasExpressionConstraint then
                 -- Expression-based validator
                 local parser = M.restrictWithExpression(badVal, parent, name, spec.validate)

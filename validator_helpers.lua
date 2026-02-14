@@ -239,6 +239,28 @@ local function groupBy(rows, column)
     return result
 end
 
+-- ============================================================
+-- Type Introspection Helpers
+-- ============================================================
+
+local introspection = require("parsers.introspection")
+
+--- Returns a sorted array of member type names for a type tag, or nil if not a tag.
+--- @param tagName string The name of the type tag
+--- @return table|nil Sorted array of member type names, or nil if tag doesn't exist
+local function listMembersOfTag(tagName)
+    return introspection.listMembersOfTag(tagName)
+end
+
+--- Returns true if typeName is a member of the type tag tagName.
+--- Checks direct membership, subtype membership, and transitive tag membership.
+--- @param tagName string The name of the type tag
+--- @param typeName string The type name to check
+--- @return boolean true if typeName is a member (directly, via subtype, or via nested tag)
+local function isMemberOfTag(tagName, typeName)
+    return introspection.isMemberOfTag(tagName, typeName)
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -263,6 +285,9 @@ local API = {
     -- Lookup helpers
     lookup = lookup,
     groupBy = groupBy,
+    -- Type introspection helpers
+    listMembersOfTag = listMembersOfTag,
+    isMemberOfTag = isMemberOfTag,
 }
 
 -- Enables the module to be called as a function

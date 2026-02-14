@@ -138,7 +138,7 @@ File validators run once per file, after all rows are parsed.
 | `ctx` | Writable table for accumulating state across validator expressions (see [Writable Context](#writable-context-ctx)) |
 | Published contexts | Data from earlier-loaded files |
 | Code libraries | By name |
-| Helper functions | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy` |
+| Helper functions | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy`, `listMembersOfTag`, `isMemberOfTag` |
 
 **Using helper functions and predicates:**
 
@@ -167,7 +167,7 @@ Package validators run once per package, after all files in the package are load
 | `ctx` | Writable table for accumulating state across validator expressions (see [Writable Context](#writable-context-ctx)) |
 | Published contexts | All published data (including from dependency packages) |
 | Code libraries | By name |
-| Helper functions | Same as file validators |
+| Helper functions | Same as file validators (includes `listMembersOfTag`) |
 
 **Accessing data across files:**
 
@@ -267,6 +267,23 @@ The `predicate` is a function receiving a row object: `function(r) return r.leve
 | `lookup` | `lookup(rows, column, value) → row\|nil` | First row where `row[column] == value` |
 | `groupBy` | `groupBy(rows, column) → table` | Map of serialized column value → array of rows |
 
+### Type Introspection Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `listMembersOfTag` | `listMembersOfTag(tagName) → table\|nil` | Returns a sorted array of member type names for a type tag, or `nil` if `tagName` is not a tag |
+| `isMemberOfTag` | `isMemberOfTag(tagName, typeName) → boolean` | Returns `true` if `typeName` is a member of the tag (directly, via subtype, or transitively via nested tags) |
+
+**Examples:**
+
+```text
+-- Check that a tag has expected members
+all(listMembersOfTag('CurrencyType'), function(m) return m ~= 'banned' end)
+
+-- Check if a specific type belongs to a tag
+isMemberOfTag('Unit', 'kilogram')  -- true if kilogram is in Unit (directly or via nested tag)
+```
+
 ## Sandbox Built-ins Summary
 
 All expression contexts (cell expressions, validators, COG) share a common set of sandboxed Lua built-ins:
@@ -276,7 +293,7 @@ All expression contexts (cell expressions, validators, COG) share a common set o
 | **Lua libraries** | `math`, `string`, `table` |
 | **Lua functions** | `pairs`, `ipairs`, `type`, `tostring`, `tonumber`, `select`, `unpack`, `next`, `pcall` |
 | **TabuLua API** | `predicates` (all predicate functions), `stringUtils` (`trim`, `split`, `parseVersion`), `tableUtils` (`keys`, `values`, `pairsCount`), `equals` (deep comparison) |
-| **Validator helpers** | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy` (validators only) |
+| **Validator helpers** | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy`, `listMembersOfTag`, `isMemberOfTag` (validators only) |
 | **Code libraries** | By declared name (e.g., `gameLib`, `utils`) |
 | **Published data** | By context name or globally |
 

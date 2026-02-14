@@ -91,6 +91,7 @@ but are otherwise fully supported.
 | `evenLevel` | `integer` | `validate="value >= 0 and value % 2 == 0"` | Demonstrates expression-based validation. The Lua expression is evaluated at parse time. |
 | `BaseStats` | `{attack:integer,...}` | (none) | Named record type alias. Defined here so that the expansion can **extend** it with additional fields (see Boss.tsv). |
 | `Point2D` | `{float,float}` | (none) | Named tuple type alias. Defined here so that the expansion can **extend** it to 3D (see Boss.tsv). |
+| `CurrencyType` | `number` | `members={"gold"}` | **Type tag**: a named group of types. Accepts only `gold` (and subtypes). The expansion extends this tag with `bossGem`, demonstrating cross-package tag merging. |
 
 **Code library:** `gameLib` loaded from `libs/gameLib.lua`, providing math utilities
 (`circleArea`, `lerp`, `clamp`, `percentToMultiplier`) available in expressions and COG blocks.
@@ -380,6 +381,8 @@ user-defined fields (e.g., for age ratings, mod categories, or other metadata).
 | `bossLevel` | `level` | `min=50, max=99` | **Chained custom type**: `level` itself extends `ubyte` with min=1, max=99. `bossLevel` further restricts to min=50. This demonstrates type inheritance chains. |
 | `bossHp` | `hitPoints` | `validate="value >= 1000"` | Extends core's `hitPoints` (min=0) with an expression validator ensuring bosses have at least 1000 HP. |
 | `advancedElement` | `{enum:Fire\|Light\|Shadow}` | (inline enum) | A focused subset of elements for shadow realm content. Defined as an inline enum rather than restricting the core Element enum. |
+| `bossGem` | `uint` | (none) | A new numeric currency type for the expansion (boss encounter rewards). |
+| `CurrencyType` | `number` | `members={"bossGem"}` | **Cross-package tag merge**: extends core's `CurrencyType` tag with the new `bossGem` member. After merging, `CurrencyType` accepts both `gold` (from core) and `bossGem` (from expansion). |
 
 ---
 
@@ -438,9 +441,12 @@ freely reference core types:
 - `itemCode`, `gold` -- custom types from core Manifest
 - `Rarity` -- enum from core Rarity.tsv
 - `advancedElement|nil` -- expansion's restricted enum instead of core's `Element|nil`
+- `CurrencyType` -- **type tag** from core, extended with `bossGem` by expansion. The
+  `rewardType` column accepts both `gold` (core member) and `bossGem` (expansion member).
 
 *Rationale:* Mod content reuses the base game's type system. New items follow the same
 validation rules (pattern-checked item codes, valid enum values) without any extra setup.
+The `CurrencyType` column demonstrates how type tags enable cross-package extensibility.
 
 ---
 
@@ -483,8 +489,8 @@ cooldowns, all expressed through the default value system.
 
 | Package | Provides | Used By |
 |---------|----------|---------|
-| **core** | `Element` enum, `Rarity` enum, `gold`/`hitPoints`/`level`/`itemCode` types, `BaseStats`/`Point2D` type aliases, `baseDamage` and other published constants, `gameLib` library | expansion |
-| **expansion** | `BossType` enum, `bossLevel`/`bossHp`/`advancedElement` types, `bossLib` library | (standalone) |
+| **core** | `Element` enum, `Rarity` enum, `gold`/`hitPoints`/`level`/`itemCode` types, `BaseStats`/`Point2D` type aliases, `CurrencyType` type tag, `baseDamage` and other published constants, `gameLib` library | expansion |
+| **expansion** | `BossType` enum, `bossLevel`/`bossHp`/`advancedElement`/`bossGem` types, extends `CurrencyType` tag, `bossLib` library | (standalone) |
 
 ## Feature Reference
 
@@ -528,6 +534,8 @@ Quick lookup: which file demonstrates which feature.
 | Custom type (string) | Manifest: `itemCode` (pattern) |
 | Custom type (expression) | Manifest: `evenLevel` |
 | Custom type chaining | Expansion: `bossLevel` extends `level` |
+| Type tag (members) | Core Manifest: `CurrencyType` with `gold` |
+| Type tag merge | Expansion Manifest: adds `bossGem` to `CurrencyType` |
 | Expressions `=` | Constant.tsv, Creature.tsv, WorldConfig.transposed.tsv |
 | Default (literal) | Spell.tsv (`cooldown:float:5.0`) |
 | Default (expression) | Spell.tsv (`totalDamage:float:=self...`) |

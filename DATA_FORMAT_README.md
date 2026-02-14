@@ -307,6 +307,72 @@ metre                    100.0
 
 The built-in `number_type` type is equivalent to `{extends,number}`.
 
+### Type Tags (Named Type Groups)
+
+A **type tag** is a named group of types sharing a common ancestor, declared via the `members` field in a custom type definition. Unlike enums (which group string labels), type tags group **registered types** under a curated name.
+
+**Declaration:**
+
+```text
+# In Manifest custom_types:
+{name="CurrencyType",parent="number",members={"gold"}}
+```
+
+This creates a type tag `CurrencyType` whose members must all extend `number`. The tag itself acts as `{extends,number}` restricted to the listed members (and their subtypes).
+
+**Usage:**
+
+```text
+# As a column type — accepts "gold" but rejects "kilogram" or "string"
+rewardType:CurrencyType
+
+# With {extends,...} syntax — same membership constraint
+paymentType:{extends,CurrencyType}
+
+# In a record type
+{unit:CurrencyType, value:float}
+```
+
+**Cross-package merging:** Multiple packages can declare the same tag name with the same ancestor. Members are merged additively. For example, a core package defines `CurrencyType` with `{"gold"}`, and an expansion adds `{"bossGem"}`:
+
+```text
+# Core manifest:
+{name="CurrencyType",parent="number",members={"gold"}}
+
+# Expansion manifest (members are merged):
+{name="CurrencyType",parent="number",members={"bossGem"}}
+
+# Result: CurrencyType accepts both "gold" and "bossGem"
+```
+
+The ancestor must match across all declarations of the same tag. Members that are subtypes of existing members are also accepted (e.g., if `integer` is a member, `ubyte` which extends `integer` is also accepted).
+
+**Nested tags (tag-of-tag):** A type tag can itself be a member of another tag, enabling hierarchical groupings. Membership is checked transitively:
+
+```text
+# Inner tag grouping mass units
+{name="MassUnit",parent="number",members={"kilogram","gram"}}
+
+# Outer tag grouping all unit families
+{name="Unit",parent="number",members={"MassUnit"}}
+
+# "kilogram" is accepted as a Unit (transitively via MassUnit)
+unitCol:Unit
+```
+
+When a tag member is itself a tag, its ancestor must be compatible (same or a subtype of the parent tag's ancestor).
+
+**Differences from enums:**
+
+| Aspect | Enum | Type Tag |
+|--------|------|----------|
+| Groups | String labels | Registered types |
+| Defined via | `.tsv` file with `superType=enum` | `members` field in `custom_type_def` |
+| Ancestor | Implicit (enum type) | Explicit (`parent` field) |
+| Cross-package | Not mergeable | Additively merged |
+| Nesting | Not supported | Tags can be members of other tags |
+| Introspection | `enumLabels()` | `listMembersOfTag()`, `isMemberOfTag()` |
+
 ## String Extension Types
 
 There are multiple types extending `string`:
@@ -836,18 +902,20 @@ Each custom type is defined as a record with the following fields:
 | `max` | `number\|nil` | Maximum value (for numeric types) |
 | `minLen` | `integer\|nil` | Minimum string length (for string types) |
 | `maxLen` | `integer\|nil` | Maximum string length (for string types) |
+| `members` | `{name}\|nil` | Type tag members (see [Type Tags](#type-tags-named-type-groups)) |
 | `pattern` | `string\|nil` | Lua pattern that strings must match (for string types) |
 | `validate` | `string\|nil` | Expression-based validator (see below) |
 | `values` | `{string}\|nil` | Allowed values (for enum types) |
 
 #### Constraint Types
 
-Custom types support four categories of constraints, which are **mutually exclusive** (cannot be mixed):
+Custom types support five categories of constraints, which are **mutually exclusive** (cannot be mixed):
 
 1. **Numeric constraints** (`min`, `max`): For types extending `number` or `integer`
 2. **String constraints** (`minLen`, `maxLen`, `pattern`): For types extending `string`
 3. **Enum constraints** (`values`): For types extending an enum type
 4. **Expression constraints** (`validate`): For any parent type, using a Lua expression
+5. **Type tag constraints** (`members`): For grouping registered types under a named tag (see [Type Tags](#type-tags-named-type-groups))
 
 If no constraints are specified, the custom type becomes a simple alias to the parent type.
 
@@ -1082,6 +1150,13 @@ The following helper functions are available in file and package validator expre
 |----------|-------------|
 | `lookup(rows, column, value)` | Find row where column == value |
 | `groupBy(rows, column)` | Group rows by column value |
+
+#### Type Introspection Helpers
+
+| Function | Description |
+|----------|-------------|
+| `listMembersOfTag(tagName)` | Returns sorted array of member type names for a type tag, or `nil` if not a tag |
+| `isMemberOfTag(tagName, typeName)` | Returns `true` if `typeName` is a member of the tag (directly, via subtype, or via nested tag) |
 
 ### Quota and Performance
 

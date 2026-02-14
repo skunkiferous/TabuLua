@@ -1,9 +1,10 @@
-name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:advancedElement|nil	tags:{name}	devNotes:comment|nil
+name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:advancedElement|nil	rewardType:CurrencyType	tags:{name}	devNotes:comment|nil
 # ^ This file uses the same column structure as core Item.tsv, demonstrating CROSS-PACKAGE references:
 # ^ itemCode, gold: custom types defined in core Manifest, available here because of the dependency
 # ^ Rarity: enum defined in core Rarity.tsv, registered via superType=enum
 # ^ advancedElement: restricted enum from expansion Manifest (subset of core Element: Shadow, Light, Fire)
+# ^ CurrencyType: type tag defined in core, extended in expansion with bossGem (cross-package merge)
 # ^ This shows how expansion mods can reuse core types while adding their own restrictions.
-voidShard	100001	VSH-001	Epic	3000	0.1	true	Shadow	"material","shadow","rare"	Used in shadow realm crafting
-solarOrb	100002	SOB-001	Legendary	8000	0.3	false	Light	"weapon","light","unique"	nil
-infernoEssence	100003	INF-001	Rare	1500	0.2	true	Fire	"consumable","fire","essence"	Grants temporary fire immunity
+voidShard	100001	VSH-001	Epic	3000	0.1	true	Shadow	bossGem	"material","shadow","rare"	Used in shadow realm crafting
+solarOrb	100002	SOB-001	Legendary	8000	0.3	false	Light	gold	"weapon","light","unique"	nil
+infernoEssence	100003	INF-001	Rare	1500	0.2	true	Fire	gold	"consumable","fire","essence"	Grants temporary fire immunity

@@ -292,24 +292,27 @@ local function registerCustomTypes(badVal, manifest)
             -- Convert the tuple-based format to record-based format for registerTypesFromSpec
             local typeSpecs = {}
             for _, ct in ipairs(custom_types) do
-                -- ct is a tuple: {name, parent, min, max, minLen, maxLen, pattern, values, validate}
-                -- or a record with named fields
+                -- ct is a record with named fields, or a tuple with alphabetical field order:
+                -- {max, maxLen, members, min, minLen, name, parent, pattern, validate, values}
                 local spec
                 if ct.name then
                     -- Already in record format
                     spec = ct
                 else
                     -- Tuple format: convert to record
+                    -- Fields are alphabetically ordered: max, maxLen, members, min, minLen,
+                    -- name, parent, pattern, validate, values
                     spec = {
-                        name = ct[1],
-                        parent = ct[2],
-                        min = ct[3],
-                        max = ct[4],
+                        max = ct[1],
+                        maxLen = ct[2],
+                        members = ct[3],
+                        min = ct[4],
                         minLen = ct[5],
-                        maxLen = ct[6],
-                        pattern = ct[7],
-                        values = ct[8],
+                        name = ct[6],
+                        parent = ct[7],
+                        pattern = ct[8],
                         validate = ct[9],
+                        values = ct[10],
                     }
                 end
                 typeSpecs[#typeSpecs + 1] = spec

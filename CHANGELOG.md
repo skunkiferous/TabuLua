@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Type tags**: Named groups of types sharing a common ancestor, declared via the new `members`
+  field in `custom_type_def`. Type tags restrict `{extends,...}` acceptance to listed members
+  (and their subtypes). Multiple packages can declare the same tag with the same ancestor —
+  members are merged additively, enabling cross-package extensibility. Tags can be members of
+  other tags (nested/transitive tagging), enabling hierarchical type groupings.
+  Example: `{name="CurrencyType",parent="number",members={"gold"}}`.
+- New `members:{name}|nil` field in the `custom_type_def` record type. Mutually exclusive
+  with other constraint types (`min`/`max`, `minLen`/`maxLen`/`pattern`, `values`, `validate`).
+- New `listMembersOfTag(tagName)` helper function available in validator expressions. Returns
+  a sorted array of member type names for a type tag, or `nil` if the name is not a tag.
+- New `isMemberOfTag(tagName, typeName)` helper function available in validator expressions.
+  Returns `true` if `typeName` is a member of the tag (directly, via subtype, or transitively
+  via nested tags).
+- Tutorial: `CurrencyType` type tag in core package (with `gold` member), extended by
+  expansion package (adding `bossGem` member). `ExpansionItem.tsv` uses `rewardType:CurrencyType`.
+
 ### Changed
 
 
