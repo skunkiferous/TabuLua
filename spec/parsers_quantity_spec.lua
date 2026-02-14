@@ -181,7 +181,7 @@ describe("parsers - number_type and tagged_number", function()
       local val, _reformatted = tagged_numberParser(badVal, '"integer",3.5')
       assert.is_nil(val)
       assert.is_true(#log_messages > 0)
-      assert.matches("Value does not match expected type integer", log_messages[#log_messages])
+      assert.matches("Bad integer", log_messages[#log_messages])
     end)
 
     it("should reject non-number type in first field", function()

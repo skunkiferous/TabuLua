@@ -85,6 +85,11 @@ atomicType
  *
  * Special types:
  *   raw (boolean|number|table|string|nil), nil, true, table
+ *
+ * Self-referencing field types:
+ *   Names matching "self.<field>" (e.g., self._1, self.unit) are parsed
+ *   as typeName by this grammar but should be converted to a "selfref"
+ *   AST node during semantic analysis. See AST CONSTRUCTION NOTES below.
  */
 typeName
     : IDENTIFIER (DOT IDENTIFIER)*
@@ -315,6 +320,14 @@ COMMENT
  *
  *   "enum"   - Enumeration type
  *              value: array of label strings
+ *
+ *   "selfref" - Self-referencing field type (dependent type)
+ *               value: string (the referenced field name, e.g., "_1", "unit")
+ *               Note: The grammar parses "self._1" as a typeName (IDENTIFIER
+ *               DOT IDENTIFIER). During semantic analysis, when the first
+ *               identifier is "self" and there are exactly two parts, convert
+ *               to a selfref node. Self-refs are only valid as field types
+ *               inside tuples or records, not as standalone types.
  *
  * Example transformations:
  *

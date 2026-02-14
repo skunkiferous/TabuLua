@@ -252,23 +252,23 @@ function M.get_map_parser(key_type, value_type, key_parser, value_parser)
 end
 
 -- Returns a tuple parser, for the desired field types
-function M.get_tuple_parser(types, fields_parsers)
+function M.get_tuple_parser(types, fields_parsers, self_refs)
     local cache_key = table.concat(types, ",")
     if not state.TUPLE_PARSERS[cache_key] then
-        if #types ~= #fields_parsers then
-            error('#types('..#types..') ~= #fields_parsers('..#fields_parsers..')')
-        end
+        local has_self_refs = self_refs and next(self_refs) ~= nil
         local pretendString = {}
         for i, elem_type in ipairs(types) do
-            local elem_parser = fields_parsers[i]
             if type(elem_type) ~= 'string' then
                 error('elem_type['..i..'] must be a string: '..type(elem_type))
             end
-            if type(elem_parser) ~= 'function' then
-                error('elem_parser['..i..'] must be a function: '..type(elem_parser))
+            if not (has_self_refs and self_refs[i]) then
+                local elem_parser = fields_parsers[i]
+                if type(elem_parser) ~= 'function' then
+                    error('elem_parser['..i..'] must be a function: '..type(elem_parser))
+                end
+                utils.notNilParser(elem_parser, 'elem_type['..i..']')
+                pretendString[i] = state.FORCE_REFORMATTED_AS_STRING[utils.resolve(elem_type)]
             end
-            utils.notNilParser(elem_parser, 'elem_type['..i..']')
-            pretendString[i] = state.FORCE_REFORMATTED_AS_STRING[utils.resolve(elem_type)]
         end
         state.TUPLE_PARSERS[cache_key] = function (badVal, value, context)
             --{<type1>,<type2>,...}
@@ -279,20 +279,55 @@ function M.get_tuple_parser(types, fields_parsers)
             local before = badVal.errors
             local parsed_copy = {}
             local ref_copy = {}
+            local raw_values = {}
             local fail = false
+            -- Pass 1: Parse all non-selfref fields; save raw values for selfref fields
             for i, v in ipairs(parsed) do
-                local parsed_v, reformatted_v = M.callParser(fields_parsers[i], badVal,
-                    v, 'parsed')
-                if badVal.errors == before then
-                    parsed_copy[i] = parsed_v
-                    ref_copy[i] = utils.quoteIfNeeded(parsed_v, reformatted_v,
-                        pretendString[i])
+                if has_self_refs and self_refs[i] then
+                    raw_values[i] = v
                 else
-                    fail = true
+                    local parsed_v, reformatted_v = M.callParser(fields_parsers[i], badVal,
+                        v, 'parsed')
+                    if badVal.errors == before then
+                        parsed_copy[i] = parsed_v
+                        ref_copy[i] = utils.quoteIfNeeded(parsed_v, reformatted_v,
+                            pretendString[i])
+                    else
+                        fail = true
+                    end
                 end
             end
             if fail then
                 return nil, str
+            end
+            -- Pass 2: Resolve selfref fields using values from pass 1
+            if has_self_refs then
+                for field_idx, ref_idx in pairs(self_refs) do
+                    local type_name = parsed_copy[ref_idx]
+                    if type(type_name) ~= "string" then
+                        utils.log(badVal, cache_key, value,
+                            "self._" .. ref_idx .. " resolved to non-string: "
+                            .. tostring(type_name))
+                        return nil, str
+                    end
+                    local dynamic_parser = state.refs.parseType(nullBadVal, type_name)
+                    if not dynamic_parser then
+                        utils.log(badVal, cache_key, value,
+                            "self._" .. ref_idx .. " resolved to unknown type: "
+                            .. type_name)
+                        return nil, str
+                    end
+                    local parsed_v, reformatted_v = M.callParser(
+                        dynamic_parser, badVal, raw_values[field_idx], 'parsed')
+                    if badVal.errors == before then
+                        parsed_copy[field_idx] = parsed_v
+                        ref_copy[field_idx] = utils.quoteIfNeeded(
+                            parsed_v, reformatted_v,
+                            state.FORCE_REFORMATTED_AS_STRING[utils.resolve(type_name)])
+                    else
+                        return nil, str
+                    end
+                end
             end
             return readOnlyTuple(parsed_copy), utils.serializeTableWithoutCB(ref_copy)
         end
@@ -362,27 +397,38 @@ end
 -- fields_types maps field names to their types
 -- fields_parsers maps field names to their parsers
 -- type_spec, the type specification, has the field names *sorted*
-function M.get_record_parser(fields_types, fields_parsers, type_spec)
+function M.get_record_parser(fields_types, fields_parsers, type_spec, self_refs)
     local cache_key = type_spec
     if not state.RECORD_PARSERS[cache_key] then
+        local has_self_refs = self_refs and next(self_refs) ~= nil
         local serialization = require("serialization")
         local serializeTable = serialization.serializeTable
-        local typesKeys = serializeTable(keys(fields_types))
-        local fieldsKeys = serializeTable(keys(fields_parsers))
-        if typesKeys ~= fieldsKeys then
-            error('fields_types('..typesKeys..') ~= fields_parsers('..fieldsKeys..')')
+        -- Self-ref fields don't have entries in fields_parsers, so compare only non-selfref keys
+        local typesKeySet = {}
+        local parsersKeySet = {}
+        for k in pairs(fields_types) do typesKeySet[k] = true end
+        for k in pairs(fields_parsers) do parsersKeySet[k] = true end
+        if has_self_refs then
+            for k in pairs(self_refs) do typesKeySet[k] = nil end
+        end
+        if serializeTable(keys(typesKeySet)) ~= serializeTable(keys(parsersKeySet)) then
+            error('fields_types('..serializeTable(keys(fields_types))
+                ..') keys mismatch fields_parsers('
+                ..serializeTable(keys(fields_parsers))..')')
         end
         local pretendString = {}
         for fName, fType in pairs(fields_types) do
-            local elem_parser = fields_parsers[fName]
             if type(fType) ~= 'string' then
                 error('fields_types['..fName..'] must be a string: '..type(fType))
             end
-            if type(elem_parser) ~= 'function' then
-                error('fields_parsers['..fName..'] must be a function: '..
-                    type(elem_parser))
+            if not (has_self_refs and self_refs[fName]) then
+                local elem_parser = fields_parsers[fName]
+                if type(elem_parser) ~= 'function' then
+                    error('fields_parsers['..fName..'] must be a function: '..
+                        type(elem_parser))
+                end
+                pretendString[fName] = state.FORCE_REFORMATTED_AS_STRING[utils.resolve(fType)]
             end
-            pretendString[fName] = state.FORCE_REFORMATTED_AS_STRING[utils.resolve(fType)]
         end
         state.RECORD_PARSERS[cache_key] = function (badVal, value, context)
             --{<name1>:<type1>,<name2>:<type2>,...}
@@ -394,31 +440,66 @@ function M.get_record_parser(fields_types, fields_parsers, type_spec)
             local before = badVal.errors
             local parsed_copy = {}
             local ref_copy = {}
+            local raw_values = {}
             local fail = false
+            -- Pass 1: Parse non-selfref fields; save raw values for selfref fields
             for k, v in pairs(parsed) do
-                local fp = fields_parsers[k]
-                if fp then
-                    if parsed_copy[k] ~= nil then
-                        utils.log(badVal, 'record', value, "Duplicate field: "..k)
-                        fail = true
-                    else
-                        local parsed_v, reformatted_v = M.callParser(fp, badVal,
-                            v, 'parsed')
-                        if badVal.errors == before then
-                            parsed_copy[k] = parsed_v
-                            ref_copy[k] = utils.quoteIfNeeded(parsed_v, reformatted_v,
-                                pretendString[k])
-                        else
-                            fail = true
-                        end
-                    end
+                if has_self_refs and self_refs[k] then
+                    raw_values[k] = v
                 else
-                    utils.log(badVal, 'record', value, "Unknown field: "..k)
-                    fail = true
+                    local fp = fields_parsers[k]
+                    if fp then
+                        if parsed_copy[k] ~= nil then
+                            utils.log(badVal, 'record', value, "Duplicate field: "..k)
+                            fail = true
+                        else
+                            local parsed_v, reformatted_v = M.callParser(fp, badVal,
+                                v, 'parsed')
+                            if badVal.errors == before then
+                                parsed_copy[k] = parsed_v
+                                ref_copy[k] = utils.quoteIfNeeded(parsed_v, reformatted_v,
+                                    pretendString[k])
+                            else
+                                fail = true
+                            end
+                        end
+                    else
+                        utils.log(badVal, 'record', value, "Unknown field: "..k)
+                        fail = true
+                    end
                 end
             end
             if fail then
                 return nil, str
+            end
+            -- Pass 2: Resolve selfref fields using values from pass 1
+            if has_self_refs then
+                for field_name, ref_field_name in pairs(self_refs) do
+                    local type_name = parsed_copy[ref_field_name]
+                    if type(type_name) ~= "string" then
+                        utils.log(badVal, cache_key, value,
+                            "self." .. ref_field_name .. " resolved to non-string: "
+                            .. tostring(type_name))
+                        return nil, str
+                    end
+                    local dynamic_parser = state.refs.parseType(nullBadVal, type_name)
+                    if not dynamic_parser then
+                        utils.log(badVal, cache_key, value,
+                            "self." .. ref_field_name
+                            .. " resolved to unknown type: " .. type_name)
+                        return nil, str
+                    end
+                    local parsed_v, reformatted_v = M.callParser(
+                        dynamic_parser, badVal, raw_values[field_name], 'parsed')
+                    if badVal.errors == before then
+                        parsed_copy[field_name] = parsed_v
+                        ref_copy[field_name] = utils.quoteIfNeeded(
+                            parsed_v, reformatted_v,
+                            state.FORCE_REFORMATTED_AS_STRING[utils.resolve(type_name)])
+                    else
+                        return nil, str
+                    end
+                end
             end
             return parsed_copy, utils.serializeTableWithoutCB(ref_copy)
         end

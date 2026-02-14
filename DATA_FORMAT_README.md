@@ -259,9 +259,9 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 | Type | Description |
 |------|-------------|
 | `raw` | Pre-defined union: `boolean\|number\|table\|string\|nil` |
-| `any` | Tagged union: `{type,raw}` — a tuple storing both the type name and the raw value, validated to ensure the value matches the declared type |
+| `any` | Tagged union: `{type,self._1}` — a tuple where the first field is a type name and the second field's type is determined by that name (see [Self-Referencing Field Types](#self-referencing-field-types)). E.g., `"integer",42` validates `42` as an integer |
 | `number_type` | A restricted `type_spec` that only accepts names of types extending `number` (e.g., `integer`, `float`, `long`, `percent`, or custom numeric types like `kilogram`) |
-| `tagged_number` | Tagged numeric union: `{number_type,number}` — like `any` but restricted to numeric types. Validates that the value matches the declared number type (e.g., `"integer",5` is valid but `"integer",3.5` is rejected) |
+| `tagged_number` | Tagged numeric union: `{number_type,self._1}` — like `any` but restricted to numeric types. The first field is a `number_type` name and the second field is validated as that type (see [Self-Referencing Field Types](#self-referencing-field-types)). E.g., `"integer",5` is valid but `"integer",3.5` is rejected |
 | `quantity` | Compact string format `<number><number_type>` (e.g., `3.5kilogram`, `100metre`, `-5integer`). Parsed to the same `{type_name, number}` structure as `tagged_number`. Extends `tagged_number` |
 | `{extends,<type>}` | Bare extends type spec: values must be **names of registered types** that extend (or are equal to) the specified ancestor type. E.g., `{extends,number}` accepts `integer`, `float`, `kilogram`, etc. Also available in record form `{extends:<type>}`. Useful for constraining fields to type names from a specific family |
 | `nil` | Just the nil value (only used in unions for "optional" values) |
@@ -372,6 +372,69 @@ When a tag member is itself a tag, its ancestor must be compatible (same or a su
 | Cross-package | Not mergeable | Additively merged |
 | Nesting | Not supported | Tags can be members of other tags |
 | Introspection | `enumLabels()` | `listMembersOfTag()`, `isMemberOfTag()` |
+
+## Self-Referencing Field Types
+
+Tuples and records support **self-referencing field types**, where one field's type is determined by the value of another field at parse time. This enables "dependent types" — fields whose validation depends on data in a sibling field.
+
+### Syntax
+
+In tuples, use `self._N` where `N` is the 1-based index of the referenced field:
+
+```text
+{number_type,self._1}
+```
+
+This means: "the first field is a `number_type` (a type name like `integer` or `float`), and the second field's type is whatever that first field's value says."
+
+In records, use `self.fieldname`:
+
+```text
+{unit:number_type,value:self.unit}
+```
+
+This means: "the `unit` field is a `number_type`, and the `value` field's type is determined by the parsed value of `unit`."
+
+### How It Works
+
+Self-referencing fields use **two-pass parsing**:
+
+1. **Pass 1**: All non-self-ref fields are parsed normally
+2. **Pass 2**: Self-ref fields use the parsed value of the referenced field as a dynamic type name to look up a parser, then validate their own value against that type
+
+For example, given type `{type,self._1}` and value `"integer",42`:
+- Pass 1 parses `"integer"` as a `type` (valid type name) -> `"integer"`
+- Pass 2 uses `"integer"` to find the integer parser, then parses `42` as an integer -> `42`
+
+### Constraints
+
+The referenced field must have a type that produces **type name strings**. Valid referenced field types are:
+
+- `type` or `type_spec` — unrestricted type names
+- `name` — any identifier (used as a type name)
+- `{extends,X}` or `{extends:X}` — names of types extending ancestor `X`
+- Type tags (e.g., `CurrencyType`) — names from a curated set of types
+
+Self-references cannot form cycles: a field cannot reference itself, and two fields cannot reference each other (no mutual self-refs).
+
+### Built-in Examples
+
+The built-in types `any` and `tagged_number` use self-referencing fields:
+
+- `any` is an alias for `{type,self._1}` — the first field names any type, the second field is validated as that type
+- `tagged_number` is an alias for `{number_type,self._1}` — the first field names a numeric type, the second field is validated as that numeric type
+
+### Custom Self-Referencing Types
+
+You can define your own self-referencing types using `registerAlias` or inline in column headers:
+
+```text
+# Inline in a column header (2+ fields required for record syntax)
+data:{unit:number_type,value:self.unit}
+
+# As a custom type alias in the manifest
+{name="TaggedValue",parent="{type,self._1}"}
+```
 
 ## String Extension Types
 

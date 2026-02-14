@@ -805,9 +805,9 @@ describe("parsers - utility functions", function()
       assert.is_not_nil(byName["{name:percent}"])
       assert.equals("map", byName["{name:percent}"].kind)
 
-      -- {type,raw} is a tuple
-      assert.is_not_nil(byName["{type,raw}"])
-      assert.equals("tuple", byName["{type,raw}"].kind)
+      -- {type,self._1} is a tuple (the 'any' type)
+      assert.is_not_nil(byName["{type,self._1}"])
+      assert.equals("tuple", byName["{type,self._1}"].kind)
     end)
 
     it("should include parent information for derived types", function()

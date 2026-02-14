@@ -39,6 +39,9 @@ local function create_type_parser_partial()
     local identifier = C(id_start * id_part^0)
     local name = (identifier * (P"." * identifier)^0) / function(...)
         local parts = {...}
+        if parts[1] == "self" and #parts == 2 then
+            return {tag = "selfref", value = parts[2]}
+        end
         return {tag = "name", value = table.concat(parts, ".")}
     end
 
@@ -194,6 +197,9 @@ local function inner_convert(node, reformat_enum_labels)
             table.insert(parts, inner_convert(v))
         end
         return table.concat(parts, "|")
+
+    elseif node.tag == "selfref" then
+        return "self." .. node.value
 
     else
         error("Unknown node type: " .. node.tag)

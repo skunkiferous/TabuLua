@@ -341,6 +341,8 @@ local function isReservedName(value)
 end
 
 -- Returns true if the value matches the tuple field name pattern: _0, _1, _2, ...
+-- Note: "real" tuples field names actually start with "_1", *not* with "_0".
+-- We only return true here as we are testing the "style" of the tuple field name.
 local function isTupleFieldName(value)
     return type(value) == "string" and value:match("^_%d+$") ~= nil
 end

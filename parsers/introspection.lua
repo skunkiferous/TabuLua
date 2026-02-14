@@ -349,6 +349,37 @@ local function typeSameOrExtends(child, parent)
     return (child == parent) or state.refs.extendsOrRestrict(child, parent)
 end
 
+-- Resolves the effective base type of a self-ref field for subtype checking.
+-- containerFields is the full field types table of the child (tuple array or record map).
+-- Returns the ancestor type, or nil if unresolvable.
+local function resolveSelfRefForExtends(selfRefSpec, containerFields)
+    local ref_field = selfRefSpec:match("^self%.(.+)$")
+    if not ref_field then return nil end
+    local ref_type
+    -- For tuples: _N -> index N
+    local idx = ref_field:match("^_(%d+)$")
+    if idx then
+        ref_type = containerFields[tonumber(idx)]
+    else
+        -- For records
+        ref_type = containerFields[ref_field]
+    end
+    if not ref_type then return nil end
+    -- Extract ancestor from {extends,X} or {extends:X}
+    local resolved = utils.resolve(ref_type)
+    local ancestor = resolved:match("^{extends[,:](.+)}$")
+    if ancestor then return ancestor end
+    -- type/type_spec -> string (type names are strings; used as comparator fallback)
+    if resolved == 'type' or resolved == 'type_spec' or resolved == 'name' then
+        return 'string'
+    end
+    -- Type tags
+    if state.TAG_ANCESTOR[resolved] then
+        return state.TAG_ANCESTOR[resolved]
+    end
+    return nil
+end
+
 -- Returns true, if childFields contains all the fields of parentFields,
 -- with the same types as in parentFields
 local function childRecordExtendsParent(childFields, parentFields)
@@ -356,7 +387,16 @@ local function childRecordExtendsParent(childFields, parentFields)
         return false
     end
     for k, v in pairs(parentFields) do
-        if not childFields[k] or not typeSameOrExtends(childFields[k], v) then
+        local childType = childFields[k]
+        if not childType then
+            return false
+        end
+        if childType:sub(1, 5) == "self." then
+            local baseType = resolveSelfRefForExtends(childType, childFields)
+            if not baseType or not typeSameOrExtends(baseType, v) then
+                return false
+            end
+        elseif not typeSameOrExtends(childType, v) then
             return false
         end
     end
@@ -373,7 +413,13 @@ local function childTupleExtendsParent(childFields, parentFields)
         return false
     end
     for i, t in pairs(parentFields) do
-        if not typeSameOrExtends(childFields[i], t) then
+        local childType = childFields[i]
+        if childType:sub(1, 5) == "self." then
+            local baseType = resolveSelfRefForExtends(childType, childFields)
+            if not baseType or not typeSameOrExtends(baseType, t) then
+                return false
+            end
+        elseif not typeSameOrExtends(childType, t) then
             return false
         end
     end

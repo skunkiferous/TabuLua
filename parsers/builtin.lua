@@ -511,20 +511,8 @@ function M.registerDerivedParsers()
     registration.registerAlias(ownBadVal, 'raw', 'boolean|number|table|string|nil')
 
     -- The "any" type is a "tagged union" of all types
-    registration.restrictWithValidator(ownBadVal, '{type,raw}', 'any',
-        function(parsed)
-            local expected_type = parsed[1]
-            local parsed_value = parsed[2]
-            local parser = parseType(nullBadVal, expected_type)
-            if not parser then
-                return 'Bad type: ' .. expected_type
-            end
-            local validated, _ = generators.callParser(parser, nullBadVal, parsed_value, "parsed")
-            if validated == nil then
-                return 'Value does not match expected type ' .. expected_type
-            end
-            return true
-        end)
+    -- Field 2's type is dynamically determined by the type name in field 1
+    registration.registerAlias(ownBadVal, 'any', '{type,self._1}')
 
     -- Text is a string that can contain escaped tabs and newlines.
     -- Tab is encoded as \t and newline as \n
@@ -830,21 +818,9 @@ function M.registerDerivedParsers()
     -- A "type_spec" limited to "number" and types that extend number
     registration.registerAlias(ownBadVal, 'number_type', '{extends:number}')
 
-    -- A type similar to "any" but that only accept values of type "number"
-    registration.restrictWithValidator(ownBadVal, '{number_type,number}', 'tagged_number',
-    function(parsed)
-        local expected_type = parsed[1]
-        local parsed_value = parsed[2]
-        local parser = parseType(nullBadVal, expected_type)
-        if not parser then
-            return 'Bad number type: ' .. expected_type
-        end
-        local validated, _ = generators.callParser(parser, nullBadVal, parsed_value, "parsed")
-        if validated == nil then
-            return 'Value does not match expected type ' .. expected_type
-        end
-        return true
-    end)
+    -- A type similar to "any" but that only accepts values of type "number"
+    -- Field 2's type is dynamically determined by the number_type name in field 1
+    registration.registerAlias(ownBadVal, 'tagged_number', '{number_type,self._1}')
 
     -- "quantity" is a string "<number><number_type>", e.g. "3.5kilogram", parsed to {type, number}
     -- Similar to "percent" (string input -> structured output), but produces a tagged_number tuple.

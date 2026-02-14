@@ -45,6 +45,27 @@ local function parse_type_array(badVal, xparsed, type_spec)
     return result
 end
 
+-- Resolves the ancestor (base) type for a self-ref's referenced field.
+-- The referenced field must have a type that produces type name strings.
+-- Returns the ancestor type name, or nil if not a valid self-ref target.
+local function resolveAncestorForSelfRef(ref_type_spec)
+    local resolved = utils.resolve(ref_type_spec)
+    -- Check for bare extends: {extends,X} or {extends:X}
+    local ancestor = resolved:match("^{extends[,:](.+)}$")
+    if ancestor then
+        return ancestor
+    end
+    -- Check for 'type' or 'type_spec' (unrestricted type names produce strings)
+    if resolved == 'type' or resolved == 'type_spec' or resolved == 'name' then
+        return 'string'
+    end
+    -- Check for type tags
+    if state.TAG_ANCESTOR[resolved] then
+        return state.TAG_ANCESTOR[resolved]
+    end
+    return nil
+end
+
 -- Parses a "tuple" type specification, and returns a parser, or nil if invalid
 local function parse_type_tuple(badVal, xparsed, type_spec)
     local parsed = xparsed.value
@@ -114,16 +135,62 @@ local function parse_type_tuple(badVal, xparsed, type_spec)
         start_index = 3
     end
     -- Process remaining types (starting from start_index)
+    local self_refs = {}  -- maps field_index -> referenced_field_index
     for i = start_index, #parsed do
         local field_index = #fields_parsers + 1
         local ti = parsed[i]
-        copy[field_index] = utils.serializeType(ti)
-        fields_parsers[field_index] = parse_type(badVal, ti, false)
-        if fields_parsers[field_index] == nil then
-            utils.log(badVal, 'type', copy[field_index], "unknown/bad type")
+        if ti.tag == "selfref" then
+            -- Self-reference: field type is determined by another field's value
+            local ref_field = ti.value
+            local ref_idx = ref_field:match("^_(%d+)$")
+            if not ref_idx then
+                utils.log(badVal, 'tuple', type_spec,
+                    "tuple self-reference must use _N format, got: self." .. ref_field)
+                return nil
+            end
+            ref_idx = tonumber(ref_idx)
+            if ref_idx == field_index then
+                utils.log(badVal, 'tuple', type_spec,
+                    "field _" .. field_index .. " cannot reference itself")
+                return nil
+            end
+            copy[field_index] = "self." .. ref_field
+            fields_parsers[field_index] = false  -- placeholder to keep #fields_parsers correct
+            self_refs[field_index] = ref_idx
+            -- Parser and comparator set after validation below
+        else
+            copy[field_index] = utils.serializeType(ti)
+            fields_parsers[field_index] = parse_type(badVal, ti, false)
+            if fields_parsers[field_index] == nil then
+                utils.log(badVal, 'type', copy[field_index], "unknown/bad type")
+                return nil
+            end
+            comps[field_index] = generators.getCompInternal(copy[field_index])
+        end
+    end
+    -- Validate self-refs after all fields are known
+    for field_idx, ref_idx in pairs(self_refs) do
+        if ref_idx < 1 or ref_idx > #copy then
+            utils.log(badVal, 'tuple', type_spec,
+                "self._" .. ref_idx .. " references non-existent field (tuple has "
+                .. #copy .. " fields)")
             return nil
         end
-        comps[field_index] = generators.getCompInternal(copy[field_index])
+        if self_refs[ref_idx] then
+            utils.log(badVal, 'tuple', type_spec,
+                "self._" .. ref_idx .. " cannot reference another self-ref field")
+            return nil
+        end
+        -- Strict constraint: referenced field must produce type names
+        local ref_type = copy[ref_idx]
+        local ancestor = resolveAncestorForSelfRef(ref_type)
+        if not ancestor then
+            utils.log(badVal, 'tuple', type_spec,
+                "self._" .. ref_idx .. ": referenced field type '" .. ref_type
+                .. "' does not produce type names")
+            return nil
+        end
+        comps[field_idx] = generators.getCompInternal(ancestor)
     end
     if errors_before == badVal.errors then
         local orig_type_spec = type_spec
@@ -131,7 +198,7 @@ local function parse_type_tuple(badVal, xparsed, type_spec)
             type_spec = '{' .. table.concat(copy, ",") .. '}'
             xparsed = lpeg_parser.type_parser(type_spec)
         end
-        result = generators.get_tuple_parser(copy, fields_parsers)
+        result = generators.get_tuple_parser(copy, fields_parsers, self_refs)
         generators.registerComparator(type_spec, composeComparator(comps))
         if orig_type_spec ~= type_spec then
             state.COMPARATORS[orig_type_spec] = state.COMPARATORS[type_spec]
@@ -377,6 +444,7 @@ local function parse_type_record(badVal, xparsed, type_spec)
     local errors_before = badVal.errors
     local fields_parsers = {}
     local copy = {}
+    local self_refs = {}  -- maps field_name -> referenced_field_name
     local fail = false
     local extends = false
     for _, kv in ipairs(parsed) do
@@ -392,41 +460,85 @@ local function parse_type_record(badVal, xparsed, type_spec)
                 fail = true
             else
                 local value_type = kv.value
-                local be = badVal.errors
-                local value_val = parse_type(badVal, value_type)
-                local logged_problem = badVal.errors ~= be
-                if value_val then
-                    local field_name = key_type.value
-                    if isIdentifier(field_name) then
-                        if isValueKeyword(field_name) then
-                            utils.log(badVal, 'record', type_spec,
-                                "field name cannot be a keyword: "..field_name)
-                            fail = true
-                        elseif isReservedName(field_name) then
-                            utils.log(badVal, 'record', type_spec,
-                                "field name cannot be a reserved name: "..field_name)
-                            fail = true
-                        elseif isTupleFieldName(field_name) then
-                            utils.log(badVal, 'record', type_spec,
-                                "field name is reserved for tuples: "..field_name)
-                            fail = true
-                        else
-                            fields_parsers[field_name] = value_val
-                            copy[field_name] = utils.serializeType(value_type)
-                            if field_name == "extends" then
-                                extends = true
-                            end
-                        end
-                    else
+                local field_name = key_type.value
+                if not isIdentifier(field_name) then
+                    utils.log(badVal, 'record', type_spec,
+                        "field name must be an identifier: "..field_name)
+                    fail = true
+                elseif isValueKeyword(field_name) then
+                    utils.log(badVal, 'record', type_spec,
+                        "field name cannot be a keyword: "..field_name)
+                    fail = true
+                elseif isReservedName(field_name) then
+                    utils.log(badVal, 'record', type_spec,
+                        "field name cannot be a reserved name: "..field_name)
+                    fail = true
+                elseif isTupleFieldName(field_name) then
+                    utils.log(badVal, 'record', type_spec,
+                        "field name is reserved for tuples: "..field_name)
+                    fail = true
+                elseif value_type.tag == "selfref" then
+                    -- Self-reference: field type determined by another field's value
+                    local ref_field = value_type.value
+                    if ref_field == field_name then
                         utils.log(badVal, 'record', type_spec,
-                            "field name must be an identifier: "..field_name)
+                            "field '" .. field_name .. "' cannot reference itself")
                         fail = true
+                    elseif isTupleFieldName(ref_field) then
+                        utils.log(badVal, 'record', type_spec,
+                            "record self-reference must use field names, not tuple indices: self."
+                            .. ref_field)
+                        fail = true
+                    else
+                        copy[field_name] = "self." .. ref_field
+                        self_refs[field_name] = ref_field
+                        if field_name == "extends" then
+                            extends = true
+                        end
                     end
                 else
-                    if not logged_problem then
-                        utils.log(badVal, 'record', type_spec,
-                            "field type is invalid: "..utils.serializeType(value_type))
+                    local be = badVal.errors
+                    local value_val = parse_type(badVal, value_type)
+                    local logged_problem = badVal.errors ~= be
+                    if value_val then
+                        fields_parsers[field_name] = value_val
+                        copy[field_name] = utils.serializeType(value_type)
+                        if field_name == "extends" then
+                            extends = true
+                        end
+                    else
+                        if not logged_problem then
+                            utils.log(badVal, 'record', type_spec,
+                                "field type is invalid: "..utils.serializeType(value_type))
+                        end
+                        fail = true
                     end
+                end
+            end
+        end
+    end
+    -- Validate self-refs after all fields are known
+    if not fail then
+        for field_name, ref_field_name in pairs(self_refs) do
+            if not copy[ref_field_name] then
+                utils.log(badVal, 'record', type_spec,
+                    "self." .. ref_field_name .. ": referenced field '"
+                    .. ref_field_name .. "' does not exist")
+                fail = true
+            elseif self_refs[ref_field_name] then
+                utils.log(badVal, 'record', type_spec,
+                    "self." .. ref_field_name
+                    .. " cannot reference another self-ref field (from field '"
+                    .. field_name .. "')")
+                fail = true
+            else
+                -- Strict constraint: referenced field must produce type names
+                local ref_type = copy[ref_field_name]
+                local ancestor = resolveAncestorForSelfRef(ref_type)
+                if not ancestor then
+                    utils.log(badVal, 'record', type_spec,
+                        "self." .. ref_field_name .. ": referenced field type '"
+                        .. ref_type .. "' does not produce type names")
                     fail = true
                 end
             end
@@ -440,7 +552,13 @@ local function parse_type_record(badVal, xparsed, type_spec)
             local field_names = keys(copy)
             local comps = {}
             for i, fname in ipairs(field_names) do
-                comps[i] = generators.getCompInternal(copy[fname])
+                if self_refs[fname] then
+                    local ref_type = copy[self_refs[fname]]
+                    local ancestor = resolveAncestorForSelfRef(ref_type)
+                    comps[i] = generators.getCompInternal(ancestor or 'string')
+                else
+                    comps[i] = generators.getCompInternal(copy[fname])
+                end
             end
             local valuesCmp = composeComparator(comps)
             local orig_type_spec = type_spec
@@ -458,7 +576,8 @@ local function parse_type_record(badVal, xparsed, type_spec)
                 type_spec = table.concat(copy2)
                 xparsed = lpeg_parser.type_parser(type_spec)
             end
-            result = generators.get_record_parser(copy, fields_parsers, type_spec)
+            result = generators.get_record_parser(copy, fields_parsers, type_spec,
+                self_refs)
             generators.registerComparator(type_spec, function(r1, r2)
                 local t1 = {}
                 local t2 = {}
@@ -545,6 +664,9 @@ parse_type = function(badVal, parsed, log_unknown)
         elseif tag == "table" then
             type_spec = "{}"
             tmp_result = state.PARSERS["table"]
+        elseif tag == "selfref" then
+            utils.log(badVal, 'type', type_spec,
+                "self-reference can only be used as a field type inside a tuple or record")
         elseif tag then
             error("Bad type tag: " .. tostring(tag))
         else

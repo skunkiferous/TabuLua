@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   via nested tags).
 - Tutorial: `CurrencyType` type tag in core package (with `gold` member), extended by
   expansion package (adding `bossGem` member). `ExpansionItem.tsv` uses `rewardType:CurrencyType`.
+- **Self-referencing field types**: New `self._N` (tuple) and `self.fieldname` (record) syntax
+  for dependent types. A field's type can be determined by the value of another field that
+  produces type name strings. The referenced field must have a type that resolves to type names
+  (`type`, `type_spec`, `name`, `{extends,X}`, or a type tag). Uses two-pass parsing: regular
+  fields are parsed first, then self-referencing fields use the parsed value as a dynamic type
+  name. Self-references cannot form cycles (no mutual self-refs, no self-referencing).
+  Example: `{number_type,self._1}` means "the second field's type is determined by the first
+  field's value" — if the first field parses as `"integer"`, the second field is validated as
+  an integer.
+- Refactored `tagged_number` from imperative validator to declarative `{number_type,self._1}`
+  alias, using the new self-referencing field type feature.
+- Refactored `any` from imperative validator to declarative `{type,self._1}` alias, using the
+  new self-referencing field type feature.
+- New `selfref` AST tag in the LPEG type parser for `self.fieldname` references.
 
 ### Changed
 
