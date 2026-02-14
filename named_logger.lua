@@ -195,6 +195,21 @@ local function getLogger(name)
     return namedLogger
 end
 
+--- Sets the global default log level and updates all existing cached loggers.
+--- @param level number One of DEBUG, INFO, WARN, ERROR, FATAL constants
+--- @return boolean True if the level was valid and applied
+local function setGlobalLevel(level)
+    if not valid_levels[level] then
+        printError("WARN\tInvalid log level for setGlobalLevel: " .. tostring(level))
+        return false
+    end
+    DEFAULT_LOG_LEVEL = level
+    for _, logger in pairs(loggers) do
+        logger:setLevel(level)
+    end
+    return true
+end
+
 --- Creates a new logger with a custom appender function.
 --- Allows external code to create custom loggers without directly requiring "logging".
 --- @param appender_fn function Appender function: function(self, level, message) -> boolean
@@ -219,6 +234,7 @@ local API = {
     getLogger = getLogger,
     new = new,
     getVersion = getVersion,
+    setGlobalLevel = setGlobalLevel,
     -- Log level constants
     DEBUG = DEBUG,
     INFO = INFO,

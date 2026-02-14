@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Refactored `any` from imperative validator to declarative `{type,self._1}` alias, using the
   new self-referencing field type feature.
 - New `selfref` AST tag in the LPEG type parser for `self.fieldname` references.
+- New `--log-level=<level>` option in the reformatter CLI to override the default `info` log
+  level. Valid levels: `debug`, `info`, `warn`, `error`, `fatal`. Sets the level globally for
+  all modules via new `named_logger.setGlobalLevel()` function.
 
 ### Changed
 

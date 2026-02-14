@@ -13,7 +13,33 @@ local function getVersion()
     return tostring(VERSION)
 end
 
-local logger = require( "named_logger").getLogger(NAME)
+local named_logger = require("named_logger")
+
+-- Map of log level name strings to level constants
+local LOG_LEVELS = {
+    ["debug"] = named_logger.DEBUG,
+    ["info"]  = named_logger.INFO,
+    ["warn"]  = named_logger.WARN,
+    ["error"] = named_logger.ERROR,
+    ["fatal"] = named_logger.FATAL,
+}
+
+-- Apply --log-level early, before other modules are loaded, so their
+-- loggers are created at the correct level from the start.
+if arg then
+    for _, a in ipairs(arg) do
+        local levelName = a:match("^%-%-log%-level=(.+)$")
+        if levelName then
+            local level = LOG_LEVELS[levelName:lower()]
+            if level then
+                named_logger.setGlobalLevel(level)
+            end
+            break
+        end
+    end
+end
+
+local logger = named_logger.getLogger(NAME)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -236,6 +262,9 @@ local function generateUsage()
         "  --collapse-exploded   Collapse exploded columns into single composite columns",
         "                        (e.g., location.level + location.x -> location:{level,x})",
         "                        Default: keep exploded columns as separate flat columns",
+        "",
+        "  --log-level=<level>   Set log verbosity: debug, info, warn, error, fatal",
+        "                        (default: info)",
         "",
         "  --clean               Empty the export directory before exporting",
         "                        Removes all existing files and subdirectories",
@@ -509,6 +538,16 @@ if isMainScript then
                 end
             elseif exportDirMatch then
                 exportDir = exportDirMatch
+            elseif arg_i:match("^%-%-log%-level=") then
+                local levelName = arg_i:match("^%-%-log%-level=(.+)$")
+                local level = LOG_LEVELS[levelName:lower()]
+                if level then
+                    named_logger.setGlobalLevel(level)
+                else
+                    logger:error("Unknown log level: " .. levelName)
+                    logger:error("Valid levels: debug, info, warn, error, fatal")
+                    hasError = true
+                end
             elseif arg_i == "--collapse-exploded" then
                 collapseExploded = true
             elseif arg_i == "--clean" then

@@ -43,6 +43,7 @@ lua reformatter.lua [OPTIONS] <dir1> [dir2] ...
 | `--data=<format>` | Data serialization format (see [Data Formats](#data-formats) below). Required for some file formats, optional for others. |
 | `--collapse-exploded` | Collapse exploded columns into single composite columns during export (e.g., `location.level` + `location.x` → `location:{level,x}`). Default: keep exploded columns as separate flat columns. |
 | `--clean` | Empty the export directory before exporting. Removes all existing files and subdirectories. |
+| `--log-level=<level>` | Set log verbosity: `debug`, `info`, `warn`, `error`, `fatal` (default: `info`). |
 
 ## File Formats
 
