@@ -305,6 +305,7 @@ local function exportTSV(process_files, exportParams, serializer)
 
     local dirChecked = {}
     for file_name, content in pairs(raw_files) do
+        local content2 = content
         -- Check if this file should be exported
         local lcfn = file_name:lower()
         -- Extract just the filename without path for lookup
@@ -497,10 +498,10 @@ local function exportTSV(process_files, exportParams, serializer)
                     end
                 end
                 table.insert(cnt, fileSuffix)
-                content = table.concat(cnt)
+                content2 = table.concat(cnt)
             end
         end
-        if not writeExportFile(new_name, content) then
+        if not writeExportFile(new_name, content2) then
             return false
         end
         ::continue::
@@ -784,6 +785,7 @@ local function exportMessagePack(process_files, exportParams)
     local exportDir = formatSubdir ~= "" and pathJoin(baseExportDir, formatSubdir) or baseExportDir
     local dirChecked = {}
     for file_name, content in pairs(raw_files) do
+        local content2 = content
         local is_tsv = hasExtension(file_name, "tsv")
         local relative_name = computeRelativePath(file_name, file2dir)
         local new_name = pathJoin(exportDir, relative_name)
@@ -825,10 +827,10 @@ local function exportMessagePack(process_files, exportParams)
                         cnt[#cnt + 1] = copy
                     end
                 end
-                content = serializeMessagePack(cnt)
+                content2 = serializeMessagePack(cnt)
             end
         end
-        if not writeExportFile(new_name, content) then
+        if not writeExportFile(new_name, content2) then
             return false
         end
     end

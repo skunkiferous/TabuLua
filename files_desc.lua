@@ -179,37 +179,37 @@ local function parseFilesDescHeader(file_name, file, log)
     local rowValidatorsIdx = -1
     local fileValidatorsIdx = -1
     for idx, col in ipairs(header) do
-        col = tostring(col)
-        if col == FILE_NAME_COL then
+        local colStr = tostring(col)
+        if colStr == FILE_NAME_COL then
             fileNameIdx = idx
-        elseif col == TYPE_NAME_COL then
+        elseif colStr == TYPE_NAME_COL then
             typeNameIdx = idx
-        elseif col == SUPER_TYPE_COL then
+        elseif colStr == SUPER_TYPE_COL then
             superTypeIdx = idx
-        elseif col == BASE_TYPE_COL then
+        elseif colStr == BASE_TYPE_COL then
             baseTypeIdx = idx
-        elseif col == PUBLISH_CONTEXT_COL then
+        elseif colStr == PUBLISH_CONTEXT_COL then
             publishContextIdx = idx
-        elseif col == PUBLISH_COLUMN_COL then
+        elseif colStr == PUBLISH_COLUMN_COL then
             publishColumnIdx = idx
-        elseif col == LOAD_ORDER_COL then
+        elseif colStr == LOAD_ORDER_COL then
             loadOrderIdx = idx
-        elseif col == JOIN_INTO_COL then
+        elseif colStr == JOIN_INTO_COL then
             joinIntoIdx = idx
-        elseif col == JOIN_COLUMN_COL then
+        elseif colStr == JOIN_COLUMN_COL then
             joinColumnIdx = idx
-        elseif col == EXPORT_COL then
+        elseif colStr == EXPORT_COL then
             exportIdx = idx
-        elseif col == JOINED_TYPE_NAME_COL then
+        elseif colStr == JOINED_TYPE_NAME_COL then
             joinedTypeNameIdx = idx
-        elseif col == ROW_VALIDATORS_COL then
+        elseif colStr == ROW_VALIDATORS_COL then
             rowValidatorsIdx = idx
-        elseif col == FILE_VALIDATORS_COL then
+        elseif colStr == FILE_VALIDATORS_COL then
             fileValidatorsIdx = idx
-        elseif col== DESCRIPTION_COL then
+        elseif colStr== DESCRIPTION_COL then
             -- For the user only; ignore ...
         else
-            logger:warn("Column ignored: "..col)
+            logger:warn("Column ignored: "..colStr)
         end
     end
     warnMissingColumn(file_name, fileNameIdx, "fileName", log)
