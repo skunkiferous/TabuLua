@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.7.0] - 2026-02-14
+
+### Added
+
 - **Type tags**: Named groups of types sharing a common ancestor, declared via the new `members`
   field in `custom_type_def`. Type tags restrict `{extends,...}` acceptance to listed members
   (and their subtypes). Multiple packages can declare the same tag with the same ancestor —
@@ -41,11 +49,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - New `--log-level=<level>` option in the reformatter CLI to override the default `info` log
   level. Valid levels: `debug`, `info`, `warn`, `error`, `fatal`. Sets the level globally for
   all modules via new `named_logger.setGlobalLevel()` function.
-
-### Changed
-
-
-### Fixed
 
 ## [0.6.0] - 2026-02-13
 
