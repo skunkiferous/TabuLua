@@ -84,7 +84,7 @@ describe("parsers - simple types", function()
       assert_equals_2(true, "true", boolParser(badVal, "1"))
       assert_equals_2(false, "false", boolParser(badVal, "0"))
       assert_equals_2(nil, "invalid", boolParser(badVal, "invalid"))
-      assert.same({"Bad boolean  in test on line 1: 'invalid'"}, log_messages)
+      assert.same({"Bad boolean  in test on line 1: 'invalid' (expected 'true', 'false', 'yes', 'no', '1', or '0')"}, log_messages)
     end)
 
     it("should validate number", function()
@@ -429,9 +429,9 @@ describe("parsers - simple types", function()
       assert_equals_2(nil, "1.2", versionParser(badVal, "1.2"))
       assert_equals_2(nil, "1.2.3.4", versionParser(badVal, "1.2.3.4"))
       assert_equals_2(nil, "a.b.c", versionParser(badVal, "a.b.c"))
-      assert.same({"Bad version  in test on line 1: '1.2'",
-        "Bad version  in test on line 1: '1.2.3.4'",
-        "Bad version  in test on line 1: 'a.b.c'"}, log_messages)
+      assert.same({"Bad version  in test on line 1: '1.2' (expected format: X.Y.Z (e.g., 1.0.0))",
+        "Bad version  in test on line 1: '1.2.3.4' (expected format: X.Y.Z (e.g., 1.0.0))",
+        "Bad version  in test on line 1: 'a.b.c' (expected format: X.Y.Z (e.g., 1.0.0))"}, log_messages)
     end)
 
     it("should handle version numbers with leading zeros", function()

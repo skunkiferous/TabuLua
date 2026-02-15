@@ -46,7 +46,6 @@ local MANIFEST_FILENAME = "Manifest.transposed.tsv"
 local PACKAGE_ID_FIELD = "package_id"
 local PACKAGE_ID_TYPE = "package_id"
 local CUSTOM_TYPES_FIELD = "custom_types"
-local CUSTOM_TYPES_TYPE = "{custom_type_def}|nil"
 local CODE_LIBRARIES_FIELD = "code_libraries"
 local CODE_LIBRARIES_TYPE = "{{name,string}}|nil"
 
@@ -285,7 +284,7 @@ local function registerCustomTypes(badVal, manifest)
     badVal.col_idx = MANIFEST_DATA_COL_IDX
     badVal.row_key = PACKAGE_ID_ROW_KEY
     badVal.col_name = CUSTOM_TYPES_FIELD
-    return error_reporting.withColType(badVal, CUSTOM_TYPES_TYPE, function()
+    return error_reporting.withColType(badVal, "custom type definition", function()
         local custom_types = manifest.custom_types
         if custom_types then
             logger:info("Registering custom types for package " .. manifest.package_id)

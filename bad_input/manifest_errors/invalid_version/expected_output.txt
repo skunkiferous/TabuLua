@@ -1,4 +1,4 @@
 TS	ERROR	[manifest_loader]	Could not resolve package dependencies. Aborting.
 TS	ERROR	[reformatter]	description, col 2 in {DIR}/Manifest.transposed.tsv on line 4 (test.manifest.badversion): '{DIR}/Manifest.transposed.tsv' (processTSV() failed)
 TS	ERROR	[reformatter]	manifest_loader failed to process files in {DIR}
-TS	ERROR	[tsv_model]	Bad version version, col 2 in {DIR}/Manifest.transposed.tsv on line 3 (test.manifest.badversion): 'not_a_version'
+TS	ERROR	[tsv_model]	Bad version version, col 2 in {DIR}/Manifest.transposed.tsv on line 3 (test.manifest.badversion): 'not_a_version' (expected format: X.Y.Z (e.g., 1.0.0))

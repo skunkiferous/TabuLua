@@ -180,7 +180,13 @@ local function newHeaderColumn(params, col_idx, column)
     local cn = (col_name == "?") and ("#" .. tostring(col_idx)) or col_name
     if #col_type_spec == 0 then
         col_type_spec = "string"
-        logger:debug(params.source_name .. "." .. cn ..": Defaulting to string")
+        if not pos then
+            -- No ':' separator found — column has no type annotation at all
+            logger:warn(params.source_name .. ": column '" .. cn
+                .. "' has no type annotation (expected format: name:type); defaulting to string")
+        else
+            logger:debug(params.source_name .. "." .. cn ..": Defaulting to string")
+        end
     end
     local col_type = col_type_spec
     if params.expr_eval then
@@ -363,7 +369,7 @@ local function newHeader(options_extractor, expr_eval, parser_finder, source_nam
         hr = split(header_row)
     end
     if not hr then
-        badVal(nil, "header_row is neither a string nor a sequence; skipping this file!")
+        badVal(nil, "file is empty or has no valid header row")
         return nil
     end
     -- badVal.col_types[#badVal.col_types] was set to '' in caller. We *replace* it, until we exit
@@ -688,7 +694,22 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
                 while done_count < #header do
                     local progress = false
                     for ci = 1,#header do
-                        if canProcessCell(header, done_idx, row[ci]) then
+                        if not done_idx[ci] and ci > #row
+                            and not header[ci].type_spec:find("|nil", 1, true)
+                            and header[ci].type_spec ~= "nil" then
+                            -- Row is shorter than header and column is not nullable
+                            badVal.col_name = header[ci].name
+                            badVal.col_idx = ci
+                            badVal.col_types[#badVal.col_types] = header[ci].type_spec
+                            badVal(nil, "row has " .. #row .. " columns but header defines "
+                                .. #header .. " -- column '" .. header[ci].name .. "' is missing")
+                            new_row[ci] = readOnly({nil, nil, nil, ""}, cell_mt)
+                            eval_row[ci] = nil
+                            eval_row[header[ci].name] = nil
+                            done_idx[ci] = true
+                            done_count = done_count + 1
+                            progress = true
+                        elseif canProcessCell(header, done_idx, row[ci]) then
                             doCell(badVal,header,ci,row,new_row,
                                 eval_row)
                             done_idx[ci] = true
@@ -745,6 +766,27 @@ local function defaultOptionsExtractor(col_name, options)
     return col_name
 end
 
+-- Cleans up Lua sandbox error messages by removing internal file paths and
+-- [string "..."] notation, keeping only the meaningful error description.
+-- Example input:  "C:/lua/.../sandbox.lua:170: [string \"return (x * 2)\"]:1: attempt to ..."
+-- Example output: "attempt to perform arithmetic on a nil value (global 'x')"
+local function sanitizeSandboxError(err)
+    if type(err) ~= "string" then
+        return tostring(err)
+    end
+    -- Remove sandbox file path prefix including Windows drive letter:
+    -- e.g., "C:/lua/.../sandbox.lua:148: " or "./sandbox.lua:148: "
+    local cleaned = err:gsub("[%a]?:?[^%s]*sandbox%.lua:%d+:%s*", "")
+    -- Remove [string "return (...)"] prefix: '[string "return (expr)"]:1: '
+    cleaned = cleaned:gsub('%[string "[^"]*"%]:%d+:%s*', "")
+    -- Trim leading/trailing whitespace
+    cleaned = cleaned:match("^%s*(.-)%s*$")
+    if cleaned == "" then
+        return err -- fallback to original if nothing left
+    end
+    return cleaned
+end
+
 --- Creates an expression evaluator for TSV cell expressions.
 --- Expressions start with '=' and are evaluated in a sandboxed environment.
 --- The context parameter becomes 'self' in the expression.
@@ -770,10 +812,14 @@ local function expressionEvaluatorGenerator(env, log)
             if sandbox.quota_supported then
                 opt.quota = EXPRESSION_MAX_OPERATIONS
             end
-            local ok, result = pcall(sandbox.protect(code, opt))
+            -- Wrap sandbox.protect in pcall to catch compilation errors (e.g., syntax errors)
+            local protect_ok, protected = pcall(sandbox.protect, code, opt)
+            if not protect_ok then
+                return nil, sanitizeSandboxError(protected)
+            end
+            local ok, result = pcall(protected)
             if not ok then
-                log:error("Failed to evaluate: " .. code .. " : "..result)
-                return nil, result
+                return nil, sanitizeSandboxError(result)
             else
                 return result
             end

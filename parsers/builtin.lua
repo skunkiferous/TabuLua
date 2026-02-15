@@ -79,7 +79,8 @@ state.PARSERS.boolean = function (badVal, value, context)
         return value, tostring(value)
     end
     if t ~= "string" then
-        utils.log(badVal, 'boolean', value)
+        utils.log(badVal, 'boolean', value,
+            "expected 'true', 'false', 'yes', 'no', '1', or '0'")
         return nil, tostring(value)
     end
     local lc = value:lower()
@@ -88,7 +89,8 @@ state.PARSERS.boolean = function (badVal, value, context)
     elseif lc == 'false' or lc == 'no' or lc == '0' then
         return false, 'false'
     else
-        utils.log(badVal, 'boolean', value)
+        utils.log(badVal, 'boolean', value,
+            "expected 'true', 'false', 'yes', 'no', '1', or '0'")
         return nil, value
     end
 end
@@ -119,8 +121,7 @@ state.PARSERS.number = function (badVal, value, context)
     local t = type(value)
     if utils.expectTSV(context) then
         if t ~= "string" then
-            utils.log(badVal, 'number', value,
-                "context was 'tsv', was expecting a string")
+            utils.log(badVal, 'number', value, "value is missing or nil")
             return nil, tostring(value)
         end
         local num = tonumber(value)
@@ -615,7 +616,8 @@ function M.registerDerivedParsers()
         -- parseVersion does not throw errors
         local v = parseVersion(value)
         if not v then
-            utils.log(badVal, 'version', value)
+            utils.log(badVal, 'version', value,
+                "expected format: X.Y.Z (e.g., 1.0.0)")
             return nil, value
         end
         return v, tostring(v)

@@ -24,7 +24,32 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- Boolean parse errors now list valid values (`true`, `false`, `yes`, `no`, `1`, `0`)
+- Enum parse errors now list valid members (e.g., `valid values: common, epic, legendary, rare, uncommon`)
+- Version parse errors now show expected format (`X.Y.Z`)
+- Number range errors now show the valid range (e.g., `must be 0..255`)
+- Number/integer nil errors now say `value is missing or nil` instead of `context was 'tsv', was expecting a string`
+- Empty data file error now says `file is empty or has no valid header row` instead of
+  `header_row is neither a string nor a sequence; skipping this file!`
+- Bad custom type errors now say `Bad custom type definition` instead of `Bad {custom_type_def}|nil`
+- Short rows (fewer columns than header) now report a structural error with column count mismatch
+  (e.g., `row has 1 columns but header defines 2 -- column 'value' is missing`) instead of
+  flowing nil to the type parser. Nullable (`|nil`) columns in short rows are silently accepted.
+- Row validator errors now show the error message prominently with the expression as secondary
+  context, instead of the expression as the value and the error message as context
+- Expression evaluation errors (syntax errors, undefined references) now have stack traces
+  sanitized — internal sandbox file paths and string chunk prefixes are stripped, showing only
+  the user-relevant error message
+- Expression compile errors and runtime errors are now handled separately, fixing duplicate
+  error logging that occurred when a compile-time error was caught and re-logged at runtime
+- Invalid `--log-level` values now default to `ERROR` level, suppressing noisy module
+  initialization output instead of falling through to `INFO`
+
 ### Fixed
+
+- Columns with no type annotation (no `:` separator in header) now produce a warning instead
+  of silently defaulting to `string`
+- Files listed in `Files.tsv` that do not exist on disk are now detected and reported as errors
 
 ## [0.7.0] - 2026-02-14
 

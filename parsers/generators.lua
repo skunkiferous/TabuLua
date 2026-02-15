@@ -566,6 +566,11 @@ function M.registerEnumParserInternal(badVal, enum_labels)
             '#enum_labels('..#enum_labels..') ~= #lower_2_enum('..lc..')')
         return nil
     end
+    -- Build sorted display list of canonical enum values for error messages
+    local valid_values = {}
+    for _, v in pairs(lower_2_enum) do valid_values[#valid_values+1] = v end
+    table.sort(valid_values)
+    local valid_str = "valid values: " .. table.concat(valid_values, ", ")
     state.PARSERS[labels] = function (badVal2, value, context)
         utils.expectTSV(context) -- Just for side-effects
         if type(value) == 'string' then
@@ -574,7 +579,7 @@ function M.registerEnumParserInternal(badVal, enum_labels)
                 return mapped, mapped
             end
         end
-        utils.log(badVal2, labels, value)
+        utils.log(badVal2, labels, value, valid_str)
         return nil, tostring(value)
     end
     state.NEVER_TABLE[labels] = true

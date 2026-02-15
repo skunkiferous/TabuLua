@@ -1,2 +1,5 @@
 TS	WARN	[reformatter]	Content of {DIR}/Data.tsv has changed
 TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed
+TS	WARN	[tsv_model]	{DIR}/Data.tsv: column 'description' has no type annotation (expected format: name:type); defaulting to string
+TS	WARN	[tsv_model]	{DIR}/Data.tsv: column 'name' has no type annotation (expected format: name:type); defaulting to string
+TS	WARN	[tsv_model]	{DIR}/Data.tsv: column 'value' has no type annotation (expected format: name:type); defaulting to string

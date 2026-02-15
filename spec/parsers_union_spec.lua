@@ -339,8 +339,8 @@ describe("parsers - union types", function()
         assert_equals_2(nil, "true", parser2(badVal, "true"))
 
         assert.same({
-            'Bad version  in test on line 1: \'42\'',
-            'Bad version  in test on line 1: \'true\''
+            'Bad version  in test on line 1: \'42\' (expected format: X.Y.Z (e.g., 1.0.0))',
+            'Bad version  in test on line 1: \'true\' (expected format: X.Y.Z (e.g., 1.0.0))'
         }, log_messages)
     end)
 

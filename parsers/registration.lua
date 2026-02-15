@@ -308,7 +308,8 @@ function M.restrictNumber(badVal, numberType, min, max, newName)
     max = max or math.huge
     local result = M.restrictWithValidator(badVal, numberType,
         newParserName, function (num)
-            return num >= min and num <= max
+            if num >= min and num <= max then return true end
+            return "must be " .. min .. ".." .. max
         end)
     if result then
         state.NUMBER_LIMITS[newParserName] = {min=min, max=max}

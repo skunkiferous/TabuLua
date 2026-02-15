@@ -1,4 +1,4 @@
 TS	ERROR	[reformatter]	Reformatting errors: 1
-TS	ERROR	[tsv_model]	Bad boolean flag, col 2 in {DIR}/Data.tsv on line 2 (item1): 'maybe'
+TS	ERROR	[tsv_model]	Bad boolean flag, col 2 in {DIR}/Data.tsv on line 2 (item1): 'maybe' (expected 'true', 'false', 'yes', 'no', '1', or '0')
 TS	WARN	[reformatter]	Content of {DIR}/Data.tsv has changed
 TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

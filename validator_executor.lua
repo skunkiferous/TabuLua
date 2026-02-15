@@ -262,7 +262,7 @@ local function runRowValidators(validators, row, rowIndex, fileName, badVal, ext
             else
                 -- Error level - stop and report
                 badVal.line_no = rowIndex
-                badVal(normalized.expr, errorMsg)
+                badVal(errorMsg, "validator: " .. normalized.expr)
                 logger:error(string.format(
                     "[ERROR] Row validation failed in %s row %d: %s",
                     fileName, rowIndex, errorMsg))

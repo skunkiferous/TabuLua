@@ -426,6 +426,21 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         return
     end
     findAllTypes(extends, typesSet, enumsSet)
+    -- Check that files referenced in Files.tsv actually exist on disk
+    local filesOnDisk = {}
+    for _, file_name in ipairs(files) do
+        filesOnDisk[computeFilenameKey(file_name, file2dir)] = true
+    end
+    for lcfn, _ in pairs(lcFn2Type) do
+        if not filesOnDisk[lcfn] and not isFilesDescriptor(lcfn) then
+            badVal.source_name = "Files.tsv"
+            badVal.line_no = 0
+            badVal.col_name = ""
+            badVal.col_idx = 0
+            badVal.col_types = {}
+            badVal(lcfn, "file listed in Files.tsv does not exist")
+        end
+    end
     orderFilesByPriorities(files, priorities)
     local tsv_files = {}
     for _, desc_file in ipairs(desc_files) do

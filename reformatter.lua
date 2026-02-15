@@ -33,6 +33,11 @@ if arg then
             local level = LOG_LEVELS[levelName:lower()]
             if level then
                 named_logger.setGlobalLevel(level)
+            else
+                -- Invalid log level: suppress module initialization noise
+                -- by setting to ERROR. The actual error is reported later
+                -- during full argument validation.
+                named_logger.setGlobalLevel(named_logger.ERROR)
             end
             break
         end

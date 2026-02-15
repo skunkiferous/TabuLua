@@ -1,4 +1,4 @@
 TS	ERROR	[reformatter]	Reformatting errors: 1
-TS	ERROR	[tsv_model]	Bad string extra, col 3 in {DIR}/Data.tsv on line 2 (item1): 'nil'
+TS	ERROR	[tsv_model]	Bad string extra, col 3 in {DIR}/Data.tsv on line 2 (item1): 'nil' (row has 2 columns but header defines 3 -- column 'extra' is missing)
 TS	WARN	[reformatter]	Content of {DIR}/Data.tsv has changed
 TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

@@ -1,21 +1,4 @@
 
 TS	ERROR	[reformatter]	Unknown log level: banana
 TS	ERROR	[reformatter]	Valid levels: debug, info, warn, error, fatal
-TS	INFO	[parsers]	Registered alias: any -> {type,self._1}
-TS	INFO	[parsers]	Registered alias: byte -> integer._R_GE_I_128_LE_I127
-TS	INFO	[parsers]	Registered alias: custom_type_def -> {max:number|nil,maxLen:integer|nil,members:{name}|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,validate:string|nil,values:{string}|nil}
-TS	INFO	[parsers]	Registered alias: error_level -> {enum:error|warn}
-TS	INFO	[parsers]	Registered alias: int -> integer._R_GE_I_2147483648_LE_I2147483647
-TS	INFO	[parsers]	Registered alias: number_type -> {extends:number}
-TS	INFO	[parsers]	Registered alias: package_id -> name
-TS	INFO	[parsers]	Registered alias: raw -> boolean|number|table|string|nil
-TS	INFO	[parsers]	Registered alias: short -> integer._R_GE_I_32768_LE_I32767
-TS	INFO	[parsers]	Registered alias: super_type -> type_spec|nil
-TS	INFO	[parsers]	Registered alias: tagged_number -> {number_type,self._1}
-TS	INFO	[parsers]	Registered alias: ubyte -> integer._R_GE_I0_LE_I255
-TS	INFO	[parsers]	Registered alias: uint -> integer._R_GE_I0_LE_I4294967295
-TS	INFO	[parsers]	Registered alias: ushort -> integer._R_GE_I0_LE_I65535
-TS	INFO	[parsers]	Registered alias: validator_spec -> expression|{expr:expression,level:error_level|nil}
-TS	INFO	[parsers]	Registered core parsers: ascii, asciimarkdown, asciitext, base64bytes, boolean, boolean|number|table|string|nil, cmp_version, comment, error_level|nil, expression, expression|{expr:expression,level:error_level|nil}, float, hexbytes, http, identifier, integer, integer._R_GE_I0_LE_I255, integer._R_GE_I0_LE_I4294967295, integer._R_GE_I0_LE_I65535, integer._R_GE_I_128_LE_I127, integer._R_GE_I_2147483648_LE_I2147483647, integer._R_GE_I_32768_LE_I32767, integer|nil, long, markdown, name, nil, number, number|nil, percent, quantity, ratio, regex, string, string|nil, table, text, true, type, type_spec, type_spec|nil, version, {enum:error|warn}, {expr:expression,level:error_level|nil}, {extends,number}, {extends:number}, {max:number|nil,maxLen:integer|nil,members:{name}|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,validate:string|nil,values:{string}|nil}, {name:percent}, {name}, {name}|nil, {number_type,self._1}, {string}, {string}|nil, {type,self._1}
-TS	INFO	[reformatter]	reformatter version: 0.7.0
 Use 'lua reformatter.lua' without arguments to see usage.

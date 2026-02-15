@@ -1,12 +1,6 @@
-	(...tail calls...)
-	./error_reporting.lua:201: in function <./error_reporting.lua:183>
-	./manifest_loader.lua:311: in upvalue 'processSingleTSVFile'
-	./manifest_loader.lua:351: in upvalue 'loadOtherFiles'
-	./manifest_loader.lua:434: in upvalue 'processOrderedFiles'
-	./manifest_loader.lua:731: in field 'processFiles'
-	[C]: in ?
-	[C]: in function 'error'
-	reformatter.lua:400: in local 'processFiles'
-	reformatter.lua:584: in main chunk
-LUA: C:/lua/systree/share/lua/5.4/sandbox.lua:148: [string "return (1 + + 2)"]:1: unexpected symbol near '+'
-stack traceback:
+TS	ERROR	[reformatter]	Reformatting errors: 4
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 2 (item1): '=1 + + 2'
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 2 (item1): '=1 + + 2' (Failed to evaluate: unexpected symbol near '+')
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 3 (item2): '=((3 * 4)'
+TS	ERROR	[tsv_model]	Bad float value, col 2 in {DIR}/Data.tsv on line 3 (item2): '=((3 * 4)' (Failed to evaluate: ')' expected near <eof>)
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

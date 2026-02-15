@@ -177,9 +177,9 @@ describe("parsers - enum types", function()
       assert_equals_2(nil, "true", parser(badVal, true))
 
       assert.same({
-        "Bad {enum:east|north|south|west}  in test on line 1: 'Invalid'",
-        "Bad {enum:east|north|south|west}  in test on line 1: '123'",
-        "Bad {enum:east|north|south|west}  in test on line 1: 'true'"
+        "Bad {enum:east|north|south|west}  in test on line 1: 'Invalid' (valid values: East, North, South, West)",
+        "Bad {enum:east|north|south|west}  in test on line 1: '123' (valid values: East, North, South, West)",
+        "Bad {enum:east|north|south|west}  in test on line 1: 'true' (valid values: East, North, South, West)"
       }, log_messages)
     end)
   end)
@@ -211,8 +211,8 @@ describe("parsers - enum types", function()
         assert.is_nil(parser(badVal, "Green"))
         assert.is_nil(parser(badVal, "Yellow"))
         assert.same({
-            'Bad {enum:blue|red}  in test on line 1: \'Green\'',
-            'Bad {enum:blue|red}  in test on line 1: \'Yellow\''
+            'Bad {enum:blue|red}  in test on line 1: \'Green\' (valid values: Blue, Red)',
+            'Bad {enum:blue|red}  in test on line 1: \'Yellow\' (valid values: Blue, Red)'
         }, log_messages)
     end)
 
@@ -305,8 +305,8 @@ describe("parsers - enum types", function()
         assert.is_nil(parser2(badVal, "D"))
 
         assert.same({
-            'Bad {enum:a|b}  in test on line 1: \'C\'',
-            'Bad {enum:a|b}  in test on line 1: \'D\''
+            'Bad {enum:a|b}  in test on line 1: \'C\' (valid values: A, B)',
+            'Bad {enum:a|b}  in test on line 1: \'D\' (valid values: A, B)'
         }, log_messages)
     end)
   end)

@@ -1,1 +1,3 @@
+TS	ERROR	[reformatter]	Files.tsv on line 0 (Files.tsv): 'ghost.tsv' (file listed in Files.tsv does not exist)
+TS	ERROR	[reformatter]	Reformatting errors: 1
 TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

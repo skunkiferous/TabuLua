@@ -78,7 +78,7 @@ describe("parsers - tuple types", function()
       assert.is.not_nil(tupleParser, "tupleParser is nil")
       assert_equals_2({1,true,"way"}, '1,true,"way"', tupleParser(badVal, "1,'yes','way'"))
       assert_equals_2(nil, '42,"nope","a"', tupleParser(badVal, '42,"nope","a"'))
-      assert.same({"Bad boolean  in test on line 1: 'nope'"}, log_messages)
+      assert.same({"Bad boolean  in test on line 1: 'nope' (expected 'true', 'false', 'yes', 'no', '1', or '0')"}, log_messages)
     end)
 
     it("should validate tuples with optional fields", function()
