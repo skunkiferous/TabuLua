@@ -5,7 +5,7 @@ local NAME = "export_tester"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 7, 0)
+local VERSION = semver(0, 8, 0)
 
 -- Dependencies
 local read_only = require("read_only")
