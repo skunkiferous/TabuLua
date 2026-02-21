@@ -224,7 +224,7 @@ end
 -- Function to get all files and sub-directories in a directory
 -- Search is recursive, only if recursively is true
 -- On error, returns nil and the error message
-local function getFilesAndDirs(directory, recursively)
+local function getFilesAndDirs(directory, recursively, opt_logger)
     recursively = recursively or false
     if directory == nil or directory == "" then
         return nil, "directory is nil/empty-string"
@@ -241,17 +241,23 @@ local function getFilesAndDirs(directory, recursively)
     end
     for _,file in ipairs(dir_content) do
         if file ~= "." and file ~= ".." then
-            local path = directory .. "/" .. file
-            if isDir(path) then
-                dirs_set[path] = true
+            if file:sub(1, 1) == "." then
+                if opt_logger then
+                    opt_logger:info("Skipping hidden entry: " .. directory .. "/" .. file)
+                end
             else
-                files_set[path] = true
+                local path = directory .. "/" .. file
+                if isDir(path) then
+                    dirs_set[path] = true
+                else
+                    files_set[path] = true
+                end
             end
         end
     end
     if recursively then
         for _,dir in ipairs(setToSeq(dirs_set)) do
-            local new_files, new_dirs = getFilesAndDirs(dir, true)
+            local new_files, new_dirs = getFilesAndDirs(dir, true, opt_logger)
             if not new_files then
                 -- new_dirs contains the error message
                 return nil, new_dirs
@@ -262,7 +268,7 @@ local function getFilesAndDirs(directory, recursively)
             for _, new_dir in ipairs(new_dirs) do
                 dirs_set[new_dir] = true
             end
-        end 
+        end
     end
     local files = setToSeq(files_set)
     table.sort(files)
@@ -422,7 +428,7 @@ local function collectFiles(directories, extensions, file2dir, opt_logger)
                 if opt_logger then
                     opt_logger:info("Checking files in directory: " .. directory)
                 end
-                local files, err = getFilesAndDirs(directory, true)
+                local files, err = getFilesAndDirs(directory, true, opt_logger)
                 if files then
                     for _, file in ipairs(files) do
                         for _, ext in ipairs(extensions) do

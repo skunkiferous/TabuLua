@@ -259,6 +259,28 @@ describe("file_util", function()
           assert.is_true(table.concat(files, ","):find("file1.txt") ~= nil)
           assert.is_true(table.concat(files, ","):find("file3.txt") ~= nil)
       end)
+
+      it("should ignore hidden files (names starting with '.')", function()
+          file_util.writeFile(path_join(temp_dir, "visible.txt"), "content")
+          file_util.writeFile(path_join(temp_dir, ".hidden.txt"), "hidden")
+
+          local files, errors = file_util.collectFiles({temp_dir}, {"txt"})
+          assert.is_nil(errors)
+          assert.same(1, #files)
+          assert.is_true(files[1]:find("visible%.txt") ~= nil)
+      end)
+
+      it("should ignore hidden directories and their contents", function()
+          local hidden_dir = path_join(temp_dir, ".hidden_dir")
+          lfs.mkdir(hidden_dir)
+          file_util.writeFile(path_join(temp_dir, "visible.txt"), "content")
+          file_util.writeFile(path_join(hidden_dir, "inside.txt"), "hidden")
+
+          local files, errors = file_util.collectFiles({temp_dir}, {"txt"})
+          assert.is_nil(errors)
+          assert.same(1, #files)
+          assert.is_true(files[1]:find("visible%.txt") ~= nil)
+      end)
   end)
 
   describe("deleteTempDir", function()

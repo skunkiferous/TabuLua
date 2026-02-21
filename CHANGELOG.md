@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Directory exploration now automatically skips hidden files and directories (names
+  starting with `"."`, e.g. `.git`, `.env`). Skipped entries are logged at INFO level.
+
 ### Changed
 
 ### Fixed
