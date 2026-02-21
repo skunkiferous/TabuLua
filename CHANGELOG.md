@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- `normalizePath` now returns `"."` instead of `""` when a relative path resolves to
+  the current directory (e.g. `"."`, `"./"`, `"a/.."`)
+
 ## [0.8.0] - 2026-02-15
 
 ### Added

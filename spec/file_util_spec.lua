@@ -98,6 +98,13 @@ describe("file_util", function()
       assert.equal("../bin", file_util.normalizePath("../bin"))
       assert.equal("bin", file_util.normalizePath("./bin"))
     end)
+
+    it("should return '.' for paths that resolve to the current directory", function()
+      assert.equal(".", file_util.normalizePath("."))
+      assert.equal(".", file_util.normalizePath("./"))
+      assert.equal(".", file_util.normalizePath("a/.."))
+      assert.equal(".", file_util.normalizePath("a/b/../.."))
+    end)
   end)
 
   describe("hasExtension", function()

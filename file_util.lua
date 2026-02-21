@@ -106,13 +106,16 @@ local function normalizePath(path)
     end
     
     -- Reconstruct the path
+    if #parts == 0 and not absolute then
+        return "."
+    end
     path = table.concat(parts, "/")
-    
+
     -- Ensure absolute paths start with "/"
     if absolute and path:sub(1, 1) ~= "/" and not path:match("^%a:/") then
         path = "/" .. path
     end
-    
+
     return path
 end
 
