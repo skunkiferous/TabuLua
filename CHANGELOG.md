@@ -16,6 +16,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Files referenced in `Files.tsv` that live in subdirectories of the package were
+  falsely reported as "file listed in Files.tsv does not exist" when the reformatter
+  was invoked with `"."` as the data directory. `getFilesAndDirs` normalises its
+  directory argument at each recursive level, so `"./Resource"` becomes `"Resource"`
+  internally; the old `computeFilenameKey` then performed a blind `sub(#dir + 2)` that
+  silently dropped the first two characters of every sub-directory path
+  (e.g. `"Resource/Bulk/…"` → `"source/Bulk/…"`), producing keys that never matched
+  the entries read from `Files.tsv`. Fixed in `manifest_loader` by using
+  `normalizePath` on both the discovered file path and its source directory before
+  computing the relative key, so `"./"` is stripped consistently regardless of
+  recursion depth.
+- Missing-file errors (files listed in `Files.tsv` that do not exist on disk) now
+  report the correct row number within `Files.tsv` instead of always saying `line 0`.
+  The row index is now stored in a new `lcFn2LineNo` map in `files_desc` as each
+  `Files.tsv` entry is processed, and propagated through `loadDescriptorFiles` to
+  the error reporter.
+- Missing-file errors no longer include a stale `row_key` (the name of the last
+  successfully-processed row) in the error context. `badVal.row_key` is now
+  explicitly cleared before each "does not exist" report.
+
 - `normalizePath` now returns `"."` instead of `""` when a relative path resolves to
   the current directory (e.g. `"."`, `"./"`, `"a/.."`)
 - `parse_type_union` crashed with an assertion ("on error, at least one badVal must be

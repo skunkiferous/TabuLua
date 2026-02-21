@@ -28,6 +28,7 @@ local file_util = require("file_util")
 local collectFiles = file_util.collectFiles
 local readFile = file_util.readFile
 local hasExtension = file_util.hasExtension
+local normalizePath = file_util.normalizePath
 
 local tsv_model = require("tsv_model")
 local processTSV = tsv_model.processTSV
@@ -284,8 +285,18 @@ end
 
 -- Computes the lowercase file name key relative to its directory
 local function computeFilenameKey(file_name, file2dir)
-    -- We add +1 because Lua arrays start at 1, and +1 because we skip the separator
-    return file_name:sub(#file2dir[file_name] + 2):lower()
+    local dir = normalizePath(file2dir[file_name]) or ""
+    local nfile = normalizePath(file_name) or file_name
+    -- When directory is "." (CWD), normalizePath strips any leading "./" from the
+    -- file name, so the key is simply the normalized relative path.
+    if dir == "." or dir == "" then
+        return nfile:lower()
+    end
+    local prefix = dir .. "/"
+    if nfile:sub(1, #prefix) == prefix then
+        return nfile:sub(#prefix + 1):lower()
+    end
+    return nfile:lower()
 end
 
 -- Processes a single TSV/CSV file: reads, parses, and registers types/enums if applicable
@@ -416,10 +427,11 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- Validator maps
     local lcFn2RowValidators = {}
     local lcFn2FileValidators = {}
+    local lcFn2LineNo = {}
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
         post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        lcFn2RowValidators, lcFn2FileValidators,
+        lcFn2RowValidators, lcFn2FileValidators, lcFn2LineNo,
         raw_files, loadEnv, badVal)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
@@ -434,7 +446,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     for lcfn, _ in pairs(lcFn2Type) do
         if not filesOnDisk[lcfn] and not isFilesDescriptor(lcfn) then
             badVal.source_name = "Files.tsv"
-            badVal.line_no = 0
+            badVal.line_no = lcFn2LineNo[lcfn] or 0
+            badVal.row_key = ""
             badVal.col_name = ""
             badVal.col_idx = 0
             badVal.col_types = {}

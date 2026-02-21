@@ -595,6 +595,102 @@ info1	42
       assert.is_not_nil(result)
     end)
 
+    -- -----------------------------------------------------------------------
+    -- Regression tests for the "files in subdirectories not found" bug and
+    -- the "line 0 in missing-file errors" bug.
+    -- -----------------------------------------------------------------------
+
+    it("should correctly find files that live in subdirectories of the package", function()
+      -- Bug: getFilesAndDirs normalises its directory argument at each recursive
+      -- level, so "./Resource" becomes "Resource" internally.  The old
+      -- computeFilenameKey did a blind sub(#dir + 2) which dropped leading
+      -- characters from the path, producing keys like "source/Bulk/..." that
+      -- never matched the entries from Files.tsv.
+      local pkg_dir = path_join(temp_dir, "subdirpkg")
+      assert(lfs.mkdir(pkg_dir))
+      local sub_dir = path_join(pkg_dir, "Sub")
+      assert(lfs.mkdir(sub_dir))
+
+      local MANIFEST_SUBDIR = [[package_id:package_id	SubDirPkg
+name:string	Subdirectory Package
+version:version	0.1.0
+description:markdown	Package with a file in a subdirectory
+]]
+      -- Files.tsv references a file one level down inside the package.
+      local FILES_SUBDIR = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+                           "Sub/Data.tsv\tSubData\t\ttrue\t\t\t1\tData in subdirectory\n"
+      local DATA_SUBDIR = "name:identifier\tvalue:number\nitem1\t100\n"
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_SUBDIR))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_SUBDIR))
+      assert.is_true(file_util.writeFile(path_join(sub_dir, "Data.tsv"), DATA_SUBDIR))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+
+      assert.is_not_nil(result)
+      assert.equals(0, badVal.errors,
+        "No errors expected — Sub/Data.tsv exists and should be found.\n" ..
+        "Messages: " .. table.concat(log_messages, "\n"))
+    end)
+
+    it("should report non-zero line numbers for files listed in Files.tsv that do not exist", function()
+      -- Bug: the file-existence check hardcoded badVal.line_no = 0 because it
+      -- iterated over lcFn2Type (an unordered map) without any line number
+      -- information. The fix stores the row index (i) while parsing Files.tsv.
+      -- Additionally the stale badVal.row_key (left over from TSV processing)
+      -- was not cleared, causing misleading context in the error messages.
+      local pkg_dir = path_join(temp_dir, "missingpkg")
+      assert(lfs.mkdir(pkg_dir))
+
+      local MANIFEST_MISSING = [[package_id:package_id	MissingPkg
+name:string	Missing File Package
+version:version	0.1.0
+description:markdown	Package that references a non-existent file
+]]
+      -- Row 2 (i=2): Present.tsv — this file will exist on disk.
+      -- Row 3 (i=3): Missing.tsv — this file will NOT exist on disk.
+      -- If the row-tracking fix works the error should say "line 3", not "line 0".
+      local FILES_MISSING = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+                            "Present.tsv\tPresentData\t\ttrue\t\t\t1\tPresent file\n" ..
+                            "Missing.tsv\tMissingData\t\ttrue\t\t\t2\tMissing file\n"
+      local DATA_PRESENT = "name:identifier\tvalue:number\nitem1\t100\n"
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_MISSING))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_MISSING))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Present.tsv"), DATA_PRESENT))
+      -- Deliberately do NOT create Missing.tsv.
+
+      manifest_loader.processFiles({pkg_dir}, badVal)
+
+      assert.is_true(badVal.errors > 0, "Should report an error for the missing file")
+
+      -- The error message must mention "missing.tsv", say "does not exist",
+      -- and must NOT say "line 0".
+      local found_error = false
+      local has_nonzero_line = false
+      local has_no_stale_rowkey = true
+      for _, msg in ipairs(log_messages) do
+        local lmsg = msg:lower()
+        if lmsg:match("missing%.tsv") and lmsg:match("does not exist") then
+          found_error = true
+          has_nonzero_line = not lmsg:match("on line 0[^%d]")
+          -- The stale row_key bug would inject "(Present.tsv)" into the message;
+          -- with the fix, row_key is cleared so no parenthesised row key appears.
+          if msg:match("%(Present%.tsv%)") or msg:match("%(present%.tsv%)") then
+            has_no_stale_rowkey = false
+          end
+        end
+      end
+      assert.is_true(found_error, "Expected a 'does not exist' error for Missing.tsv.\n" ..
+        "Messages: " .. table.concat(log_messages, "\n"))
+      assert.is_true(has_nonzero_line, "Error line number should not be 0.\n" ..
+        "Messages: " .. table.concat(log_messages, "\n"))
+      assert.is_true(has_no_stale_rowkey, "Error must not contain a stale row_key from another file.\n" ..
+        "Messages: " .. table.concat(log_messages, "\n"))
+    end)
+
+    -- -----------------------------------------------------------------------
+
     it("should report errors through provided badVal", function()
       local pkg_dir = path_join(temp_dir, "errorpkg")
       assert(lfs.mkdir(pkg_dir))

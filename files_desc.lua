@@ -305,6 +305,7 @@ end
 -- @field lcFn2JoinedTypeName table: Map of lowercase filename to joined type name
 -- @field lcFn2RowValidators table: Map of lowercase filename to row validators list
 -- @field lcFn2FileValidators table: Map of lowercase filename to file validators list
+-- @field lcFn2LineNo table: Map of lowercase filename to line number in descriptor file
 -- @field fn2Idx table: Map of descriptor file to column indices
 -- @field log logger: Logger instance
 
@@ -329,6 +330,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcFn2JoinedTypeName = opts.lcFn2JoinedTypeName
     local lcFn2RowValidators = opts.lcFn2RowValidators
     local lcFn2FileValidators = opts.lcFn2FileValidators
+    local lcFn2LineNo = opts.lcFn2LineNo
     local fn2Idx = opts.fn2Idx
     local log = opts.log
 
@@ -359,6 +361,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                 checkTypeName(extends, file_name, fn, tn, st, log)
                 checkBaseType(file_name, fn, bt, st, log)
                 lcFn2Type[lcfn] = tn
+                lcFn2LineNo[lcfn] = i
                 lcFn2Ctx[lcfn] = row[publishContextIdx].parsed
                 if lcFn2Ctx[lcfn] == '' then
                     lcFn2Ctx[lcfn] = nil
@@ -548,7 +551,7 @@ end
 local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-    lcFn2RowValidators, lcFn2FileValidators,
+    lcFn2RowValidators, lcFn2FileValidators, lcFn2LineNo,
     raw_files, loadEnv, badVal)
     local desc_files = {}
     local max_prio = -math.huge
@@ -576,6 +579,7 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2JoinedTypeName = lcFn2JoinedTypeName,
         lcFn2RowValidators = lcFn2RowValidators,
         lcFn2FileValidators = lcFn2FileValidators,
+        lcFn2LineNo = lcFn2LineNo,
         fn2Idx = fn2Idx,
         log = log,
     }
