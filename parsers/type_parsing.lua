@@ -223,8 +223,14 @@ local function parse_type_union(badVal, xparsed, type_spec)
         local eb = badVal.errors
         fields_parsers[i] = parse_type(badVal, ti)
         if fields_parsers[i] == nil then
-            assert(badVal.errors > eb, "on error, at least one badVal must be logged: "
-                .. type_spec)
+            if badVal.errors == eb then
+                -- parse_type returned nil without logging: the member type was already
+                -- cached in UNKNOWN_TYPES from a prior file/column parse, so the error
+                -- was reported at that time and no duplicate is needed here.
+                local ti_spec = lpeg_parser.parsedTypeSpecToStr(ti)
+                assert(state.UNKNOWN_TYPES[ti_spec],
+                    "on error, at least one badVal must be logged: " .. type_spec)
+            end
             return nil
         end
         copy[i] = lpeg_parser.parsedTypeSpecToStr(ti)

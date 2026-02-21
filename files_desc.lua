@@ -81,14 +81,14 @@ local function matchDescriptorFiles(packages, descriptorFilesNames, log)
     local paths = {}
     local path2pkg_id = {}
     for package_id, package in pairs(packages) do
-        local path = getParentPath(package.path):lower()
+        local path = (getParentPath(package.path) or ""):lower()
         paths[#paths+1] = path
         path2pkg_id[path] = package_id
     end
     local result = {}
     local fail = false
     for _, file in ipairs(descriptorFilesNames) do
-        local parent = getParentPath(file):lower()
+        local parent = (getParentPath(file) or ""):lower()
         local package_id = path2pkg_id[parent]
         if package_id then
             result[file] = package_id

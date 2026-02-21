@@ -100,6 +100,33 @@ lua reformatter.lua
 
 Refer to [REFORMATTER.md](REFORMATTER.md) for the full list of export formats and options.
 
+### Running from a Separate Data Directory (Windows)
+
+If your data lives in its own repository or folder outside the TabuLua directory, copy [`reformatter_example.cmd`](reformatter_example.cmd) into your data directory and rename it to `reformatter.cmd`. Then open it and set the two variables at the top:
+
+```bat
+REM Path to your TabuLua installation
+set TABULUA_DIR=%~dp0..\TabuLua
+
+REM Lua 5.4 executable name (adjust if needed)
+set LUA=lua54
+```
+
+After that, run it from your data directory:
+
+```bat
+REM Validate and reformat files in-place
+reformatter.cmd .
+
+REM Export to JSON
+reformatter.cmd --file=json .
+
+REM Export to multiple formats
+reformatter.cmd --file=json --file=lua --export-dir=build\data .
+```
+
+The script sets `LUA_PATH` automatically so Lua can find all TabuLua modules — no changes to your system environment are needed.
+
 ### Programmatic Usage
 
 ```lua

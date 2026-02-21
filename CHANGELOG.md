@@ -15,6 +15,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - `normalizePath` now returns `"."` instead of `""` when a relative path resolves to
   the current directory (e.g. `"."`, `"./"`, `"a/.."`)
+- `parse_type_union` crashed with an assertion ("on error, at least one badVal must be
+  logged") when a union member type (e.g. `Metal.AtomicType|nil`) had already been
+  parsed and cached as unknown from a prior file or column. `parse_type` returns `nil`
+  silently for cached-unknown types (to avoid duplicate error messages), but the
+  assertion required that every `nil` return be accompanied by a new log entry. Fixed
+  by checking `state.UNKNOWN_TYPES` for the member spec before asserting: a silent nil
+  that matches a cached unknown is legitimate; only a nil with no cache entry is a
+  programming bug worth asserting.
+- `matchDescriptorFiles` crashed with "attempt to index a nil value" when a package
+  manifest was found at the root of the scanned directory (path like
+  `"./Manifest.transposed.tsv"`). `normalizePath` strips the leading `"./"`, leaving
+  a bare filename with no `"/"`, so `getParentPath` correctly returned `nil` but the
+  callers did not guard against it. Fixed by applying `or ""` at the two call sites in
+  `files_desc.lua` (lines 84 and 91), consistent with the same guard already present
+  in `manifest_info.lua`.
 
 ## [0.8.0] - 2026-02-15
 

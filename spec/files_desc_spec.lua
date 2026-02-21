@@ -168,6 +168,22 @@ describe("files_desc", function()
       local matches = files_desc.matchDescriptorFiles(modules, descriptors, nullLogger)
       assert.is_nil(matches)
     end)
+
+    it("should handle packages whose manifest sits at the scanned root (dot-prefixed path)", function()
+      -- Regression test: when the manifest file is found as "./Manifest.transposed.tsv",
+      -- normalizePath strips the leading "./" leaving a bare filename with no "/" in it.
+      -- getParentPath then returns nil (no parent component), which previously caused a
+      -- crash ("attempt to index a nil value") at the :lower() call.
+      local modules = {
+        core = {path = "./Manifest.transposed.tsv"}
+      }
+      local descriptors = {
+        "./files.tsv"
+      }
+      local matches = files_desc.matchDescriptorFiles(modules, descriptors)
+      assert.is_not_nil(matches)
+      assert.equals("core", matches["./files.tsv"])
+    end)
   end)
 
   describe("loadDescriptorFile", function()

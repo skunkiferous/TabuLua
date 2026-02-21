@@ -1,0 +1,7 @@
+TS	ERROR	[reformatter]	Bad record optional, col 3 in {DIR}/Data.tsv on line 0: '{name:identifier,optional:GhostType|nil,value:GhostType}' (field type is invalid: GhostType)
+TS	ERROR	[reformatter]	Bad record optional, col 3 in {DIR}/Data.tsv on line 0: '{name:identifier,optional:GhostType|nil,value:GhostType}' (field type is invalid: GhostType|nil)
+TS	ERROR	[reformatter]	Reformatting errors: 4
+TS	ERROR	[tsv_model]	Bad type_spec optional, col 3 in {DIR}/Data.tsv on line 1: 'GhostType|nil' (unknown problem)
+TS	ERROR	[tsv_model]	Bad type_spec value, col 2 in {DIR}/Data.tsv on line 1: 'GhostType' (unknown/bad type)
+TS	WARN	[manifest_loader]	Failed to register type Data = {name:identifier,optional:GhostType|nil,value:GhostType}
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

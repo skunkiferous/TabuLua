@@ -1,0 +1,4 @@
+package_id:package_id	test.type.union.unknown
+name:string	Test Unknown Type In Union
+version:version	1.0.0
+description:markdown	An unknown type that appears bare first, then inside a union
