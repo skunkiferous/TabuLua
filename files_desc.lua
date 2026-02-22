@@ -8,7 +8,7 @@ local logger = require( "named_logger").getLogger(NAME)
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 10, 0)
+local VERSION = semver(0, 11, 0)
 
 -- Returns the module version
 local function getVersion()
@@ -447,6 +447,8 @@ end
 -- Validates that sibling sub-types have consistent field types.
 -- When two types extend the same parent (are siblings), any fields with the same name
 -- must have the same type. This prevents ambiguity when working with the type hierarchy.
+-- Exception: if both sibling types for a field are valid subtypes of the parent's field
+-- type, the siblings may differ (each has narrowed the inherited field independently).
 -- @param extends table: Map of type name to parent type name (child -> parent)
 -- @param lcTypeNames table: Map of lowercase type name to list of descriptor file paths
 -- @param badVal table: Error reporting object
@@ -458,6 +460,11 @@ local function validateSiblingFieldTypes(extends, lcTypeNames, badVal)
             children[parentType] = {}
         end
         children[parentType][#children[parentType] + 1] = childType
+    end
+
+    -- Returns true if t equals or extends base (same-or-subtype check).
+    local function compatibleWith(t, base)
+        return t == base or parsers.extendsOrRestrict(t, base)
     end
 
     -- For each parent with multiple children, check field consistency
@@ -480,6 +487,7 @@ local function validateSiblingFieldTypes(extends, lcTypeNames, badVal)
             end
 
             -- Check for conflicts: same field name with different types
+            local parentFieldTypes = recordFieldTypes(parentType)
             for fieldName, typeMap in pairs(fieldsByName) do
                 local firstType = nil
                 local firstTypeName = nil
@@ -488,12 +496,19 @@ local function validateSiblingFieldTypes(extends, lcTypeNames, badVal)
                         firstType = fieldType
                         firstTypeName = typeName
                     elseif firstType ~= fieldType then
-                        -- Found a conflict!
-                        badVal.source_name = "type hierarchy"
-                        badVal.line_no = 0
-                        badVal(fieldName, "field has different types in sibling sub-types of '"
-                            .. parentType .. "': " .. firstTypeName .. " has '" .. firstType
-                            .. "' but " .. typeName .. " has '" .. fieldType .. "'")
+                        -- Types differ. Allow it if this field comes from the parent and
+                        -- each sibling's type is a valid subtype of the parent field type.
+                        local parentFieldType = parentFieldTypes and parentFieldTypes[fieldName]
+                        if not (parentFieldType
+                            and compatibleWith(firstType, parentFieldType)
+                            and compatibleWith(fieldType, parentFieldType)) then
+                            -- Found a genuine conflict!
+                            badVal.source_name = "type hierarchy"
+                            badVal.line_no = 0
+                            badVal(fieldName, "field has different types in sibling sub-types of '"
+                                .. parentType .. "': " .. firstTypeName .. " has '" .. firstType
+                                .. "' but " .. typeName .. " has '" .. fieldType .. "'")
+                        end
                     end
                 end
             end

@@ -304,6 +304,37 @@ The purpose is to build types using inheritance. Tuples are required to contain 
 {extends:vehicle,wheels:integer}
 ```
 
+### Field Redefinition in Child Record Types
+
+A child record type may **re-declare** a field that already exists in the parent, provided the child's declared type is a **compatible subtype** of the parent field's type. The re-declared field replaces the parent's definition for that field in the child type.
+
+```
+# Parent — value is any number, max is an optional number
+{name="Measurement",parent="{max:number|nil,unit:string,value:number}"}
+
+# Child — narrows value to float, keeps max optional
+{extends:Measurement,label:string,value:float}
+
+# Child — narrows value to float AND marks max as unused (always nil)
+{extends:Measurement,label:string,max:nil,value:float}
+```
+
+**Compatibility rules:**
+
+| Parent field type | Allowed child types | Notes |
+| --- | --- | --- |
+| `T` | `T` or any subtype of `T` | `integer` and `ubyte` are subtypes of `number` |
+| `T\|nil` | `T`, any subtype of `T`, or `nil` | `nil` marks the field as "unused" (column omission) |
+| `self.<field>` (self-ref) | *(not allowed)* | Self-ref fields cannot be re-declared |
+
+**Type compatibility for optional fields:** A non-nil type `T` is considered to extend `T|nil`. This means a child may narrow an optional parent field (`number|nil`) to a mandatory one (`float`), removing the ability to store nil.
+
+**Column omission (`max:nil`):** If the parent field is optional (`X|nil`) and the child declares the field as `nil`, the field is treated as permanently unused in the child type. Any value other than nil/empty is rejected. This pattern is useful when a general parent type has optional fields that a specific child type never uses.
+
+**Standalone `nil` as a field type:** `nil` is a valid field type in any record, but using it outside of an inheritance context (i.e., in a plain `{...}` record that does not use `extends`) generates a warning, since such a field can never hold a value.
+
+**Multi-level narrowing:** Re-declaration is validated against the immediate parent only, and the result is itself a valid type that can be further narrowed by grandchildren. For example, if parent has `x:number` and child narrows to `x:integer`, a grandchild may further narrow to `x:ubyte`.
+
 ### Bare Extends (Ancestor Constraint)
 
 The bare forms `{extends,<type>}` (tuple syntax) and `{extends:<type>}` (record syntax) — without additional fields — define a type whose values must be **names of registered types** extending the specified ancestor. This is useful for constraining a field to only accept type names from a specific type family.

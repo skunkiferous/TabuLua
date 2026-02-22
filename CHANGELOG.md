@@ -13,6 +13,54 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.11.0] - 2026-02-22
+
+### Added
+
+- **Column redefinition in child record types.** A child record (`{extends:Parent,...}`) may
+  now re-declare a field that already exists in the parent, provided the child's type is
+  compatible with (a subtype of) the parent's type. Two specialisations are supported:
+
+  - **Column narrowing**: Re-declare a field with a stricter type.
+    Example: parent has `critRate:float|nil`; child may re-declare as `critRate:float`
+    (mandatory) or `critRate:nil` (omitted). `float` extends `float|nil`, so it is accepted.
+  - **Column omission**: Re-declare a field as `nil` to permanently mark it as unused in that
+    subtype. The parser rejects any value supplied for a `nil`-typed field, and the field is
+    absent from output. Useful when a parent optional field has no meaning for a specific subtype.
+
+  Additional rules:
+  - The child's type must satisfy `extendsOrRestrict(childType, parentType)`.
+    `T` always extends `T|nil`, so narrowing an optional field to mandatory is allowed.
+  - Re-declaring a self-referencing parent field (`self.fieldname`) is disallowed (error).
+  - Multi-level narrowing is supported: `A.x:number → B.x:integer → C.x:ubyte`.
+  - `extendsOrRestrict` now returns `true` when a non-union child type extends any member of a
+    union parent type (e.g., `float` extends `number|nil`; `nil` extends `number|nil`).
+    This broadened check is also applied to `childUnionExtendsParent` comparisons.
+  - Sibling type validation (`validateSiblingFieldTypes`) now allows sibling subtypes to
+    independently narrow the same parent field, as long as both sibling types are subtypes of
+    the parent's field type.
+  - Using a standalone `nil` type in a **non-child** record emits a logger warning, since a
+    field that can never hold a value only makes sense in a child record (as an omission marker).
+
+- **Tutorial extended** to showcase column redefinition and omission (v0.11.0) together with
+  custom type definition files (v0.10.0):
+  - `tutorial/core/CoreTypes.tsv` — new custom type definition file registering `BaseStats`,
+    `Point2D`, and the new `FlexStats` type (which adds an optional `critRate:float|nil` field).
+    `BaseStats` and `Point2D` are moved here from the core manifest.
+  - `tutorial/expansion/ExpansionTypes.tsv` — new custom type definition file registering
+    `bossLevel` and `bossHp` (moved from expansion manifest) plus two new types:
+    - `BossStats` — extends `FlexStats`, marks `critRate` as **omitted** (`critRate:nil`).
+    - `EliteBossStats` — extends `FlexStats`, **narrows** `critRate` from `float|nil` to
+      mandatory `float`.
+  - `tutorial/expansion/Boss.tsv` — `bossStats` column changed from an inline
+    `{extends:BaseStats,...}` spec to `BossStats|EliteBossStats`. Three existing bosses
+    (no `critRate`) parse as `BossStats`; a new fourth boss `arachnidQueen` (with
+    `critRate=0.35`) parses as `EliteBossStats`.
+
+### Changed
+
+### Fixed
+
 ## [0.10.0] - 2026-02-22
 
 ### Added

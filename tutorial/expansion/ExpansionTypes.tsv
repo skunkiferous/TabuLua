@@ -1,0 +1,18 @@
+name:name	parent:type_spec|nil	min:number|nil	validate:string|nil	description:text
+# ^ This file demonstrates THREE v0.10.0 / v0.11.0 features together:
+# ^
+# ^ 1. CUSTOM TYPE DEFINITION FILE (v0.10.0)
+# ^    bossLevel and bossHp are moved here from the expansion manifest,
+# ^    showing that complex or numerous custom types can live in a dedicated TSV file.
+# ^
+# ^ 2. COLUMN REDEFINITION – NARROWING (v0.11.0)
+# ^    EliteBossStats extends FlexStats (from core CoreTypes.tsv) and redeclares
+# ^    critRate:float|nil as critRate:float, making crit rate MANDATORY for elite bosses.
+# ^
+# ^ 3. COLUMN OMISSION (v0.11.0)
+# ^    BossStats extends FlexStats and redeclares critRate:float|nil as critRate:nil,
+# ^    permanently marking the field as unused (bosses fight differently; no crit mechanic).
+bossLevel	level	50		Boss level range (extends core 'level', restricts to min 50)
+bossHp	hitPoints		value >= 1000 or 'boss HP must be at least 1000'	Boss hit points (extends core 'hitPoints', expression validator)
+BossStats	{critRate:nil,enrageThreshold:integer,extends:FlexStats}			Standard boss stats: inherits FlexStats fields, adds enrageThreshold, marks critRate as UNUSED (column omission)
+EliteBossStats	{critRate:float,enrageThreshold:integer,extends:FlexStats}			Elite boss stats: inherits FlexStats fields, adds enrageThreshold, narrows critRate from float|nil to mandatory float (column redefinition)

@@ -1,0 +1,10 @@
+name:name	parent:type_spec|nil	description:text
+# ^ This file demonstrates the "custom type definition file" feature (v0.10.0).
+# ^ Types defined here are registered automatically during package loading, exactly
+# ^ as if they had been listed in the manifest's custom_types field.
+# ^ 'BaseStats' and 'Point2D' are moved here from the manifest so that the manifest
+# ^ keeps only scalar / constraint-based custom types.  At least one custom type
+# ^ (gold, hitPoints, …) remains in the manifest to show both mechanisms.
+BaseStats	{attack:integer,defense:integer,speed:integer}	Named record alias for creature combat stats (attack / defense / speed)
+Point2D	{float,float}	Named tuple alias for a 2-D coordinate (x, y)
+FlexStats	{attack:integer,critRate:float|nil,defense:integer,speed:integer}	Extended stats record with an optional critical-hit rate (nil = not applicable)

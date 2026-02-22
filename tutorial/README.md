@@ -1,6 +1,6 @@
 # Chronicles of Tabulua - Tutorial
 
-A comprehensive tutorial for **TabuLua** (v0.5.2), themed as an RPG game data system.
+A comprehensive tutorial for **TabuLua** (v0.11.0), themed as an RPG game data system.
 It demonstrates virtually every feature of the TabuLua typed TSV format through two
 interconnected packages: a core game and an expansion mod.
 
@@ -16,6 +16,7 @@ tutorial/
   core/                              # Package: tutorial.core (base game)
     Manifest.transposed.tsv          # Package manifest with custom types
     Files.tsv                        # File registry with validators
+    CoreTypes.tsv                    # Custom type definition file (v0.10.0)
     Element.tsv                      # Enum: elemental damage types
     Rarity.tsv                       # Enum: item rarity tiers
     Constant.tsv                     # Published game constants + expressions
@@ -32,8 +33,9 @@ tutorial/
   expansion/                         # Package: tutorial.expansion (mod)
     Manifest.transposed.tsv          # Dependencies + custom type chaining
     Files.tsv                        # Expansion file registry
+    ExpansionTypes.tsv               # Custom types with column redefinition and omission (v0.11.0)
     BossType.tsv                     # Enum: boss encounter types
-    Boss.tsv                         # Bosses: type inheritance (extends)
+    Boss.tsv                         # Bosses: type inheritance + column redefinition
     ExpansionItem.tsv                # Cross-package type references
     ExpansionSpell.tsv               # Expansion library expressions
     libs/
@@ -81,22 +83,42 @@ In this tutorial, we define `gameGenre` and `targetAudience` as custom fields to
 this capability. Custom fields generate a warning during loading (to alert about typos)
 but are otherwise fully supported.
 
-**Custom types defined here:**
+**Custom types defined here** (scalar / enum types and the `CurrencyType` tag; complex record/tuple
+types have been moved to `CoreTypes.tsv` — see next section):
+
 | Type | Parent | Constraints | Rationale |
-|------|--------|-------------|-----------|
+| --- | --- | --- | --- |
 | `gold` | `uint` | (none) | Simple alias. Game currencies are non-negative integers, so `uint` (0 to 4,294,967,295) fits naturally. Aliasing it as `gold` makes column definitions self-documenting. |
 | `hitPoints` | `integer` | `min=0` | HP cannot be negative. Using `integer` with `min=0` gives the full positive integer range. |
 | `level` | `ubyte` | `min=1, max=99` | Levels are small positive numbers. Chaining onto `ubyte` (0-255) and restricting to 1-99 demonstrates numeric range constraints. |
 | `itemCode` | `ascii` | `minLen=3, maxLen=50`, `pattern=^[A-Z]{3}%-[0-9]+$` | Item catalog codes follow a strict format (e.g., `SWD-001`). This demonstrates string constraints: min/max length and regex pattern validation. |
 | `evenLevel` | `integer` | `validate="value >= 0 and value % 2 == 0"` | Demonstrates expression-based validation. The Lua expression is evaluated at parse time. |
-| `BaseStats` | `{attack:integer,...}` | (none) | Named record type alias. Defined here so that the expansion can **extend** it with additional fields (see Boss.tsv). |
-| `Point2D` | `{float,float}` | (none) | Named tuple type alias. Defined here so that the expansion can **extend** it to 3D (see Boss.tsv). |
 | `CurrencyType` | `number` | `members={"gold"}` | **Type tag**: a named group of types. Accepts only `gold` (and subtypes). The expansion extends this tag with `bossGem`, demonstrating cross-package tag merging. |
 
 **Code library:** `gameLib` loaded from `libs/gameLib.lua`, providing math utilities
 (`circleArea`, `lerp`, `clamp`, `percentToMultiplier`) available in expressions and COG blocks.
 
 **Package validator:** A `warn`-level check that the package contains at least one data file.
+
+---
+
+#### CoreTypes.tsv (Custom Type Definition File)
+
+A dedicated custom type definition file (v0.10.0 feature), registered in `Files.tsv` with
+`typeName=custom_type_def` and `loadOrder=5`. Each row in this file is automatically registered
+as a custom type, without needing inline `custom_types` entries in the manifest.
+
+**Types defined here:**
+
+| Type | Parent | Purpose |
+| --- | --- | --- |
+| `BaseStats` | `{attack:integer,defense:integer,speed:integer}` | Named record alias for standard creature stats. Defined here so that the expansion can **extend** it. |
+| `Point2D` | `{float,float}` | Named tuple alias for 2D coordinates. Defined here so the expansion can **extend** it to 3D. |
+| `FlexStats` | `{attack:integer,critRate:float\|nil,defense:integer,speed:integer}` | Extended stat block with an **optional** `critRate` field. Used by the expansion as the parent for `BossStats` and `EliteBossStats`, demonstrating column omission and column redefinition (v0.11.0). |
+
+*Rationale:* Moving complex record/tuple type definitions out of the manifest into a dedicated file
+keeps the manifest concise and makes the type definitions themselves easier to review. Types defined
+here are available to all files loaded after this file (including the expansion package).
 
 ---
 
@@ -374,23 +396,52 @@ extend, and reuse types from a core package.
 **Custom field:** `contentRating` demonstrates that expansion manifests can also have
 user-defined fields (e.g., for age ratings, mod categories, or other metadata).
 
-**Custom types demonstrating type chaining:**
+**Custom types defined inline** (scalar / enum types only; complex boss stat record types have
+been moved to `ExpansionTypes.tsv` — see below):
 
 | Type | Parent | Constraints | Rationale |
-|------|--------|-------------|-----------|
-| `bossLevel` | `level` | `min=50, max=99` | **Chained custom type**: `level` itself extends `ubyte` with min=1, max=99. `bossLevel` further restricts to min=50. This demonstrates type inheritance chains. |
-| `bossHp` | `hitPoints` | `validate="value >= 1000"` | Extends core's `hitPoints` (min=0) with an expression validator ensuring bosses have at least 1000 HP. |
+| --- | --- | --- | --- |
 | `advancedElement` | `{enum:Fire\|Light\|Shadow}` | (inline enum) | A focused subset of elements for shadow realm content. Defined as an inline enum rather than restricting the core Element enum. |
 | `bossGem` | `uint` | (none) | A new numeric currency type for the expansion (boss encounter rewards). |
+| `intTypeName` | `{extends,integer}` | (bare extends) | Accepts only names of types that extend `integer` (e.g., `hitPoints`, `bossHp`, `bossLevel`, `ubyte`). Demonstrates the ancestor-constraint syntax. |
 | `CurrencyType` | `number` | `members={"bossGem"}` | **Cross-package tag merge**: extends core's `CurrencyType` tag with the new `bossGem` member. After merging, `CurrencyType` accepts both `gold` (from core) and `bossGem` (from expansion). |
 
 ---
 
 #### Files.tsv
 
-Registers expansion data files. Note the **row validator** on ExpansionItem.tsv:
-`"self.price > 0 or 'price must be positive'"`, showing that validators work
-identically in expansion packages.
+Registers expansion data files. Notable entries:
+
+- **ExpansionTypes.tsv** has `typeName=custom_type_def` and `loadOrder=5`, registering each
+  of its rows as a custom type — the same mechanism as `CoreTypes.tsv` in the core package.
+- **ExpansionItem.tsv** has a **row validator**: `"self.price > 0 or 'price must be positive'"`,
+  showing that validators work identically in expansion packages.
+
+---
+
+#### ExpansionTypes.tsv (Custom Type Definition File + Column Redefinition)
+
+A custom type definition file demonstrating three v0.10.0 / v0.11.0 features together.
+
+**Types defined here:**
+
+| Type | Parent | Feature |
+| --- | --- | --- |
+| `bossLevel` | `level` (min=50) | **Chained custom type**: `level` extends `ubyte` with min=1, max=99; `bossLevel` further restricts to min=50. |
+| `bossHp` | `hitPoints` (validate>=1000) | **Expression validator**: extends core's `hitPoints` (min=0), ensuring bosses have at least 1000 HP. |
+| `BossStats` | `{extends:FlexStats, critRate:nil, enrageThreshold:integer}` | **Column omission (v0.11.0)**: inherits `FlexStats` fields, marks `critRate` as permanently unused by re-declaring it as `nil`. Standard bosses have no crit mechanic. |
+| `EliteBossStats` | `{extends:FlexStats, critRate:float, enrageThreshold:integer}` | **Column narrowing (v0.11.0)**: inherits `FlexStats` fields, **narrows** `critRate` from `float\|nil` (optional) to `float` (mandatory). Elite bosses always have a critical hit rate. |
+
+**Column Omission** (`BossStats`): When a child record re-declares an inherited field as `nil`,
+that field is permanently marked as unused. The parser rejects any value provided for it, and
+the field is absent from the output. This is useful when a parent type defines an optional field
+that does not apply to a specific subtype.
+
+**Column Narrowing** (`EliteBossStats`): When a child record re-declares an inherited field with
+a more specific type (here `float` narrowing `float|nil`), the child's type must be compatible
+with (a subtype of) the parent's type. The child's stricter parser is used for that field.
+
+Both types extend `FlexStats` from `CoreTypes.tsv`, demonstrating cross-file type extension.
 
 ---
 
@@ -403,31 +454,34 @@ Defines three boss encounter categories: Guardian, Overlord, Ancient.
 
 ---
 
-#### Boss.tsv (Type Inheritance)
+#### Boss.tsv (Type Inheritance + Column Redefinition)
 
-The most advanced file in the tutorial, demonstrating **type inheritance** and
-**cross-package references**.
+Demonstrates **type inheritance**, **cross-package references**, and **column redefinition**
+via a union of two named record types (`BossStats|EliteBossStats`).
 
 **Key columns:**
 
 | Column | Type | Feature |
-|--------|------|---------|
+| --- | --- | --- |
 | `bossType` | `BossType` | References expansion's own enum |
 | `level` | `bossLevel` | Chained custom type (expansion -> core -> ubyte) |
 | `hitPoints` | `bossHp` | Custom type with expression validator |
+| `hpType` | `intTypeName` | Ancestor-constraint: only type names extending `integer` |
 | `element` | `advancedElement` | Restricted enum subset |
-| `bossStats` | `{extends:BaseStats,enrageThreshold:integer}` | **Record inheritance**: extends core's `BaseStats` record, adding `enrageThreshold` |
+| `bossStats` | `BossStats\|EliteBossStats` | **Union of named records**: standard bosses (no crit) parse as `BossStats`; elite bosses (with mandatory `critRate`) parse as `EliteBossStats` |
 | `spawnPos` | `{extends,Point2D,float}` | **Tuple inheritance**: extends core's `Point2D` (2D) to 3D by appending a float |
 | `reward` | `integer\|string` | **Non-trivial union**: gold amount OR named reward |
 | `lootTable` | `{name}` | Array referencing core item names |
 
-*Rationale:* Boss creatures need everything normal creatures have, plus more. Type
-inheritance (`extends`) lets the expansion build on core's `BaseStats` and `Point2D`
-without redefining them. The non-trivial union `integer|string` for rewards shows that
-unions aren't limited to `type|nil`.
+**How the union disambiguates:** `BossStats` has `critRate:nil` (omitted), so providing a
+`critRate` value causes parsing to fail and fall through to `EliteBossStats`. Conversely,
+`EliteBossStats` requires `critRate:float`; omitting it fails that branch. Three existing
+bosses (no `critRate`) parse as `BossStats`; the new `arachnidQueen` boss (with
+`critRate=0.35`) parses as `EliteBossStats`.
 
 Record values are written without outer braces:
-`attack=80,defense=40,enrageThreshold=1500,speed=30`
+`attack=80,defense=40,enrageThreshold=1500,speed=30` (BossStats)
+`attack=45,critRate=0.35,defense=55,enrageThreshold=750,speed=35` (EliteBossStats)
 
 Tuple values are also without outer braces: `-20.0,50.0,10.0`
 
@@ -488,9 +542,9 @@ cooldowns, all expressed through the default value system.
 ### What Each Package Provides
 
 | Package | Provides | Used By |
-|---------|----------|---------|
-| **core** | `Element` enum, `Rarity` enum, `gold`/`hitPoints`/`level`/`itemCode` types, `BaseStats`/`Point2D` type aliases, `CurrencyType` type tag, `baseDamage` and other published constants, `gameLib` library | expansion |
-| **expansion** | `BossType` enum, `bossLevel`/`bossHp`/`advancedElement`/`bossGem` types, extends `CurrencyType` tag, `bossLib` library | (standalone) |
+| --- | --- | --- |
+| **core** | `Element` enum, `Rarity` enum, `gold`/`hitPoints`/`level`/`itemCode` types (Manifest), `BaseStats`/`Point2D`/`FlexStats` type aliases (CoreTypes.tsv), `CurrencyType` type tag, `baseDamage` and other published constants, `gameLib` library | expansion |
+| **expansion** | `BossType` enum, `bossLevel`/`bossHp` types and `BossStats`/`EliteBossStats` record types (ExpansionTypes.tsv), `advancedElement`/`bossGem`/`intTypeName` types (Manifest), extends `CurrencyType` tag, `bossLib` library | (standalone) |
 
 ## Feature Reference
 
@@ -527,8 +581,12 @@ Quick lookup: which file demonstrates which feature.
 | Enum | Element.tsv, Rarity.tsv, BossType.tsv |
 | Union `type\|nil` | Item.tsv (`element:Element\|nil`) |
 | Union `type1\|type2` | Boss.tsv (`reward:integer\|string`) |
-| Record extends | Boss.tsv (`{extends:BaseStats,...}`) |
+| Record extends | Boss.tsv (via `BossStats`/`EliteBossStats` extending `FlexStats`) |
 | Tuple extends | Boss.tsv (`{extends,Point2D,float}`) |
+| Column omission (`field:nil`) | ExpansionTypes.tsv (`BossStats.critRate:nil`), Boss.tsv |
+| Column narrowing (field redefinition) | ExpansionTypes.tsv (`EliteBossStats.critRate:float`), Boss.tsv |
+| Union of named record types | Boss.tsv (`BossStats\|EliteBossStats`) |
+| Custom type definition file | CoreTypes.tsv, ExpansionTypes.tsv |
 | Custom type (alias) | Manifest: `gold = uint` |
 | Custom type (numeric) | Manifest: `level`, `hitPoints` |
 | Custom type (string) | Manifest: `itemCode` (pattern) |

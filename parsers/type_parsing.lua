@@ -433,13 +433,31 @@ local function parse_type_extends_record(badVal, copy, fields_parsers, type_spec
         local name = parent_field_names[j]
         local parent_type = parent_field_types[name]
         if copy[name] then
-            utils.log(badVal, 'record', type_spec,
-                "field name '" .. name .. "' conflicts with parent type")
-            return nil
+            -- Child re-declares a parent field; validate the redefinition.
+            -- Disallow re-declaring self-ref parent fields (structural, not type-narrowable).
+            if parent_type:sub(1, 5) == "self." then
+                utils.log(badVal, 'record', type_spec,
+                    "field '" .. name .. "' cannot redefine parent self-ref field '"
+                    .. parent_type .. "'")
+                return nil
+            end
+            local child_type = copy[name]
+            local compatible = (child_type == parent_type)
+                or state.refs.extendsOrRestrict(child_type, parent_type)
+            if not compatible then
+                utils.log(badVal, 'record', type_spec,
+                    "field '" .. name .. "' redefines parent field with incompatible type"
+                    .. ": parent has '" .. parent_type
+                    .. "', child has '" .. child_type .. "'")
+                return nil
+            end
+            -- child_type is a valid narrowing; keep child's parser (already in fields_parsers[name]).
+        else
+            -- Inherit parent field unchanged.
+            copy[name] = parent_type
+            local fields_parser = state.refs.parseType(badVal, parent_type)
+            fields_parsers[name] = fields_parser
         end
-        copy[name] = parent_type
-        local fields_parser = state.refs.parseType(badVal, parent_type)
-        fields_parsers[name] = fields_parser
     end
 end
 
@@ -551,6 +569,21 @@ local function parse_type_record(badVal, xparsed, type_spec)
         end
     end
     if (errors_before == badVal.errors) and not fail then
+        -- Warn when standalone 'nil' is used as a field type in a non-extending record.
+        -- In an extending record it is the intentional "column omission" pattern.
+        if not extends and not state.settingUp then
+            for field_name, field_type in pairs(copy) do
+                if field_type == "nil" then
+                    local source = badVal.source_name
+                    if not source or source == "" then source = "?" end
+                    state.logger:warn("Field '" .. field_name .. "' in '" .. type_spec
+                        .. "' in " .. source
+                        .. " has type 'nil': the field can never hold a value."
+                        .. " In a child record ({extends:...}) 'nil' is used to mark"
+                        .. " an inherited optional field as unused.")
+                end
+            end
+        end
         if extends then
             parse_type_extends_record(badVal, copy, fields_parsers, type_spec)
         end

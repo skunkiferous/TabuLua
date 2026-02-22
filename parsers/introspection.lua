@@ -428,7 +428,8 @@ end
 
 -- Returns true, if childUTypes only contains types in parentUTypes,
 -- or child is a single type equal to one of the parent types,
--- or all child union members extend the (non-union) parent type.
+-- or all child union members extend the (non-union) parent type,
+-- or child (non-union) extends one of the non-nil members of a parent union.
 local function childUnionExtendsParent(childUTypes, parentUTypes, child, parent)
     if childUTypes then
         if parentUTypes then
@@ -448,9 +449,11 @@ local function childUnionExtendsParent(childUTypes, parentUTypes, child, parent)
         end
     end
     if parentUTypes then
-        -- child could also be a single type (union of one, basically)
+        -- child (non-union) is compatible with a parent union if it equals or extends
+        -- any member of that union. This handles cases like float extending number|nil,
+        -- or a child narrowing an optional field (T|nil) to a required subtype (T).
         for i = 1, #parentUTypes do
-            if child == parentUTypes[i] then
+            if typeSameOrExtends(child, parentUTypes[i]) then
                 return true
             end
         end

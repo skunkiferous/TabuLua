@@ -1,4 +1,5 @@
 fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
+ExpansionTypes.tsv	custom_type_def		false			5	Custom boss stat types demonstrating column redefinition and omission (v0.10.0 + v0.11.0)						
 BossType.tsv	BossType	enum	true			10	Boss encounter categories for the Shadow Realm						
 Boss.tsv	Boss		true			100	Boss creatures with enhanced stats and type inheritance						
 ExpansionItem.tsv	ExpansionItem		true			200	New expansion items using core enums and custom types					"self.price > 0 or 'price must be positive'"	

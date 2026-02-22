@@ -592,9 +592,75 @@ describe("files_desc", function()
         raw_files, {}, badVal)
 
       -- The validation should catch that TestDog and TestCat have 'weight' with different types
-      -- Both types extend TestAnimal, so they are siblings in the type hierarchy
+      -- Both types extend TestAnimal, so they are siblings in the type hierarchy.
+      -- 'weight' is a NEW field added by the siblings (not in TestAnimal), so having different
+      -- types for it is a genuine conflict even after the redefinition feature is added.
       assert.is_not_nil(result)  -- File loading succeeds
       assert.is_true(badVal.errors > 0)  -- But validation should report the field type conflict
+    end)
+
+    it("should allow siblings that independently narrow the same parent field", function()
+      -- Register type aliases
+      local bv = badValGen()
+      -- Parent has 'score' as number (could be any numeric subtype)
+      parsers.registerAlias(bv, 'TestBase', '{kind:string,score:number}')
+      -- TypeA narrows score to integer
+      parsers.registerAlias(bv, 'TypeA', '{extends:TestBase,extra:string,score:integer}')
+      -- TypeB narrows score to float
+      parsers.registerAlias(bv, 'TypeB', '{extends:TestBase,other:string,score:float}')
+
+      local file_path = path_join(temp_dir, "files2.tsv")
+      local content = create_files_desc_content({
+        {"base.tsv",  "TestBase", "",        "true",  "", "", "1", "Base type"},
+        {"typea.tsv", "TypeA",    "TestBase", "false", "", "", "2", "TypeA"},
+        {"typeb.tsv", "TypeB",    "TestBase", "false", "", "", "3", "TypeB"},
+      })
+      assert.is_true(file_util.writeFile(file_path, content))
+
+      local log_messages = {}
+      local badVal2 = mockBadVal(log_messages)
+      badVal2.logger = nullLogger
+
+      local result2 = files_desc.loadDescriptorFiles({file_path}, {}, {[file_path]="mod1"},
+        {}, {}, {}, {}, {},
+        {}, {}, {}, {},
+        {}, {}, {},
+        {}, {}, badVal2)
+
+      assert.is_not_nil(result2)
+      -- Both TypeA and TypeB validly narrow 'score' from parent's number; no error expected.
+      assert.equals(0, badVal2.errors)
+    end)
+
+    it("should allow one sibling to narrow a parent field while another inherits it unchanged", function()
+      local bv = badValGen()
+      parsers.registerAlias(bv, 'ShapeBase', '{color:string,area:number}')
+      -- Circle narrows area to float
+      parsers.registerAlias(bv, 'Circle', '{extends:ShapeBase,radius:float,area:float}')
+      -- Rectangle keeps area:number unchanged
+      parsers.registerAlias(bv, 'Rectangle', '{extends:ShapeBase,width:float,height:float}')
+
+      local file_path = path_join(temp_dir, "files3.tsv")
+      local content = create_files_desc_content({
+        {"shape.tsv",  "ShapeBase", "",          "true",  "", "", "1", "Shape"},
+        {"circle.tsv", "Circle",    "ShapeBase",  "false", "", "", "2", "Circle"},
+        {"rect.tsv",   "Rectangle", "ShapeBase",  "false", "", "", "3", "Rectangle"},
+      })
+      assert.is_true(file_util.writeFile(file_path, content))
+
+      local log_messages = {}
+      local badVal3 = mockBadVal(log_messages)
+      badVal3.logger = nullLogger
+
+      local result3 = files_desc.loadDescriptorFiles({file_path}, {}, {[file_path]="mod1"},
+        {}, {}, {}, {}, {},
+        {}, {}, {}, {},
+        {}, {}, {},
+        {}, {}, badVal3)
+
+      assert.is_not_nil(result3)
+      -- Circle narrowed area to float; Rectangle kept number; both are valid subtypes of number.
+      assert.equals(0, badVal3.errors)
     end)
 
     it("should return nil when a descriptor file fails to load", function()

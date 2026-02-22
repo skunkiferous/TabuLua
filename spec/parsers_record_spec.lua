@@ -337,14 +337,15 @@ describe("parsers - record types", function()
       }, log_messages)
     end)
 
-    it("should prevent field name conflicts", function()
+    it("should reject field redefinition with incompatible type", function()
       assert(parsers.registerAlias(badVal, "Person", "{name:string,age:number}"))
 
-      local parser = parsers.parseType(badVal, "{extends:Person,name:string}")
+      -- integer is not a subtype of string, so this redefinition is incompatible
+      local parser = parsers.parseType(badVal, "{extends:Person,name:integer}")
       assert.is_nil(parser)
 
       assert.same({
-        "Bad record  in test on line 1: '{extends:Person,name:string}' (field name 'name' conflicts with parent type)"
+        "Bad record  in test on line 1: '{extends:Person,name:integer}' (field 'name' redefines parent field with incompatible type: parent has 'string', child has 'integer')"
       }, log_messages)
     end)
 
@@ -574,5 +575,192 @@ describe("parsers - record types", function()
       assert.is_nil(parser)
       assert.same("Bad extends  in test on line 1: '{extends:{string},field:string}' (parent type is not record: {string})", log_messages[#log_messages])
     end)
+  end)
+
+  -- -------------------------------------------------------------------------
+  describe("record field redefinition", function()
+    local log_messages
+    local badVal
+
+    before_each(function()
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Probe: standalone nil as a record field type
+    -- -----------------------------------------------------------------------
+    it("should allow nil as a standalone record field type", function()
+      -- nil IS parseable as a record field type; get_record_parser does not call
+      -- notNilParser so there is no guard against it.
+      local parser = parsers.parseType(badVal, "{id:string,nilFlag:nil}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Compatible redefinition (same type)
+    -- -----------------------------------------------------------------------
+    it("should allow redefinition with the exact same type", function()
+      assert(parsers.registerAlias(badVal, "RdrBase1", "{label:string,value:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:RdrBase1,value:number}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Scalar narrowing: number -> float
+    -- -----------------------------------------------------------------------
+    it("should allow narrowing a scalar field to a subtype", function()
+      assert(parsers.registerAlias(badVal, "RdrBase2", "{label:string,value:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:RdrBase2,value:float}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+
+      -- The resulting parser must use float for the value field.
+      local row, _ = parser(badVal, 'label="x",value=3.14')
+      assert.is_not_nil(row)
+      assert.is_not_nil(row.value)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Incompatible redefinition: string -> integer  (error expected)
+    -- -----------------------------------------------------------------------
+    it("should reject redefinition with an incompatible type", function()
+      assert(parsers.registerAlias(badVal, "RdrBase3", "{label:string,value:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:RdrBase3,label:integer}")
+      assert.is_nil(parser)
+      assert.same({
+        "Bad record  in test on line 1: '{extends:RdrBase3,label:integer}' (field 'label' redefines parent field with incompatible type: parent has 'string', child has 'integer')"
+      }, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Column omission: optional field narrowed to nil
+    -- -----------------------------------------------------------------------
+    it("should allow narrowing an optional field to nil (column omission)", function()
+      assert(parsers.registerAlias(badVal, "RdrBase4", "{max:number|nil,value:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:RdrBase4,max:nil}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+
+      -- Parsing a row with max absent should succeed (nil field accepts absent value).
+      local row, _ = parser(badVal, "value=42")
+      assert.is_not_nil(row)
+      assert.is_nil(row.max)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- nil NOT allowed for a required (non-optional) parent field
+    -- -----------------------------------------------------------------------
+    it("should reject nil redefinition for a required parent field", function()
+      assert(parsers.registerAlias(badVal, "RdrBase5", "{label:string,value:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:RdrBase5,value:nil}")
+      assert.is_nil(parser)
+      -- nil does not extend number
+      assert.is_true(#log_messages > 0)
+      assert.matches("redefines parent field with incompatible type", log_messages[1])
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Narrowing optional field from T|nil to T (dropping nil-ability)
+    -- -----------------------------------------------------------------------
+    it("should allow narrowing an optional field to its non-nil subtype", function()
+      assert(parsers.registerAlias(badVal, "RdrBase6", "{max:number|nil,value:number}"))
+
+      -- float extends number, and number extends number|nil via childUnionExtendsParent
+      local parser = parsers.parseType(badVal, "{extends:RdrBase6,max:float}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+
+      -- max:float is now mandatory; parsing must succeed when max is provided.
+      local row, _ = parser(badVal, "max=9.5,value=1")
+      assert.is_not_nil(row)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Multi-level narrowing: A.x:number -> B.x:integer -> C.x:ubyte
+    -- (float and integer are siblings under number, so integer→ubyte is used instead)
+    -- -----------------------------------------------------------------------
+    it("should allow multi-level field narrowing across inheritance chain", function()
+      assert(parsers.registerAlias(badVal, "RdrA", "{label:string,x:number}"))
+      assert(parsers.registerAlias(badVal, "RdrB", "{extends:RdrA,x:integer}"))
+
+      -- C extends B and further narrows x:integer to x:ubyte
+      local parser = parsers.parseType(badVal, "{extends:RdrB,x:ubyte}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- extendsOrRestrict still holds after narrowing
+    -- -----------------------------------------------------------------------
+    it("should preserve the type hierarchy after field narrowing", function()
+      assert(parsers.registerAlias(badVal, "RdrHierA", "{label:string,x:number}"))
+      assert(parsers.registerAlias(badVal, "RdrHierB", "{extends:RdrHierA,x:integer}"))
+
+      assert.is_true(parsers.extendsOrRestrict("RdrHierB", "RdrHierA"))
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- recordFieldTypes reflects the child's narrower type
+    -- -----------------------------------------------------------------------
+    it("should return the child's narrowed type from recordFieldTypes", function()
+      assert(parsers.registerAlias(badVal, "RdrFtA", "{label:string,x:number}"))
+      assert(parsers.registerAlias(badVal, "RdrFtB", "{extends:RdrFtA,x:integer}"))
+
+      local fields = parsers.recordFieldTypes("RdrFtB")
+      assert.is_not_nil(fields)
+      assert.equals("integer", fields.x)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Self-ref parent field cannot be redeclared
+    -- -----------------------------------------------------------------------
+    it("should reject redefinition of a parent self-ref field", function()
+      -- category field is a type-name column; kind uses self.category (self-ref)
+      assert(parsers.registerAlias(badVal, "RdrSelfRef", "{category:type_spec,kind:self.category}"))
+
+      local parser = parsers.parseType(badVal, "{extends:RdrSelfRef,kind:string}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("cannot redefine parent self%-ref field", log_messages[1])
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- nil warning fires for standalone nil in a non-extends record
+    -- -----------------------------------------------------------------------
+    it("should warn when standalone nil is used as a field type in a plain record", function()
+      -- The warning is logged to state.logger, not badVal, so badVal has no errors.
+      local parser = parsers.parseType(badVal, "{id:string,unusedFlag:nil}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- extendsOrRestrict: T extends T|nil (wide-scope decision)
+    -- -----------------------------------------------------------------------
+    it("should report float as extending number|nil", function()
+      assert.is_true(parsers.extendsOrRestrict("float", "number|nil"))
+    end)
+
+    it("should report nil as extending number|nil", function()
+      assert.is_true(parsers.extendsOrRestrict("nil", "number|nil"))
+    end)
+
+    it("should NOT report string as extending number|nil", function()
+      assert.is_false(parsers.extendsOrRestrict("string", "number|nil"))
+    end)
+
   end)
 end)

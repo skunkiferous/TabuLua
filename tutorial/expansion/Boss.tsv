@@ -1,4 +1,4 @@
-name:name	bossType:BossType	level:bossLevel	hitPoints:bossHp	hpType:intTypeName	element:advancedElement	bossStats:{extends:BaseStats,enrageThreshold:integer}	spawnPos:{extends,Point2D,float}	reward:integer|string	lootTable:{name}	description:text
+name:name	bossType:BossType	level:bossLevel	hitPoints:bossHp	hpType:intTypeName	element:advancedElement	bossStats:BossStats|EliteBossStats	spawnPos:{extends,Point2D,float}	reward:integer|string	lootTable:{name}	description:text
 # ^ This file demonstrates several advanced features:
 # ^ bossType: references BossType enum defined in THIS expansion package
 # ^ level: uses 'bossLevel' (extends core's 'level' which extends ubyte; chained custom type, min=50)
@@ -6,13 +6,19 @@ name:name	bossType:BossType	level:bossLevel	hitPoints:bossHp	hpType:intTypeName	
 # ^ hpType: uses 'intTypeName' (ANCESTOR CONSTRAINT - only accepts names of types extending integer)
 # ^   Valid values include: hitPoints, bossHp, bossLevel, ubyte, uint, etc.
 # ^ element: uses 'advancedElement' (restricts core Element enum to Shadow, Light, Fire)
-# ^ bossStats: RECORD INHERITANCE via {extends:BaseStats,enrageThreshold:integer}
-# ^   BaseStats is {attack:integer,defense:integer,speed:integer} defined in core Manifest.
-# ^   The extends syntax adds enrageThreshold, creating {attack,defense,enrageThreshold,speed}.
+# ^ bossStats: UNION OF NAMED RECORD TYPES - BossStats|EliteBossStats (v0.11.0)
+# ^   Both types are defined in ExpansionTypes.tsv and extend FlexStats from CoreTypes.tsv.
+# ^   BossStats    = {attack, defense, enrageThreshold, speed}
+# ^                  critRate marked as UNUSED via column OMISSION (critRate:nil)
+# ^   EliteBossStats = {attack, critRate, defense, enrageThreshold, speed}
+# ^                    critRate NARROWED from float|nil (FlexStats) to mandatory float
+# ^   Bosses WITHOUT critRate parse as BossStats.
+# ^   Bosses WITH critRate parse as EliteBossStats (critRate is mandatory for elite bosses).
 # ^ spawnPos: TUPLE INHERITANCE via {extends,Point2D,float}
-# ^   Point2D is {float,float} defined in core Manifest. Extends to {float,float,float} (3D).
+# ^   Point2D is {float,float} defined in core CoreTypes.tsv. Extends to {float,float,float} (3D).
 # ^ reward: NON-TRIVIAL UNION integer|string - gold amount (integer) OR special reward name (string)
 # ^ lootTable: array {name} referencing item names from core package
 shadowLord	Overlord	60	5000	bossHp	Shadow	attack=80,defense=40,enrageThreshold=1500,speed=30	-20.0,50.0,10.0	2500	"shadowCloak","manaPotion","legendaryBlade"	The lord of the shadow realm, master of darkness
 infernalGuardian	Guardian	55	3000	hitPoints	Fire	attack=60,defense=70,enrageThreshold=1000,speed=20	100.0,0.0,5.0	uniqueFireArmor	"fireStaff","healthPotion"	An ancient fire guardian bound to protect the realm gate
 lightbringer	Ancient	75	8000	bossHp	Light	attack=100,defense=50,enrageThreshold=2000,speed=40	0.0,0.0,100.0	5000	"legendaryBlade","earthAmulet","healthPotion"	The primordial being of pure light, final boss of the expansion
+arachnidQueen	Guardian	52	2500	bossHp	Shadow	attack=45,critRate=0.35,defense=55,enrageThreshold=750,speed=35	80.0,-30.0,2.0	1500	"shadowCloak","manaPotion"	A cunning shadow spider with deadly precision strikes; its critical hits bypass all defenses
