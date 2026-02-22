@@ -77,6 +77,22 @@ area:float:=self.width*self.height  # Expression referencing other columns
 - The default expression is preserved in reformatted output
 - Columns with complex type specs (containing colons like `{a:number,b:string}`) can still have defaults
 
+## Column Omission
+
+When a file's type definition contains optional fields (typed as `T|nil`), you do not need to include a column for every optional field in the header. Any field absent from the header is treated as `nil` for every row — which is the correct default for an optional field.
+
+This keeps files concise: only include columns that have at least one non-nil value in the actual data.
+
+**Example:** given a type with fields `name:name`, `min:number|nil`, `max:number|nil`, and `validate:string|nil`, a file that only constrains minimum values can use:
+
+```tsv
+name:name    min:number|nil
+positiveInt  1
+nonNegative  0
+```
+
+The absent `max` and `validate` columns default to `nil` for all rows.
+
 ## Exploded Columns
 
 For complex nested data structures, you can "explode" record and tuple fields across multiple columns using dot-separated column names. This makes data entry easier while still allowing the system to reconstruct the nested structure.
@@ -1067,6 +1083,51 @@ Custom types are registered after the manifest is processed but before code libr
 - Custom types can extend built-in types or types from dependency packages
 - Custom types from one package are available to dependent packages
 - Within a package, custom types are registered in declaration order, so later types can extend earlier ones
+
+#### Custom Type Definition Files
+
+As an alternative to the inline `custom_types` manifest field, you can define custom types in a dedicated TSV file. When a file's `typeName` in `Files.tsv` is `custom_type_def`, or a type that directly or transitively has `superType=custom_type_def`, each data row is automatically registered as a custom type.
+
+This is especially useful when a package defines many custom types, since a dedicated file supports column alignment, per-row comments, and column omission (see [Column Omission](#column-omission)).
+
+**`Files.tsv` entry:**
+
+```tsv
+CustomTypes.tsv  custom_type_def    true    1    Custom type definitions
+```
+
+**`CustomTypes.tsv`:**
+
+```tsv
+name:name    parent:type_spec|nil    min:number|nil    max:number|nil    validate:string|nil
+positiveInt  integer                 1
+percentage   float                   0                 100
+nonEmptyStr  string                                                       predicates.isNonEmptyStr(value) or 'must not be empty'
+```
+
+After this file is loaded, `positiveInt`, `percentage`, and `nonEmptyStr` are registered types and can be used as column types in all subsequently loaded files.
+
+Only the standard `custom_type_def` fields (`name`, `parent`, `min`, `max`, `minLen`, `maxLen`, `members`, `pattern`, `validate`, `values`) feed into type registration. Extra columns in a sub-type file (e.g., a `gameCategory:string` annotation column) are parsed and stored but ignored during registration.
+
+**Load ordering:** A custom type definition file must have a lower `loadOrder` than any file that uses the types it defines. The recommended convention is `loadOrder=1` (or another low value). Defining a type after it is referenced produces an "unknown type" parse error. A custom type definition file may itself reference types from an earlier custom type definition file (by `loadOrder`), enabling cascaded type hierarchies.
+
+**Collision behavior:** Registering a type name that is already registered with a different parent type is an error. Registering the same name with the same parent type is idempotent (no error).
+
+**Export:** Custom type definition files are structural (they register types, not data). By default, a file with no `joinInto` value is exported, so set `export=false` explicitly in `Files.tsv` if you do not want the file included in JSON/SQL output.
+
+**Sub-typing example:** You may extend `custom_type_def` with additional project-specific metadata columns. Declare a sub-type in `Files.tsv` and use it for the file's `typeName`:
+
+```tsv
+# Files.tsv
+GameTypes.tsv  GameCustomType  custom_type_def  false  1  Game-specific custom types
+```
+
+```tsv
+# GameTypes.tsv
+name:name    parent:type_spec|nil    min:number|nil    max:number|nil    gameCategory:string
+health       integer                 0                 9999              Stats
+mana         integer                 0                 999               Stats
+```
 
 ## Row, File, and Package Validators
 

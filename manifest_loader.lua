@@ -177,12 +177,12 @@ local function registerAliases(file, fileType, extends, badVal)
 end
 
 -- Register a record type for a TSV file based on its column structure
-local function registerFileType(file, fileType, typesSet, enumsSet, badVal)
+local function registerFileType(file, fileType, typesSet, enumsSet, customTypesSet, badVal)
     if not fileType or #fileType == 0 then
         return  -- No type name specified
     end
-    if typesSet[fileType] or enumsSet[fileType] then
-        return  -- Type/enum definitions are handled separately
+    if typesSet[fileType] or enumsSet[fileType] or customTypesSet[fileType] then
+        return  -- Type/enum/custom-type-def definitions are handled separately
     end
     if parsers.isBuiltInType(fileType) then
         logger:error(fileType .. " is a built-in type, skipping registration")
@@ -200,6 +200,32 @@ local function registerFileType(file, fileType, typesSet, enumsSet, badVal)
             logger:info("Registered type: " .. fileType .. " = " .. typeSpec)
         end
     end
+end
+
+-- The fields of custom_type_def that are extracted from each row for type registration
+local CUSTOM_TYPE_DEF_FIELDS = {
+    'name', 'parent', 'min', 'max', 'minLen', 'maxLen',
+    'members', 'pattern', 'validate', 'values'
+}
+
+-- Registers custom types from a file whose typeName is or extends custom_type_def.
+-- Each data row is treated as a custom_type_def record; its parsed fields are fed into
+-- parsers.registerTypesFromSpec, which handles aliases, constrained types, and type tags.
+local function registerCustomTypesFromFile(file, badVal)
+    local typeSpecs = {}
+    for i, row in ipairs(file) do
+        if i > 1 and type(row) == "table" then
+            local spec = {}
+            for _, field in ipairs(CUSTOM_TYPE_DEF_FIELDS) do
+                local cell = row[field]
+                if cell ~= nil then
+                    spec[field] = cell.parsed
+                end
+            end
+            typeSpecs[#typeSpecs + 1] = spec
+        end
+    end
+    parsers.registerTypesFromSpec(badVal, typeSpecs)
 end
 
 -- Builds the table subscribers. The context that the subscribers should use is stored under
@@ -261,11 +287,13 @@ local function buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
 end
 
 -- Logs the file being processed
-local function logFile(file_name, fileType, enumsSet, typesSet, table_subscribers)
+local function logFile(file_name, fileType, enumsSet, typesSet, customTypesSet, table_subscribers)
     if enumsSet[fileType] then
         logger:info("Processing enum file: " .. file_name)
     elseif typesSet[fileType] then
         logger:info("Processing type file: " .. file_name)
+    elseif customTypesSet[fileType] then
+        logger:info("Processing custom type definition file: " .. file_name)
     elseif type(table_subscribers) == "table" then
         logger:info("Processing constants file: " .. file_name)
     else
@@ -301,7 +329,8 @@ end
 
 -- Processes a single TSV/CSV file: reads, parses, and registers types/enums if applicable
 local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
-    typesSet, enumsSet, extends, raw_files, files_cache, options_extractor, expr_eval, loadEnv, badVal)
+    typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
+    options_extractor, expr_eval, loadEnv, badVal)
     badVal.source = file_name
     local content, err = readFile(file_name)
     if not content then
@@ -317,7 +346,7 @@ local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lc
     local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
 
     local fileType = lcFn2Type[lcFNKey]
-    logFile(file_name, fileType, enumsSet, typesSet, table_subscribers)
+    logFile(file_name, fileType, enumsSet, typesSet, customTypesSet, table_subscribers)
 
     local file = processTSV(options_extractor, expr_eval, parseType,
         file_name, rawtsv, badVal, table_subscribers, false)
@@ -332,8 +361,11 @@ local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lc
         if typesSet[fileType] then
             registerAliases(file, fileType, extends, badVal)
         end
+        if customTypesSet[fileType] then
+            registerCustomTypesFromFile(file, badVal)
+        end
         -- Register the file's column structure as a type
-        registerFileType(file, fileType, typesSet, enumsSet, badVal)
+        registerFileType(file, fileType, typesSet, enumsSet, customTypesSet, badVal)
     end
 end
 
@@ -353,14 +385,14 @@ local function processUnknownFile(file_name, raw_files, badVal)
 end
 
 -- Load all the non-description files
-local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col, typesSet,
-    enumsSet, extends, raw_files, loadEnv, badVal)
+local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
+    typesSet, enumsSet, customTypesSet, extends, raw_files, loadEnv, badVal)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
 
     for _, file_name in ipairs(files) do
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV) then
             processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
-                typesSet, enumsSet, extends, raw_files, files_cache,
+                typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
                 options_extractor, expr_eval, loadEnv, badVal)
         else
             processUnknownFile(file_name, raw_files, badVal)
@@ -390,6 +422,33 @@ local function isEnum(typeName, extends)
         typeName = extends[typeName]
     end
     return false
+end
+
+-- Recursively search the extends table, to see if the typeName maps to "custom_type_def",
+-- directly, or indirectly.
+local function isCustomTypeDef(typeName, extends)
+    while typeName do
+        if typeName:lower() == "custom_type_def" then
+            return true
+        end
+        typeName = extends[typeName]
+    end
+    return false
+end
+
+-- Build the set of fileTypes that are, or transitively extend, custom_type_def.
+-- Handles both the direct case (typeName == "custom_type_def") and the indirect case
+-- where a user-named sub-type has superType=custom_type_def (or a chain leading to it).
+local function buildCustomTypesSet(lcFn2Type, extends)
+    local s = {}
+    for _, fileType in pairs(lcFn2Type) do
+        if fileType and (fileType:lower() == "custom_type_def"
+            or isCustomTypeDef(extends[fileType], extends)) then
+            s[fileType] = true
+            logger:info("Found custom type definition file type: " .. fileType)
+        end
+    end
+    return s
 end
 
 -- Find all types extending "Type"
@@ -438,6 +497,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         return
     end
     findAllTypes(extends, typesSet, enumsSet)
+    local customTypesSet = buildCustomTypesSet(lcFn2Type, extends)
     -- Check that files referenced in Files.tsv actually exist on disk
     local filesOnDisk = {}
     for _, file_name in ipairs(files) do
@@ -460,7 +520,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         tsv_files[desc_file[1].__source] = desc_file
     end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
-    lcFn2Ctx, lcFn2Col, typesSet, enumsSet, extends,
+    lcFn2Ctx, lcFn2Col, typesSet, enumsSet, customTypesSet, extends,
     raw_files, loadEnv, badVal)
     -- Build join metadata for exporter
     local joinMeta = {

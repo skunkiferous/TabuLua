@@ -13,6 +13,31 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.10.0] - 2026-02-22
+
+### Added
+
+- **Custom type definition files.** A TSV file whose `typeName` in `Files.tsv` is
+  `custom_type_def` (or a type that directly or transitively has `superType=custom_type_def`)
+  now has each of its data rows automatically registered as a custom type via
+  `parsers.registerTypesFromSpec`. This is a convenient alternative to the inline
+  `custom_types:{custom_type_def}|nil` manifest field for packages that define many
+  custom types.
+  - Sub-typed files (e.g. `typeName=GameCustomType, superType=custom_type_def`) are
+    supported; any extra columns beyond the standard `custom_type_def` fields are
+    parsed normally but ignored during type registration.
+  - Cascading is supported: a custom type definition file with a lower `loadOrder`
+    may define types that are used as parent types in another custom type definition
+    file with a higher `loadOrder`.
+  - Collision detection: re-registering a type name with a different parent type is
+    an error; re-registering with the same parent type is idempotent (no error).
+  - `DATA_FORMAT_README.md` updated with a "Custom Type Definition Files" sub-section
+    and a new top-level "Column Omission" section (applicable to all TSV files).
+
+### Changed
+
+### Fixed
+
 ## [0.9.0] - 2026-02-21
 
 ### Added
