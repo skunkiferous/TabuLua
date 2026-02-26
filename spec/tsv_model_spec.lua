@@ -1194,4 +1194,130 @@ describe("tsv_model", function()
             assert.equals("{}", dataset[1].__type_spec)
         end)
     end)
+
+    describe("preamble support", function()
+        it("should parse a TSV that has one comment line before the header", function()
+            local raw_tsv = {
+                "# this is a preamble comment",
+                {"name:string", "age:number"},
+                {"Alice", "25"},
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal)
+            assert.is_not_nil(dataset)
+            assert.same({}, log_messages)
+            -- dataset[1] is still the header
+            assert.equals("name", dataset[1][1].name)
+            assert.equals("number", dataset[1][2].type_spec)
+            -- dataset[2] is the first data row
+            assert.equals("Alice", dataset[2][1].parsed)
+            assert.equals(25, dataset[2][2].parsed)
+        end)
+
+        it("should parse a TSV that has multiple comment/blank lines before the header", function()
+            local raw_tsv = {
+                "###[[[",
+                "###return \"name:string\\tval:number\"",
+                "###]]]",
+                {"name:string", "val:number"},
+                "###[[[end]]]",
+                {"alpha", "1"},
+                {"beta", "2"},
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal)
+            assert.is_not_nil(dataset)
+            assert.same({}, log_messages)
+            -- dataset[1] is the header (raw_tsv[4])
+            assert.equals("name", dataset[1][1].name)
+            -- dataset[2] is the comment "###[[[end]]]"
+            assert.equals("###[[[end]]]", dataset[2])
+            -- dataset[3] and [4] are the data rows
+            assert.equals("alpha", dataset[3][1].parsed)
+            assert.equals(2, dataset[4][2].parsed)
+        end)
+
+        it("should expose preamble via dataset.__preamble", function()
+            local raw_tsv = {
+                "# line one",
+                "# line two",
+                {"name:string"},
+                {"Alice"},
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal)
+            assert.is_not_nil(dataset)
+            local p = dataset.__preamble
+            assert.is_not_nil(p)
+            assert.equals(2, #p)
+            assert.equals("# line one", p[1])
+            assert.equals("# line two", p[2])
+        end)
+
+        it("should return nil __preamble when there is no preamble", function()
+            local raw_tsv = {
+                {"name:string"},
+                {"Alice"},
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal)
+            assert.is_not_nil(dataset)
+            assert.is_nil(dataset.__preamble)
+        end)
+
+        it("should round-trip preamble via tostring()", function()
+            local raw_tsv = {
+                "# preamble",
+                {"name:string", "val:number"},
+                {"Alice", "1"},
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal)
+            assert.is_not_nil(dataset)
+            local result = tostring(dataset)
+            assert.equals("# preamble\nname:string\tval:number\nAlice\t1", result)
+        end)
+
+        it("should return the correct error when all lines are comments", function()
+            local raw_tsv = {
+                "# only comment",
+                "# another comment",
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal)
+            assert.is_nil(dataset)
+            assert.is_true(#log_messages > 0)
+        end)
+
+        it("should keep row.__idx as the original raw_tsv line number", function()
+            local raw_tsv = {
+                "# preamble",
+                {"name:string"},
+                {"Alice"},
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local row_indices = {}
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder, "test.tsv", raw_tsv, badVal,
+                function(_, row, _)
+                    row_indices[#row_indices+1] = row.__idx
+                end)
+            assert.is_not_nil(dataset)
+            -- raw_tsv[3] is "Alice", so __idx should be 3
+            assert.equals(3, row_indices[1])
+        end)
+    end)
 end)

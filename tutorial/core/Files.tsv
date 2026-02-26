@@ -12,3 +12,4 @@ Spell.tsv	Spell		true			300	Spells and abilities demonstrating defaults, percent
 Recipe.tsv	Recipe		true			400	Crafting recipes with exploded maps, ratio type, and range integer types						
 WorldConfig.transposed.tsv	WorldConfig		true			500	Singleton world configuration in transposed format						
 LevelScale.tsv	LevelScale		true			600	Level scaling tables generated via COG code blocks						
+FireItems.tsv	FireItems		true			700	View: Fire-element items (COG view of Item.tsv; demonstrates loadEnv.files)						

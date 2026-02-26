@@ -355,6 +355,9 @@ local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lc
     files_cache[file_name] = file
 
     if file then
+        if fileType then
+            loadEnv.files[fileType] = file
+        end
         if enumsSet[fileType] then
             registerEnumParser(file, fileType, badVal)
         end
@@ -805,6 +808,7 @@ local function processFiles(directories, badVal)
     local manifest_tsv_files = {}
     -- loadEnv needs access to _G for lua_cog code blocks to use standard functions
     local loadEnv = setmetatable({}, {__index = _G})
+    loadEnv.files = {}   -- populated with each parsed dataset; available in cog scripts
 
     local package_order, packages = resolvePackageDependencies(badVal, files, raw_files, manifest_tsv_files, loadEnv)
     if not package_order then

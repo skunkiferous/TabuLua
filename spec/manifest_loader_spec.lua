@@ -722,5 +722,216 @@ description:markdown	Package with bad version
         "badVal should have been used to report errors (errors: " ..
         tostring(badVal.errors) .. ", logs: " .. #log_messages .. ")")
     end)
+
+    -- -----------------------------------------------------------------------
+    -- Phase 2: cog views — loadEnv.files table
+    -- -----------------------------------------------------------------------
+
+    describe("cog views (loadEnv.files)", function()
+      -- Source data shared by the view tests
+      -- Three items: alpha=fire, beta=water, gamma=fire
+      local SOURCE_VIEW_TSV = "name:string\telement:string\nalpha\tfire\nbeta\twater\ngamma\tfire\n"
+
+      -- A full view: cog generates the header + data rows by filtering Source for "fire".
+      -- The cached section (between ###]]] and ###[[[end]]]) is stale and must be replaced.
+      local VIEW_FIRE_TSV =
+        "###[[[\n" ..
+        "###local src = files.Source\n" ..
+        "###local out = {}\n" ..
+        "###for i = 2, #src do\n" ..
+        "###    local row = src[i]\n" ..
+        '###    if type(row) == "table" and row.element.parsed == "fire" then\n' ..
+        '###        out[#out+1] = row.name.parsed.."\\t"..row.element.parsed\n' ..
+        "###    end\n" ..
+        "###end\n" ..
+        '###return "name:string\\telement:string\\n"..table.concat(out, "\\n")\n' ..
+        "###]]]\n" ..
+        "name:string\telement:string\n" ..
+        "old_cached_row\tfire\n" ..
+        "###[[[end]]]\n"
+
+      local MANIFEST_VIEW = [[package_id:package_id	ViewPkg
+name:string	View Test Package
+version:version	0.1.0
+description:markdown	Test views feature
+]]
+      local FILES_VIEW = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+        "Source.tsv\tSource\t\ttrue\t\t\t1\tSource data\n" ..
+        "View.tsv\tView\t\ttrue\t\t\t2\tView of source\n"
+
+      it("should make loaded datasets available to cog scripts via files table", function()
+        local pkg_dir = path_join(temp_dir, "viewpkg")
+        assert(lfs.mkdir(pkg_dir))
+
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_VIEW))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_VIEW))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "Source.tsv"), SOURCE_VIEW_TSV))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "View.tsv"), VIEW_FIRE_TSV))
+
+        local result = manifest_loader.processFiles({pkg_dir}, badVal)
+
+        assert.is_not_nil(result,
+          "processFiles should succeed\nErrors: " .. table.concat(log_messages, "\n"))
+        assert.equals(0, badVal.errors,
+          "No errors expected\nMessages: " .. table.concat(log_messages, "\n"))
+
+        -- Find the View.tsv dataset
+        local view_ds = nil
+        for file_name, ds in pairs(result.tsv_files) do
+          if file_name:match("View%.tsv$") then
+            view_ds = ds
+            break
+          end
+        end
+        view_ds = assert(view_ds, "View.tsv should be in tsv_files")
+
+        -- The cog block should have replaced the stale cached row with live data.
+        -- Expected rows: "alpha" and "gamma" (fire elements), not "beta" (water) or "old_cached_row".
+        local names = {}
+        for i = 2, #view_ds do
+          local row = view_ds[i]
+          if type(row) == "table" then
+            names[#names+1] = row.name.parsed
+          end
+        end
+        assert.same({"alpha", "gamma"}, names,
+          "View should contain only fire-element rows from the live source, not the stale cache")
+      end)
+
+      it("should return nil for nonexistent files table keys without crashing", function()
+        local pkg_dir = path_join(temp_dir, "nilkeyspkg")
+        assert(lfs.mkdir(pkg_dir))
+
+        -- A cog block that branches on whether files.NonExistent is nil.
+        -- Uses two columns to avoid the single-column {name:type} being misread as a map type.
+        local TSV_WITH_NIL_CHECK =
+          "###[[[\n" ..
+          "###if files.NonExistent == nil then\n" ..
+          '###    return "name:string\\tstatus:string\\nnil_check\\tok"\n' ..
+          "###else\n" ..
+          '###    return "name:string\\tstatus:string\\nnil_check\\tfail"\n' ..
+          "###end\n" ..
+          "###]]]\n" ..
+          "name:string\tstatus:string\n" ..
+          "old_cached\told\n" ..
+          "###[[[end]]]\n"
+
+        local MANIFEST_NIL = [[package_id:package_id	NilKeyPkg
+name:string	Nil Key Package
+version:version	0.1.0
+description:markdown	Test nil key access
+]]
+        local FILES_NIL = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+          "NilCheck.tsv\tNilCheck\t\ttrue\t\t\t1\tNil check file\n"
+
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_NIL))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_NIL))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "NilCheck.tsv"), TSV_WITH_NIL_CHECK))
+
+        local result = manifest_loader.processFiles({pkg_dir}, badVal)
+
+        assert.is_not_nil(result,
+          "processFiles should succeed\nErrors: " .. table.concat(log_messages, "\n"))
+        assert.equals(0, badVal.errors,
+          "No errors expected\nMessages: " .. table.concat(log_messages, "\n"))
+
+        local nil_check_ds = nil
+        for file_name, ds in pairs(result.tsv_files) do
+          if file_name:match("NilCheck%.tsv$") then
+            nil_check_ds = ds
+            break
+          end
+        end
+        nil_check_ds = assert(nil_check_ds, "NilCheck.tsv should be in tsv_files")
+        assert.is_true(#nil_check_ds >= 2, "Should have header + at least one data row")
+        local row2 = nil_check_ds[2]
+        assert.equals("table", type(row2), "Row 2 should be a data row")
+        assert.equals("ok", row2.status.parsed,
+          "files.NonExistent should be nil, so the branch should produce 'ok'")
+      end)
+
+      it("should support view-of-view when loadOrder is set correctly", function()
+        local pkg_dir = path_join(temp_dir, "viewofviewpkg")
+        assert(lfs.mkdir(pkg_dir))
+
+        local FILES_VOV = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+          "Source.tsv\tSource\t\ttrue\t\t\t1\tSource data\n" ..
+          "View1.tsv\tView1\t\ttrue\t\t\t2\tPass-through view of Source\n" ..
+          "View2.tsv\tView2\t\ttrue\t\t\t3\tFiltered view of View1\n"
+
+        -- View1: pass all rows of Source through unchanged (loadOrder=2 reads files.Source)
+        local VIEW1_TSV =
+          "###[[[\n" ..
+          "###local src = files.Source\n" ..
+          "###local out = {}\n" ..
+          "###for i = 2, #src do\n" ..
+          "###    local row = src[i]\n" ..
+          '###    if type(row) == "table" then\n' ..
+          '###        out[#out+1] = row.name.parsed.."\\t"..row.element.parsed\n' ..
+          "###    end\n" ..
+          "###end\n" ..
+          '###return "name:string\\telement:string\\n"..table.concat(out, "\\n")\n' ..
+          "###]]]\n" ..
+          "name:string\telement:string\n" ..
+          "###[[[end]]]\n"
+
+        -- View2: filter View1 to fire-element rows only (loadOrder=3 reads files.View1)
+        local VIEW2_TSV =
+          "###[[[\n" ..
+          "###local src = files.View1\n" ..
+          "###local out = {}\n" ..
+          "###for i = 2, #src do\n" ..
+          "###    local row = src[i]\n" ..
+          '###    if type(row) == "table" and row.element.parsed == "fire" then\n' ..
+          '###        out[#out+1] = row.name.parsed.."\\t"..row.element.parsed\n' ..
+          "###    end\n" ..
+          "###end\n" ..
+          '###return "name:string\\telement:string\\n"..table.concat(out, "\\n")\n' ..
+          "###]]]\n" ..
+          "name:string\telement:string\n" ..
+          "###[[[end]]]\n"
+
+        local MANIFEST_VOV = [[package_id:package_id	VoVPkg
+name:string	View-of-View Package
+version:version	0.1.0
+description:markdown	Test view-of-view chaining
+]]
+
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_VOV))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_VOV))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "Source.tsv"), SOURCE_VIEW_TSV))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "View1.tsv"), VIEW1_TSV))
+        assert.is_true(file_util.writeFile(path_join(pkg_dir, "View2.tsv"), VIEW2_TSV))
+
+        local result = manifest_loader.processFiles({pkg_dir}, badVal)
+
+        assert.is_not_nil(result,
+          "processFiles should succeed\nErrors: " .. table.concat(log_messages, "\n"))
+        assert.equals(0, badVal.errors,
+          "No errors expected\nMessages: " .. table.concat(log_messages, "\n"))
+
+        local view2_ds = nil
+        for file_name, ds in pairs(result.tsv_files) do
+          if file_name:match("View2%.tsv$") then
+            view2_ds = ds
+            break
+          end
+        end
+        view2_ds = assert(view2_ds, "View2.tsv should be in tsv_files")
+
+        -- View2 reads View1 (which passes all Source rows), then filters to fire only.
+        -- Result should be alpha and gamma (fire elements from Source via View1).
+        local names = {}
+        for i = 2, #view2_ds do
+          local row = view2_ds[i]
+          if type(row) == "table" then
+            names[#names+1] = row.name.parsed
+          end
+        end
+        assert.same({"alpha", "gamma"}, names,
+          "View2 should contain fire-element rows from View1 (which mirrors Source)")
+      end)
+    end)
+
   end)
 end)

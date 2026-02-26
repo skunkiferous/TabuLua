@@ -1,0 +1,20 @@
+# FireItems.tsv — view of Item.tsv filtered to Fire-element items only.
+# This file demonstrates a COG view: Item.tsv (loadOrder=100) is already
+# loaded and available as files.Item when this cog block runs (loadOrder=700).
+# The cog script generates both the header row and the data rows (full view).
+###[[[
+###-- Collect all items from Item.tsv whose element is "Fire"
+###local src = files.Item
+###local out = {}
+###for i = 2, #src do
+###    local row = src[i]
+###    if type(row) == "table" and row.element.parsed == "Fire" then
+###        out[#out+1] = row.name.reformatted .. "\t" .. row.price.reformatted .. "\t" .. row.weight.reformatted
+###    end
+###end
+###return "name:name\tprice:gold\tweight:float\n" .. table.concat(out, "\n")
+###]]]
+name:name	price:gold	weight:float
+ironSword	150	3.5
+fireStaff	500	2.0
+###[[[end]]]

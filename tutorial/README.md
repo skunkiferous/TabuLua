@@ -28,6 +28,7 @@ tutorial/
     Recipe.tsv                       # Crafting: exploded maps + ratio type
     WorldConfig.transposed.tsv       # Transposed: singleton config record
     LevelScale.tsv                   # COG code generation
+    FireItems.tsv                    # COG view: filtered subset of Item.tsv
     libs/
       gameLib.lua                    # Code library for expressions
   expansion/                         # Package: tutorial.expansion (mod)
@@ -362,6 +363,56 @@ editable in the TSV. Re-running the reformatter regenerates the block.
 
 ---
 
+#### FireItems.tsv (COG View)
+
+Demonstrates a **COG view**: a TSV file whose header and data rows are entirely generated
+by a cog script that reads an already-loaded dataset from `files`.
+
+Because `FireItems.tsv` has `loadOrder=700`, the `Item` dataset (loadOrder=100) is already
+present in `files.Item` when its cog block runs.
+
+The cog block:
+
+1. Accesses `files.Item` — the parsed `Item` dataset
+2. Iterates rows, keeping only those where `element.parsed == "Fire"`
+3. Returns a TSV string with the header row + matching data rows
+
+<!-- markdownlint-disable MD010 -->
+```tsv
+###[[[
+###local src = files.Item
+###local out = {}
+###for i = 2, #src do
+###    local row = src[i]
+###    if type(row) == "table" and row.element.parsed == "Fire" then
+###        out[#out+1] = row.name.reformatted .. "\t" .. row.price.reformatted .. "\t" .. row.weight.reformatted
+###    end
+###end
+###return "name:name\tprice:gold\tweight:float\n" .. table.concat(out, "\n")
+###]]]
+name:name	price:gold	weight:float
+ironSword	150	3.5
+fireStaff	500	2.0
+###[[[end]]]
+```
+<!-- markdownlint-enable MD010 -->
+
+The comment lines (`# ...`) and cog code lines (`###...`) before the first data row form
+the **preamble** — they are stored in `dataset.__preamble` and preserved when the
+reformatter rewrites the file.
+
+**Full view vs partial view:** The example above is a *full view* — cog generates both the
+header row and the data rows. A *partial view* leaves the header hardcoded and only uses
+cog to generate the data rows (like `LevelScale.tsv`). Both patterns work identically in
+the pipeline; the only difference is whether the header line appears inside or outside the
+cog block.
+
+*Rationale:* Views eliminate the need to maintain filtered copies of data by hand. When
+`Item.tsv` changes, re-running the reformatter automatically regenerates `FireItems.tsv`
+with the current fire items. No separate sync step is needed.
+
+---
+
 #### libs/gameLib.lua (Code Library)
 
 A Lua module providing functions available in expressions and COG blocks:
@@ -603,6 +654,8 @@ Quick lookup: which file demonstrates which feature.
 | Exploded map | Recipe.tsv (`materials[*]`, `materials[*]=`) |
 | File joining | Item.en.tsv into Item.tsv |
 | COG code generation | LevelScale.tsv |
+| COG view (`files` table) | FireItems.tsv |
+| TSV preamble (comments before header) | FireItems.tsv |
 | Code libraries | gameLib.lua, bossLib.lua |
 | TSV comments | All files (lines starting with `#`) |
 | publishColumn | Constant.tsv (global constants) |
@@ -625,8 +678,10 @@ Quick lookup: which file demonstrates which feature.
   `"Fire","Light"` not `Fire,Light`. Without quotes, the parser issues a warning
   about assuming an unquoted string. See `Creature.tsv` immunities column for examples.
 
-- **Comments** (`# ...` lines) are only supported between the header row and data rows
-  or after data rows. The header row must always be line 1 in non-transposed files.
+- **Comments** (`# ...` lines) may appear anywhere in a non-transposed file, including
+  before the header row (as a **preamble**). Comment lines before the header are preserved
+  when the reformatter rewrites the file. COG block markers (`###[[[`, `###]]]`,
+  `###[[[end]]]`) are also comment lines and may appear in the preamble.
 
 - **Transposed format** (`.transposed.tsv` extension) is used for Manifest files and
   singleton data files like WorldConfig. In transposed format, each line is a

@@ -362,10 +362,6 @@ local function newHeader(options_extractor, expr_eval, parser_finder, source_nam
             end
         end
     elseif type(header_row) == "string" and #(trim(header_row)) > 0 then
-        if header_row:match("^%s*#") then
-            badVal(nil, "header_row cannot be a comment; skipping this file!")
-            return nil
-        end
         hr = split(header_row)
     end
     if not hr then
@@ -583,15 +579,28 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
         if transposed then
             raw_tsv = transposeRawTSV(raw_tsv)
         end
+        -- For non-transposed TSV, scan past any comment/blank lines before the header.
+        -- Transposed TSV: transposeRawTSV() already converts comment rows to __comment
+        -- placeholder columns, so raw_tsv[1] is always a table after transposing.
+        local preamble = {}
+        local header_idx = 1
+        if not transposed then
+            while header_idx <= #raw_tsv and type(raw_tsv[header_idx]) == "string" do
+                preamble[#preamble + 1] = raw_tsv[header_idx]
+                header_idx = header_idx + 1
+            end
+        end
+        badVal.line_no = header_idx
         local dataset = {}
         local header = newHeader(options_extractor, expr_eval,
-        parser_finder, source_name,raw_tsv[1],
+        parser_finder, source_name, raw_tsv[header_idx],
         badVal, dataset, table_subscribers)
         if not header then
             badVal.col_types[#badVal.col_types] = nil
             return nil
         end
         dataset[1] = header
+        local dataset_idx = 1
         local row_tostring = function (row)
             local tmp = {}
             for _,cell in ipairs(row) do
@@ -617,6 +626,7 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
         local opt_index = {
             __type = "tsv",
             __transposed = transposed,
+            __preamble = (#preamble > 0) and preamble or nil,
             -- line can be either the line number or the line "primary key"
             -- col can be either the column index or the column name
             __call = function (d, line, col)
@@ -627,6 +637,9 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
             end,
             __tostring = function(d)
                 local lines = {}
+                for _, s in ipairs(preamble) do
+                    lines[#lines+1] = s
+                end
                 for _,r in ipairs(d) do
                     lines[#lines+1] = tostring(r)
                 end
@@ -673,12 +686,13 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
             end
         }
         local done_idx = nil
-        for i=2,#raw_tsv do
+        for i=header_idx+1,#raw_tsv do
+            dataset_idx = dataset_idx + 1
             badVal.line_no = i
             local row = raw_tsv[i]
             if type(row) ~= "table" then
                 -- Assume comment or empty line ...
-                dataset[i] = row
+                dataset[dataset_idx] = row
             else
                 -- In new_row, each cell is a table, with fields: {value,evaluated,parsed,reformatted}
                 local new_row = {__idx=i}
@@ -726,8 +740,8 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
                 -- and by the row primary key
                 local pk = new_row[1].evaluated
                 local ro = readOnly(new_row, row_opt_index)
-                dataset[i] = ro
-                if i > 1 and pk ~= nil and type(pk) ~= "table" then
+                dataset[dataset_idx] = ro
+                if pk ~= nil and type(pk) ~= "table" then
                     pk = tostring(pk)
                     if opt_index[pk] ~= nil then
                         badVal.col_idx = 1
