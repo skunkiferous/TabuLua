@@ -264,6 +264,30 @@ describe("raw_tsv", function()
       assert.is_false(raw_tsv.isRawTSV(nil))
     end)
 
+    it("should reject cells containing tab characters", function()
+      assert.is_false(raw_tsv.isRawTSV({
+        {"a", "b\tc", "d"}
+      }))
+    end)
+
+    it("should reject cells containing newline characters", function()
+      assert.is_false(raw_tsv.isRawTSV({
+        {"a", "b\nc", "d"}
+      }))
+    end)
+
+    it("should reject cells containing carriage return characters", function()
+      assert.is_false(raw_tsv.isRawTSV({
+        {"a\rb", "c"}
+      }))
+    end)
+
+    it("should reject cells containing invalid UTF-8", function()
+      assert.is_false(raw_tsv.isRawTSV({
+        {"a", "\xFF\xFE", "c"}
+      }))
+    end)
+
     it("should accept non-string basic types in cells", function()
       assert.is_true(raw_tsv.isRawTSV({
         {1, true, "c"},

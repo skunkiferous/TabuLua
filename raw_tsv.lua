@@ -125,6 +125,14 @@ local function isRawTSV(t)
                 if tc ~= "string" and tc ~= "number" and tc ~= "boolean" and tc ~= "nil" then
                     return false
                 end
+                if tc == "string" then
+                    if cell:find("[\t\r\n]") then
+                        return false
+                    end
+                    if not isValidUTF8(cell) then
+                        return false
+                    end
+                end
             end
         end
     end
