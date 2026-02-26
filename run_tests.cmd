@@ -22,6 +22,7 @@ if "%~1"=="" (
 REM Extract errors using Lua script
 del /Q test_errors.txt
 lua54 extract_test_errors.lua test_results.txt test_errors.txt
+set "TEST_EXIT=%ERRORLEVEL%"
 
 REM Display the errors on console
 echo.
@@ -33,4 +34,4 @@ echo Full test output saved to: test_results.txt
 echo Error summary saved to: test_errors.txt
 
 REM Exit with the same code as the error extraction (0 if all passed, 1 if failures)
-exit /b %ERRORLEVEL%
+exit /b %TEST_EXIT%
