@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 11, 0)
+local VERSION = semver(0, 12, 0)
 
 -- Module name
 local NAME = "predicates"

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.12.0] - 2026-02-26
+
+### Added
+
 - **TSV preamble support.** Comment and blank lines that appear *before* the header row in a
   regular (non-transposed) TSV file are now preserved as a preamble. The preamble is stored in
   `dataset.__preamble` (a raw TSV sub-sequence) and emitted first when the dataset is converted
