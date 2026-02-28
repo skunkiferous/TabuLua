@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.13.0] - 2026-02-28
+
+### Added
+
 - **Migration tool** (`migration.lua`, `data_set.lua`). A programmatic and command-line
   interface for batch modifications to TSV data files at the raw level (no type parsing).
   Designed for data migrations — adding, removing, or renaming columns, updating cell values,
@@ -35,10 +45,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
   - See [MIGRATION.md](MIGRATION.md) for full documentation.
 
-### Changed
-
-### Fixed
-
 ## [0.12.0] - 2026-02-26
 
 ### Added
@@ -61,8 +67,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   for Fire-element items and regenerates both the header row and all data rows entirely inside a
   cog block (loadOrder 700). The file also illustrates TSV preamble support: four comment lines
   appear before the cog block and are preserved across reformatting.
-
-### Changed
 
 ### Fixed
 
@@ -115,10 +119,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
     (no `critRate`) parse as `BossStats`; a new fourth boss `arachnidQueen` (with
     `critRate=0.35`) parses as `EliteBossStats`.
 
-### Changed
-
-### Fixed
-
 ## [0.10.0] - 2026-02-22
 
 ### Added
@@ -140,18 +140,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   - `DATA_FORMAT_README.md` updated with a "Custom Type Definition Files" sub-section
     and a new top-level "Column Omission" section (applicable to all TSV files).
 
-### Changed
-
-### Fixed
-
 ## [0.9.0] - 2026-02-21
 
 ### Added
 
 - Directory exploration now automatically skips hidden files and directories (names
   starting with `"."`, e.g. `.git`, `.env`). Skipped entries are logged at INFO level.
-
-### Changed
 
 ### Fixed
 
@@ -585,8 +579,3 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Everything - First release
-   
-### Changed
- 
-### Fixed
- 

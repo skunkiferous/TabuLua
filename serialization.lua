@@ -5,7 +5,7 @@ local NAME = "serialization"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 12, 0)
+local VERSION = semver(0, 13, 0)
 
 -- Dependencies
 local sparse_seq = require("sparse_sequence")
