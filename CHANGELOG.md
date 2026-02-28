@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- When a file listed in Files.tsv is not found at its expected path but a file
+  with the same name exists in a different directory, the error message now
+  reports the actual location and suggests checking the directory, instead of
+  only saying "does not exist".
+- The reformatter now auto-detects and skips migration scripts (TSV files with
+  `command, p1, p2, ...` headers) instead of reporting errors when they are
+  co-located with data packages. A warning is logged for each skipped script.
+
 ## [0.13.0] - 2026-02-28
 
 ### Added

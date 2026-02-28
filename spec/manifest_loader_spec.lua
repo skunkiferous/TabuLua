@@ -671,7 +671,7 @@ description:markdown	Package that references a non-existent file
       local has_no_stale_rowkey = true
       for _, msg in ipairs(log_messages) do
         local lmsg = msg:lower()
-        if lmsg:match("missing%.tsv") and lmsg:match("does not exist") then
+        if lmsg:match("missing%.tsv") and lmsg:match("does not exist on disk") then
           found_error = true
           has_nonzero_line = not lmsg:match("on line 0[^%d]")
           -- The stale row_key bug would inject "(Present.tsv)" into the message;
@@ -686,6 +686,52 @@ description:markdown	Package that references a non-existent file
       assert.is_true(has_nonzero_line, "Error line number should not be 0.\n" ..
         "Messages: " .. table.concat(log_messages, "\n"))
       assert.is_true(has_no_stale_rowkey, "Error must not contain a stale row_key from another file.\n" ..
+        "Messages: " .. table.concat(log_messages, "\n"))
+    end)
+
+    it("should report a specific error when a file exists in the wrong directory", function()
+      -- Scenario: Files.tsv references "WrongDir.tsv" at the package root,
+      -- but the actual file is in a subdirectory "Sub/WrongDir.tsv".
+      -- The error message should mention where the file was actually found.
+      local pkg_dir = path_join(temp_dir, "wrongdirpkg")
+      assert(lfs.mkdir(pkg_dir))
+      local sub_dir = path_join(pkg_dir, "Sub")
+      assert(lfs.mkdir(sub_dir))
+
+      local MANIFEST_WD = [[package_id:package_id	WrongDirPkg
+name:string	Wrong Directory Package
+version:version	0.1.0
+description:markdown	Package where a file is in the wrong directory
+]]
+      -- Files.tsv references "WrongDir.tsv" (expected at package root)
+      local FILES_WD = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+                       "WrongDir.tsv\tWrongDirData\t\ttrue\t\t\t1\tFile in wrong directory\n"
+      local DATA_WD = "name:identifier\tvalue:number\nitem1\t100\n"
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_WD))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_WD))
+      -- Place the file in a subdirectory instead of the package root
+      assert.is_true(file_util.writeFile(path_join(sub_dir, "WrongDir.tsv"), DATA_WD))
+
+      manifest_loader.processFiles({pkg_dir}, badVal)
+
+      assert.is_true(badVal.errors > 0, "Should report an error for the misplaced file")
+
+      -- The error message should mention "wrong directory" and indicate where
+      -- the file was actually found (sub/wrongdir.tsv)
+      local found_wrong_dir_error = false
+      for _, msg in ipairs(log_messages) do
+        local lmsg = msg:lower()
+        if lmsg:match("wrongdir%.tsv") and lmsg:match("wrong directory") then
+          found_wrong_dir_error = true
+          -- It should also mention the actual location
+          assert.is_truthy(lmsg:match("sub/wrongdir%.tsv"),
+            "Error should mention the actual path 'sub/wrongdir.tsv'.\n" ..
+            "Message: " .. msg)
+        end
+      end
+      assert.is_true(found_wrong_dir_error,
+        "Expected a 'wrong directory' error for WrongDir.tsv.\n" ..
         "Messages: " .. table.concat(log_messages, "\n"))
     end)
 
@@ -931,6 +977,46 @@ description:markdown	Test view-of-view chaining
         assert.same({"alpha", "gamma"}, names,
           "View2 should contain fire-element rows from View1 (which mirrors Source)")
       end)
+    end)
+
+    it("should skip migration scripts without errors", function()
+      local pkg_dir = path_join(temp_dir, "migrationpkg")
+      assert(lfs.mkdir(pkg_dir))
+
+      -- Create a valid package with one data file
+      local MANIFEST_MIG = [[package_id:package_id	MigPkg
+name:string	Migration Test Package
+version:version	0.1.0
+description:markdown	Package with a migration script
+]]
+      local FILES_MIG = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+                        "Data.tsv\tMigData\t\ttrue\t\t\t1\tData file\n"
+      local DATA_MIG = "name:identifier\tvalue:number\nitem1\t42\n"
+
+      -- Migration script co-located in the package directory
+      local MIGRATION_SCRIPT = "# Migration: v1 to v2\n" ..
+                               "command:string\tp1:string\tp2:string\tp3:string\n" ..
+                               "loadFile\tData.tsv\t\t\n" ..
+                               "renameColumn\tData.tsv\tvalue\tamount\n" ..
+                               "saveAll\t\t\t\n"
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_MIG))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_MIG))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Data.tsv"), DATA_MIG))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "migrate_v2.tsv"), MIGRATION_SCRIPT))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+
+      assert.is_not_nil(result, "processFiles should succeed")
+      assert.equals(0, badVal.errors,
+        "No errors expected — migration script should be skipped.\n" ..
+        "Messages: " .. table.concat(log_messages, "\n"))
+
+      -- The migration script should not appear in tsv_files
+      for file_name, _ in pairs(result.tsv_files) do
+        assert.is_falsy(file_name:match("migrate"),
+          "Migration script should not be in tsv_files: " .. file_name)
+      end
     end)
 
   end)

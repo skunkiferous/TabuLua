@@ -327,6 +327,36 @@ local function computeFilenameKey(file_name, file2dir)
     return nfile:lower()
 end
 
+-- Checks if a raw TSV structure looks like a migration script.
+-- Migration scripts have a header row with columns: command, p1, p2, p3, ...
+-- Column names may include type suffixes (e.g., command:string, p1:string).
+-- Returns true if the header matches the migration script pattern.
+local function isMigrationScript(rawtsv)
+    -- Find the first data row (non-comment, non-blank)
+    for _, line in ipairs(rawtsv) do
+        if type(line) == "table" then
+            -- Need at least 2 columns (command + p1)
+            if #line < 2 then
+                return false
+            end
+            -- Extract column name without type suffix
+            local col1 = tostring(line[1]):match("^([^:]+)")
+            if col1 ~= "command" then
+                return false
+            end
+            -- Check that remaining columns are p1, p2, p3, ... in order
+            for i = 2, #line do
+                local colName = tostring(line[i]):match("^([^:]+)")
+                if colName ~= ("p" .. (i - 1)) then
+                    return false
+                end
+            end
+            return true
+        end
+    end
+    return false
+end
+
 -- Processes a single TSV/CSV file: reads, parses, and registers types/enums if applicable
 local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
     typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
@@ -341,6 +371,12 @@ local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lc
     raw_files[file_name] = content
     content = lua_cog.processContentBV(file_name, content, loadEnv, badVal)
     local rawtsv = stringToRawTSV(content)
+
+    if isMigrationScript(rawtsv) then
+        logger:warn("Skipping migration script: " .. file_name)
+        raw_files[file_name] = nil
+        return
+    end
 
     local lcFNKey = computeFilenameKey(file_name, file2dir)
     local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
@@ -503,8 +539,16 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local customTypesSet = buildCustomTypesSet(lcFn2Type, extends)
     -- Check that files referenced in Files.tsv actually exist on disk
     local filesOnDisk = {}
+    -- Also build a reverse map: lowercased basename -> list of relative keys on disk
+    local basenameToKeys = {}
     for _, file_name in ipairs(files) do
-        filesOnDisk[computeFilenameKey(file_name, file2dir)] = true
+        local key = computeFilenameKey(file_name, file2dir)
+        filesOnDisk[key] = true
+        local basename = key:match("[/\\]([^/\\]+)$") or key
+        if not basenameToKeys[basename] then
+            basenameToKeys[basename] = {}
+        end
+        basenameToKeys[basename][#basenameToKeys[basename] + 1] = key
     end
     for lcfn, _ in pairs(lcFn2Type) do
         if not filesOnDisk[lcfn] and not isFilesDescriptor(lcfn) then
@@ -514,7 +558,16 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             badVal.col_name = ""
             badVal.col_idx = 0
             badVal.col_types = {}
-            badVal(lcfn, "file listed in Files.tsv does not exist")
+            -- Check if a file with the same basename exists elsewhere
+            local basename = lcfn:match("[/\\]([^/\\]+)$") or lcfn
+            local candidates = basenameToKeys[basename]
+            if candidates and #candidates > 0 then
+                badVal(lcfn, "file listed in Files.tsv was not found at the expected path; " ..
+                    "a file with that name exists at: " .. table.concat(candidates, ", ") ..
+                    " — check if it is in the wrong directory")
+            else
+                badVal(lcfn, "file listed in Files.tsv does not exist on disk")
+            end
         end
     end
     orderFilesByPriorities(files, priorities)
