@@ -72,6 +72,7 @@ cd tabulua
 | [DATA_FORMAT_README.md](DATA_FORMAT_README.md) | Complete data format and type system specification |
 | [tutorial/README.md](tutorial/README.md) | Hands-on tutorial with RPG-themed example packages |
 | [REFORMATTER.md](REFORMATTER.md) | CLI tool and export format reference |
+| [MIGRATION.md](MIGRATION.md) | Data migration tool and DataSet API reference |
 | [AGENTS.md](AGENTS.md) | Detailed architecture guide, designed to help AI Agents |
 | [CHANGELOG.md](CHANGELOG.md) | List of changes in each version |
 | [MODULES.md](MODULES.md) | Module reference with dependencies |

@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Migration tool** (`migration.lua`, `data_set.lua`). A programmatic and command-line
+  interface for batch modifications to TSV data files at the raw level (no type parsing).
+  Designed for data migrations — adding, removing, or renaming columns, updating cell values,
+  reorganizing files, and similar structural changes to data packages.
+
+  - **DataSet API** (`data_set.lua`): Mutable in-memory representation of multiple TSV files.
+    Supports loading, saving, creating, deleting, renaming, and copying files. Provides column
+    operations (add, remove, rename, move, set type/default), row operations (add, remove),
+    cell operations (get, set, conditional set, sandboxed transform), and comment/blank line
+    management. Includes `filesHelper()` for `Files.tsv` manipulation and `manifestHelper()`
+    for `Manifest.transposed.tsv` access.
+
+  - **Migration script executor** (`migration.lua`): Reads a TSV script file where each row
+    is a command with positional parameters, and executes them sequentially against a DataSet.
+    Supports `--dry-run` (validate without writing), `--verbose` (log each step), and
+    `--log-level=LEVEL` options. Stops on first error with step number reporting.
+
+  - **CLI entry point**: `lua54 migration.lua <script.tsv> <rootDir> [options]` runs a
+    migration script from the command line. Shows usage help when called without arguments.
+
+  - **Input validation**: Path traversal prevention, absolute path checks, disk-existence
+    guards for create/rename/copy, save-overwrite safety, column name validation via
+    `isName`, duplicate detection, and type checks on all helper method parameters.
+
+  - See [MIGRATION.md](MIGRATION.md) for full documentation.
+
 ### Changed
 
 ### Fixed
