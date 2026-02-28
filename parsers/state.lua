@@ -72,6 +72,9 @@ M.UNKNOWN_TYPES = {}
 -- Set of types we've already warned about (to avoid duplicate warnings)
 M.WARNED_TYPES = {}
 
+-- When true, suppresses the "'number' type" informational warnings
+M.suppressNumberTypeWarning = false
+
 -- Maps number parser names to their limits
 M.NUMBER_LIMITS = {}
 

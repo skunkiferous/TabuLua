@@ -637,7 +637,7 @@ end
 -- Informs about usage of "number" type (prefer "float" or "integer" for most cases)
 local function warnDontUseNumber(badVal, type_spec, orig_type_spec)
     -- Only inform after module setup is complete (not during initialization)
-    if state.settingUp then
+    if state.settingUp or state.suppressNumberTypeWarning then
         return
     end
     -- Only inform once per unique type specification

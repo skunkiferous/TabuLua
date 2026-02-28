@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- New `--no-number-warn` option in the reformatter CLI to suppress the informational
+  warnings about `number` type usage (the "Using 'number' type in..." messages).
+  Useful when `number` is intentionally used for mixed integer/decimal formatting
+  across many columns.
+
 ### Changed
 
 ### Removed

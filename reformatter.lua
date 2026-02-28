@@ -271,6 +271,8 @@ local function generateUsage()
         "  --log-level=<level>   Set log verbosity: debug, info, warn, error, fatal",
         "                        (default: info)",
         "",
+        "  --no-number-warn      Suppress 'number' type informational warnings",
+        "",
         "  --clean               Empty the export directory before exporting",
         "                        Removes all existing files and subdirectories",
         "",
@@ -555,6 +557,8 @@ if isMainScript then
                 end
             elseif arg_i == "--collapse-exploded" then
                 collapseExploded = true
+            elseif arg_i == "--no-number-warn" then
+                require("parsers.state").suppressNumberTypeWarning = true
             elseif arg_i == "--clean" then
                 cleanExportDir = true
             elseif arg_i:match("^%-%-") then
