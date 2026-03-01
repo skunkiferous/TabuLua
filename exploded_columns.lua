@@ -5,7 +5,7 @@ local NAME = "exploded_columns"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 13, 0)
+local VERSION = semver(0, 14, 0)
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")

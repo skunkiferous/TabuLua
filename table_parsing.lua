@@ -5,7 +5,7 @@ local NAME = "table_parsing"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 13, 0)
+local VERSION = semver(0, 14, 0)
 
 -- Dependencies
 local ltcn = require("ltcn")
