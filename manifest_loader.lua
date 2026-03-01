@@ -176,16 +176,24 @@ local function registerAliases(file, fileType, extends, badVal)
     end
 end
 
--- Register a record type for a TSV file based on its column structure
-local function registerFileType(file, fileType, typesSet, enumsSet, customTypesSet, badVal)
+-- Tracks types registered by registerFileType (as opposed to pre-existing/built-in types).
+-- Used to limit parent-child field validation to user-defined file record types only.
+local fileRegisteredTypes = {}
+
+-- Register a record type for a TSV file based on its column structure.
+-- When 'extends' is provided and the fileType has a parent with a registered record type,
+-- validates that each child field type is same-or-subtype of the corresponding parent field.
+local function registerFileType(file, fileType, typesSet, enumsSet, extends, badVal)
     if not fileType or #fileType == 0 then
         return  -- No type name specified
     end
-    if typesSet[fileType] or enumsSet[fileType] or customTypesSet[fileType] then
-        return  -- Type/enum/custom-type-def definitions are handled separately
+    if typesSet[fileType] or enumsSet[fileType] then
+        return  -- Type/enum definitions are handled separately
     end
-    if parsers.isBuiltInType(fileType) then
-        logger:error(fileType .. " is a built-in type, skipping registration")
+    -- Skip if this type is already parseable (built-in alias or previously registered).
+    -- This avoids conflicts when a file uses typeName=custom_type_def directly, whose
+    -- column subset would differ from the full built-in record definition.
+    if parseType(nullBadVal, fileType, false) then
         return
     end
 
@@ -198,6 +206,30 @@ local function registerFileType(file, fileType, typesSet, enumsSet, customTypesS
             logger:warn("Failed to register type " .. fileType .. " = " .. typeSpec)
         else
             logger:info("Registered type: " .. fileType .. " = " .. typeSpec)
+            fileRegisteredTypes[fileType] = true
+            -- Validate child fields against parent record type (if parent is a record).
+            -- Only validate against parents that were also registered by registerFileType
+            -- (not pre-existing/built-in types whose fields are intentionally broad).
+            local parentType = extends and extends[fileType]
+            if parentType and fileRegisteredTypes[parentType] then
+                local parentFields = parsers.recordFieldTypes(parentType)
+                if parentFields then
+                    local childFields = parsers.recordFieldTypes(fileType)
+                    if childFields then
+                        for field, parentFieldType in pairs(parentFields) do
+                            local childFieldType = childFields[field]
+                            if childFieldType and childFieldType ~= parentFieldType then
+                                if not parsers.extendsOrRestrict(childFieldType, parentFieldType) then
+                                    badVal(field, "field type '" .. childFieldType
+                                        .. "' in " .. fileType
+                                        .. " is not a subtype of '" .. parentFieldType
+                                        .. "' from parent type " .. parentType)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end
     end
 end
@@ -404,7 +436,7 @@ local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lc
             registerCustomTypesFromFile(file, badVal)
         end
         -- Register the file's column structure as a type
-        registerFileType(file, fileType, typesSet, enumsSet, customTypesSet, badVal)
+        registerFileType(file, fileType, typesSet, enumsSet, extends, badVal)
     end
 end
 
@@ -850,6 +882,8 @@ end
 --- @side_effect Logs progress and errors; registers type parsers and aliases
 local function processFiles(directories, badVal)
     badVal = initializeBadVal(badVal)
+    -- Reset file-registered types tracking for this processing run
+    fileRegisteredTypes = {}
 
     local file2dir = {}
     local files = collectAndLogFiles(directories, file2dir)

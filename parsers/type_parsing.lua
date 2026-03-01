@@ -105,6 +105,10 @@ local function parse_type_tuple(badVal, xparsed, type_spec)
             generators.registerComparator(type_spec,
                 generators.getCompInternal('type_spec'))
             state.NEVER_TABLE[type_spec] = true
+            -- Register {extends,X} as a subtype of type_spec.
+            -- Set EXTENDS directly to avoid doTypeParamsUpdate triggering
+            -- extendsOrRestrict during parsing, which would cause recursion.
+            state.EXTENDS[type_spec] = 'type_spec'
             return result, type_spec, xparsed
         elseif #parsed < 3 then
             utils.log(badVal, 'extends', type_spec,
@@ -374,6 +378,8 @@ local function parse_type_map(badVal, xparsed, type_spec)
                 if norm_result then
                     state.COMPARATORS[type_spec] = state.COMPARATORS[normalized]
                     state.NEVER_TABLE[type_spec] = true
+                    -- Alias colon form to comma form so they are interchangeable
+                    state.ALIASES[type_spec] = normalized
                 end
                 return norm_result
             else

@@ -13,8 +13,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   warnings about `number` type usage (the "Using 'number' type in..." messages).
   Useful when `number` is intentionally used for mixed integer/decimal formatting
   across many columns.
+- File-level record types are now registered for `custom_type_def` files. When a
+  child file extends a parent file, field types are validated: each child field must
+  be the same type or a subtype of the corresponding parent field. This catches
+  mismatches like a parent using `{extends:float}` while a child still allows
+  `{extends:number}`.
 
 ### Changed
+
+- Constraint types `{extends:X}` (colon/map form) and `{extends,X}` (comma/tuple
+  form) are now treated as interchangeable after parsing. The colon form is
+  automatically normalized to the comma form via alias resolution.
+- Constraint types `{extends,X}` now register `type_spec` as their ancestor in the
+  EXTENDS table, so `extendsOrRestrict("{extends:number}", "type_spec")` returns true.
+- Union-to-union subtype checking now uses member-wise comparison as a fallback when
+  exact string matching fails. For example, `{extends:float}|nil` is now correctly
+  recognized as a subtype of `{extends:number}|nil`.
 
 ### Removed
 

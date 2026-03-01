@@ -436,6 +436,23 @@ local function childUnionExtendsParent(childUTypes, parentUTypes, child, parent)
             if isSubSetSequence(parentUTypes, childUTypes, true) then
                 return true
             end
+            -- Member-wise subtype fallback: each child union member must be
+            -- a subtype of some parent union member
+            local allMatch = true
+            for _, cm in ipairs(childUTypes) do
+                local found = false
+                for _, pm in ipairs(parentUTypes) do
+                    if typeSameOrExtends(cm, pm) then
+                        found = true
+                        break
+                    end
+                end
+                if not found then
+                    allMatch = false
+                    break
+                end
+            end
+            if allMatch then return true end
         else
             -- Union extends a non-union parent if ALL members extend that parent
             local allExtend = true

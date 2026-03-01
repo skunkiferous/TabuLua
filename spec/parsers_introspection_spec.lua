@@ -354,4 +354,39 @@ describe("parsers - introspection", function()
             assert.is_false(parsers.extendsOrRestrict("IntroPerson", "IntroEmployee"))
         end)
     end)
+
+    describe("constraint type subtyping", function()
+
+        it("{extends:float} should extend {extends:number} (colon form)", function()
+            assert.is_true(parsers.extendsOrRestrict("{extends:float}", "{extends:number}"))
+        end)
+
+        it("{extends:number} should NOT extend {extends:float}", function()
+            assert.is_false(parsers.extendsOrRestrict("{extends:number}", "{extends:float}"))
+        end)
+
+        it("{extends:number} should extend type_spec", function()
+            assert.is_true(parsers.extendsOrRestrict("{extends:number}", "type_spec"))
+        end)
+
+        it("{extends,number} should extend type_spec (comma form)", function()
+            assert.is_true(parsers.extendsOrRestrict("{extends,number}", "type_spec"))
+        end)
+
+        it("{extends:float}|nil should extend {extends:number}|nil (union subtyping)", function()
+            assert.is_true(parsers.extendsOrRestrict("{extends:float}|nil", "{extends:number}|nil"))
+        end)
+
+        it("{extends:number}|nil should NOT extend {extends:float}|nil", function()
+            assert.is_false(parsers.extendsOrRestrict("{extends:number}|nil", "{extends:float}|nil"))
+        end)
+
+        it("cross-form: {extends:float} should extend {extends,number}", function()
+            assert.is_true(parsers.extendsOrRestrict("{extends:float}", "{extends,number}"))
+        end)
+
+        it("cross-form: {extends,float} should extend {extends:number}", function()
+            assert.is_true(parsers.extendsOrRestrict("{extends,float}", "{extends:number}"))
+        end)
+    end)
 end)

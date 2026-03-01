@@ -370,4 +370,108 @@ describe("manifest_loader - custom type definition files", function()
 
     end)
 
+    -- -------------------------------------------------------------------------
+    describe("record type registration and parent-child field validation", function()
+
+        it("registers the record type of a custom_type_def file", function()
+            -- A custom_type_def file should have its column structure registered as a record type
+            local pkg_dir = makePkg("RecTypeReg", {
+                "UnitDefs.tsv\tctdUnitDefs\tcustom_type_def\tfalse\t\t\t1\tUnit defs"
+            }, {
+                ["UnitDefs.tsv"] =
+                    "name:name\tparent:type_spec|nil\n" ..
+                    "ctdRecTypeUnit\tinteger\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+            -- The file type itself should be registered as a record type
+            assert.is_true(isRegistered("ctdUnitDefs"))
+            -- And the types it defines should also be registered
+            assert.is_true(isRegistered("ctdRecTypeUnit"))
+        end)
+
+        it("accepts a child file whose fields are same as parent", function()
+            -- Parent and child have identical column types -> no error
+            local pkg_dir = makePkg("FieldSame", {
+                "Parent.tsv\tctdFieldParent\tcustom_type_def\tfalse\t\t\t1\tParent defs",
+                "Child.tsv\tctdFieldChild\tctdFieldParent\tfalse\t\t\t2\tChild defs"
+            }, {
+                ["Parent.tsv"] =
+                    "name:name\tparent:{extends:number}|nil\n" ..
+                    "ctdFieldParentType\tfloat\n",
+                ["Child.tsv"] =
+                    "name:name\tparent:{extends:number}|nil\n" ..
+                    "ctdFieldChildType\tinteger\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+        end)
+
+        it("accepts a child file whose fields are more restrictive than parent", function()
+            -- Parent has parent:{extends:number}, child has parent:{extends:float}
+            -- {extends:float} is more restrictive than {extends:number} -> OK
+            local pkg_dir = makePkg("FieldNarrower", {
+                "Parent.tsv\tctdNarrowParent\tcustom_type_def\tfalse\t\t\t1\tParent defs",
+                "Child.tsv\tctdNarrowChild\tctdNarrowParent\tfalse\t\t\t2\tChild defs"
+            }, {
+                ["Parent.tsv"] =
+                    "name:name\tparent:{extends:number}|nil\n" ..
+                    "ctdNarrowParentT\tfloat\n",
+                ["Child.tsv"] =
+                    "name:name\tparent:{extends:float}|nil\n" ..
+                    "ctdNarrowChildT\tfloat\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+        end)
+
+        it("errors when child file has less restrictive field than parent", function()
+            -- Parent has parent:{extends:float}, child has parent:{extends:number}
+            -- {extends:number} is LESS restrictive than {extends:float} -> ERROR
+            local pkg_dir = makePkg("FieldWider", {
+                "Parent.tsv\tctdWideParent\tcustom_type_def\tfalse\t\t\t1\tParent defs",
+                "Child.tsv\tctdWideChild\tctdWideParent\tfalse\t\t\t2\tChild defs"
+            }, {
+                ["Parent.tsv"] =
+                    "name:name\tparent:{extends:float}|nil\n" ..
+                    "ctdWideParentT\tfloat\n",
+                ["Child.tsv"] =
+                    "name:name\tparent:{extends:number}|nil\n" ..
+                    "ctdWideChildT\tinteger\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            -- Child widens a parent field type -> must produce an error
+            assert.is_true(badVal.errors > 0)
+        end)
+
+        it("errors when child file changes a field to an incompatible type", function()
+            -- Parent has parent:type_spec, child changes it to parent:string
+            local pkg_dir = makePkg("FieldIncompat", {
+                "Parent.tsv\tctdIncompatParent\tcustom_type_def\tfalse\t\t\t1\tParent defs",
+                "Child.tsv\tctdIncompatChild\tctdIncompatParent\tfalse\t\t\t2\tChild defs"
+            }, {
+                ["Parent.tsv"] =
+                    "name:name\tparent:type_spec|nil\n" ..
+                    "ctdIncompatParentT\tinteger\n",
+                ["Child.tsv"] =
+                    "name:name\tparent:string|nil\n" ..
+                    "ctdIncompatChildT\tinteger\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            -- Incompatible field type -> must produce an error
+            assert.is_true(badVal.errors > 0)
+        end)
+
+    end)
+
 end)

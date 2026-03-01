@@ -56,7 +56,16 @@ end
 
 -- Resolves the name of "type aliases" to the name / type specification of real types, if it exists
 function M.resolve(name)
-    return state.ALIASES[name] or name
+    local alias = state.ALIASES[name]
+    if alias then return alias end
+    -- Normalize {extends:X} colon form to {extends,X} comma form on demand
+    local ancestor = name:match("^{extends:([^}]+)}$")
+    if ancestor then
+        local normalized = "{extends," .. ancestor .. "}"
+        state.ALIASES[name] = normalized
+        return normalized
+    end
+    return name
 end
 
 -- Checks context and returns true if TSV context is expected
