@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.14.0] - 2026-03-01
+
+### Added
+
 - New `--no-number-warn` option in the reformatter CLI to suppress the informational
   warnings about `number` type usage (the "Using 'number' type in..." messages).
   Useful when `number` is intentionally used for mixed integer/decimal formatting
@@ -29,8 +39,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Union-to-union subtype checking now uses member-wise comparison as a fallback when
   exact string matching fails. For example, `{extends:float}|nil` is now correctly
   recognized as a subtype of `{extends:number}|nil`.
-
-### Removed
 
 ### Fixed
 
