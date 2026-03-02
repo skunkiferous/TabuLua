@@ -342,6 +342,110 @@ describe("data_set", function()
         end)
     end)
 
+    describe("splitFile", function()
+        it("should copy a file when no column filters given", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\nalpha\t1\nbeta\t2\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok = ds:splitFile("src.tsv", "dst.tsv")
+            assert.is_true(ok)
+            assert.is_true(ds:hasFile("dst.tsv"))
+            assert.same({"name", "value"}, ds:getColumnNames("dst.tsv"))
+            assert.same({"name", "value"}, ds:getColumnNames("src.tsv"))
+            assert.are.equal("1", ds:getCell("dst.tsv", "alpha", "value"))
+        end)
+
+        it("should filter columns in source with keepColumns", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\tdesc:text\nalpha\t1\thello\nbeta\t2\tworld\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok = ds:splitFile("src.tsv", "dst.tsv", "name|value")
+            assert.is_true(ok)
+            -- Source should only have name and value
+            assert.same({"name", "value"}, ds:getColumnNames("src.tsv"))
+            -- Target should have all columns
+            assert.same({"name", "value", "desc"}, ds:getColumnNames("dst.tsv"))
+        end)
+
+        it("should filter columns in target with targetColumns", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\tdesc:text\nalpha\t1\thello\nbeta\t2\tworld\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok = ds:splitFile("src.tsv", "dst.tsv", nil, "name|desc")
+            assert.is_true(ok)
+            -- Source should have all columns
+            assert.same({"name", "value", "desc"}, ds:getColumnNames("src.tsv"))
+            -- Target should only have name and desc
+            assert.same({"name", "desc"}, ds:getColumnNames("dst.tsv"))
+            assert.are.equal("hello", ds:getCell("dst.tsv", "alpha", "desc"))
+        end)
+
+        it("should split columns between source and target", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\tdesc:text\tstatus:string\n" ..
+                "alpha\t1\thello\tactive\n" ..
+                "beta\t2\tworld\tinactive\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok = ds:splitFile("src.tsv", "dst.tsv", "name|value", "name|desc|status")
+            assert.is_true(ok)
+            assert.same({"name", "value"}, ds:getColumnNames("src.tsv"))
+            assert.same({"name", "desc", "status"}, ds:getColumnNames("dst.tsv"))
+            assert.are.equal("1", ds:getCell("src.tsv", "alpha", "value"))
+            assert.are.equal("hello", ds:getCell("dst.tsv", "alpha", "desc"))
+            assert.are.equal("active", ds:getCell("dst.tsv", "alpha", "status"))
+        end)
+
+        it("should error on unknown column in keepColumns", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok, err = ds:splitFile("src.tsv", "dst.tsv", "name|missing")
+            assert.is_nil(ok)
+            assert.matches("not found", err)
+        end)
+
+        it("should error on unknown column in targetColumns", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok, err = ds:splitFile("src.tsv", "dst.tsv", nil, "name|missing")
+            assert.is_nil(ok)
+            assert.matches("not found", err)
+        end)
+
+        it("should error if target already exists", function()
+            writeTestFile(temp_dir, "src.tsv", "name:string\nalpha\n")
+            writeTestFile(temp_dir, "dst.tsv", "name:string\nbeta\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok, err = ds:splitFile("src.tsv", "dst.tsv")
+            assert.is_nil(ok)
+            assert.matches("already exists", err)
+        end)
+
+        it("should preserve data rows in both files", function()
+            writeTestFile(temp_dir, "src.tsv",
+                "name:string\tvalue:number\tdesc:text\n" ..
+                "alpha\t1\thello\n" ..
+                "beta\t2\tworld\n" ..
+                "gamma\t3\tfoo\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("src.tsv")
+            local ok = ds:splitFile("src.tsv", "dst.tsv", "name|value", "name|desc")
+            assert.is_true(ok)
+            assert.are.equal(3, ds:rowCount("src.tsv"))
+            assert.are.equal(3, ds:rowCount("dst.tsv"))
+            assert.are.equal("3", ds:getCell("src.tsv", "gamma", "value"))
+            assert.are.equal("foo", ds:getCell("dst.tsv", "gamma", "desc"))
+        end)
+    end)
+
     describe("listFiles", function()
         it("should return sorted list of file names", function()
             writeTestFile(temp_dir, "b.tsv", "name:string\nbeta\n")
@@ -541,6 +645,71 @@ describe("data_set", function()
         end)
     end)
 
+    describe("copyColumn", function()
+        it("should copy a column with data under a new name", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number\nalpha\t1\nbeta\t2\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok = ds:copyColumn("test.tsv", "value", "valueCopy")
+            assert.is_true(ok)
+            assert.same({"name", "value", "valueCopy"}, ds:getColumnNames("test.tsv"))
+            assert.are.equal("1", ds:getCell("test.tsv", "alpha", "valueCopy"))
+            assert.are.equal("2", ds:getCell("test.tsv", "beta", "valueCopy"))
+        end)
+
+        it("should preserve type and default", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number|nil:0\nalpha\t1\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            ds:copyColumn("test.tsv", "value", "valueCopy")
+            assert.are.equal("valueCopy:number|nil:0", ds:getColumnSpec("test.tsv", "valueCopy"))
+        end)
+
+        it("should support position parameter", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number\tdesc:text\nalpha\t1\thello\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok = ds:copyColumn("test.tsv", "desc", "descCopy", {after = "name"})
+            assert.is_true(ok)
+            assert.same({"name", "descCopy", "value", "desc"}, ds:getColumnNames("test.tsv"))
+            assert.are.equal("hello", ds:getCell("test.tsv", "alpha", "descCopy"))
+        end)
+
+        it("should create independent copy of data", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            ds:copyColumn("test.tsv", "value", "valueCopy")
+            ds:setCell("test.tsv", "alpha", "valueCopy", "99")
+            assert.are.equal("1", ds:getCell("test.tsv", "alpha", "value"))
+            assert.are.equal("99", ds:getCell("test.tsv", "alpha", "valueCopy"))
+        end)
+
+        it("should error on duplicate column name", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok, err = ds:copyColumn("test.tsv", "value", "name")
+            assert.is_nil(ok)
+            assert.matches("already exists", err)
+        end)
+
+        it("should error on missing source column", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\nalpha\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok, err = ds:copyColumn("test.tsv", "missing", "newCol")
+            assert.is_nil(ok)
+            assert.matches("not found", err)
+        end)
+    end)
+
     ---------------------------------------------------------------------------
     -- Row operations
     ---------------------------------------------------------------------------
@@ -656,6 +825,62 @@ describe("data_set", function()
             local ok, err = ds:removeRow("test.tsv", "missing")
             assert.is_nil(ok)
             assert.matches("not found", err)
+        end)
+    end)
+
+    describe("copyRow", function()
+        it("should copy a row under a new primary key", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number\tdesc:text\nalpha\t1\thello\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok = ds:copyRow("test.tsv", "alpha", "beta")
+            assert.is_true(ok)
+            assert.are.equal(2, ds:rowCount("test.tsv"))
+            assert.is_true(ds:hasRow("test.tsv", "beta"))
+            assert.are.equal("1", ds:getCell("test.tsv", "beta", "value"))
+            assert.are.equal("hello", ds:getCell("test.tsv", "beta", "desc"))
+        end)
+
+        it("should create independent copy of data", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            ds:copyRow("test.tsv", "alpha", "beta")
+            ds:setCell("test.tsv", "beta", "value", "99")
+            assert.are.equal("1", ds:getCell("test.tsv", "alpha", "value"))
+            assert.are.equal("99", ds:getCell("test.tsv", "beta", "value"))
+        end)
+
+        it("should error on duplicate primary key", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\nalpha\nbeta\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok, err = ds:copyRow("test.tsv", "alpha", "beta")
+            assert.is_nil(ok)
+            assert.matches("duplicate", err)
+        end)
+
+        it("should error on missing source row", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\nalpha\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok, err = ds:copyRow("test.tsv", "missing", "newKey")
+            assert.is_nil(ok)
+            assert.matches("not found", err)
+        end)
+
+        it("should error on empty new key", function()
+            writeTestFile(temp_dir, "test.tsv",
+                "name:string\nalpha\n")
+            local ds = data_set.new(temp_dir)
+            ds:loadFile("test.tsv")
+            local ok, err = ds:copyRow("test.tsv", "alpha", "")
+            assert.is_nil(ok)
+            assert.matches("non%-empty", err)
         end)
     end)
 

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- New migration commands `copyColumn`, `copyRow`, and `splitFile` for duplicating
+  columns, rows, and files within the migration tool.
+  - `copyColumn`: duplicates a column with all its data under a new name, with
+    optional position parameter.
+  - `copyRow`: duplicates a row under a new primary key.
+  - `splitFile`: copies a file with optional column filtering — can keep a subset
+    of columns in the source and/or target, enabling file splitting. Warns if the
+    primary key column is missing from either file.
+- Corresponding DataSet API methods: `copyColumn()`, `copyRow()`, `splitFile()`.
+
 ### Changed
 
 ### Removed

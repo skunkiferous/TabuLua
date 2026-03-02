@@ -250,6 +250,25 @@ describe("migration", function()
             assert.are.equal("parent:type_spec|nil", ds:getColumnSpec("Test.tsv", "parent"))
         end)
 
+        it("should copy a column", function()
+            writeTestFile(temp_dir, "data/Test.tsv",
+                "name:string\tvalue:number\nalpha\t1\nbeta\t2\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\tp4:string\tp5:string\n" ..
+                "loadFile\tTest.tsv\n" ..
+                "copyColumn\tTest.tsv\tvalue\tvalueCopy\tname\n" ..
+                "saveAll\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_true(ok, err)
+            local ds = data_set.new(path_join(temp_dir, "data"))
+            ds:loadFile("Test.tsv")
+            assert.same({"name", "valueCopy", "value"}, ds:getColumnNames("Test.tsv"))
+            assert.are.equal("1", ds:getCell("Test.tsv", "alpha", "valueCopy"))
+            assert.are.equal("2", ds:getCell("Test.tsv", "beta", "valueCopy"))
+        end)
+
         it("should remove a column", function()
             writeTestFile(temp_dir, "data/Test.tsv",
                 "name:string\tobsolete:string\tvalue:number\nalpha\told\t1\n")
@@ -356,6 +375,25 @@ describe("migration", function()
             assert.is_true(ds:hasRow("Test.tsv", "beta"))
             assert.are.equal("2", ds:getCell("Test.tsv", "beta", "value"))
         end)
+
+        it("should copy a row", function()
+            writeTestFile(temp_dir, "data/Test.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\n" ..
+                "loadFile\tTest.tsv\n" ..
+                "copyRow\tTest.tsv\talpha\tbeta\n" ..
+                "saveAll\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_true(ok, err)
+            local ds = data_set.new(path_join(temp_dir, "data"))
+            ds:loadFile("Test.tsv")
+            assert.is_true(ds:hasRow("Test.tsv", "alpha"))
+            assert.is_true(ds:hasRow("Test.tsv", "beta"))
+            assert.are.equal("1", ds:getCell("Test.tsv", "beta", "value"))
+        end)
     end)
 
     ---------------------------------------------------------------------------
@@ -376,6 +414,48 @@ describe("migration", function()
                 path_join(temp_dir, "data"))
             assert.is_true(ok, err)
             assert.is_true(fileExists(path_join(temp_dir, "data/New.tsv")))
+        end)
+
+        it("should split a file with column filtering", function()
+            writeTestFile(temp_dir, "data/Source.tsv",
+                "name:string\tvalue:number\tdesc:text\tstatus:string\n" ..
+                "alpha\t1\thello\tactive\n" ..
+                "beta\t2\tworld\tinactive\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\tp4:string\n" ..
+                "loadFile\tSource.tsv\n" ..
+                "splitFile\tSource.tsv\tTarget.tsv\tname|value\tname|desc|status\n" ..
+                "saveAll\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_true(ok, err)
+            local ds = data_set.new(path_join(temp_dir, "data"))
+            ds:loadFile("Source.tsv")
+            ds:loadFile("Target.tsv")
+            assert.same({"name", "value"}, ds:getColumnNames("Source.tsv"))
+            assert.same({"name", "desc", "status"}, ds:getColumnNames("Target.tsv"))
+            assert.are.equal("1", ds:getCell("Source.tsv", "alpha", "value"))
+            assert.are.equal("hello", ds:getCell("Target.tsv", "alpha", "desc"))
+            assert.are.equal("inactive", ds:getCell("Target.tsv", "beta", "status"))
+        end)
+
+        it("should copy a file without column filters", function()
+            writeTestFile(temp_dir, "data/Source.tsv",
+                "name:string\tvalue:number\nalpha\t1\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\n" ..
+                "loadFile\tSource.tsv\n" ..
+                "splitFile\tSource.tsv\tCopy.tsv\n" ..
+                "saveAll\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_true(ok, err)
+            local ds = data_set.new(path_join(temp_dir, "data"))
+            ds:loadFile("Copy.tsv")
+            assert.same({"name", "value"}, ds:getColumnNames("Copy.tsv"))
+            assert.are.equal("1", ds:getCell("Copy.tsv", "alpha", "value"))
         end)
 
         it("should create files with pipe-delimited columns", function()

@@ -649,6 +649,80 @@ function DataSet:copyFile(sourceName, targetName)
     return true
 end
 
+--- Copy/split a file, optionally filtering columns in source and target.
+--- @param sourceName string Source file name
+--- @param targetName string Target file name
+--- @param keepColumns string|nil Pipe-delimited column names to keep in source (nil = keep all)
+--- @param targetColumns string|nil Pipe-delimited column names to keep in target (nil = keep all)
+--- @return boolean|nil true on success
+--- @return string|nil error message
+function DataSet:splitFile(sourceName, targetName, keepColumns, targetColumns)
+    -- Validate that named columns exist before making any changes
+    local entry, err = assertFileLoaded(self, sourceName)
+    if not entry then return nil, err end
+    local allColNames = {}
+    for _, col in ipairs(entry.columns) do
+        allColNames[col.name] = true
+    end
+    local primaryKeyName = entry.columns[1] and entry.columns[1].name or nil
+    -- Parse and validate keepColumns
+    local keepSet, targetSet
+    if keepColumns and keepColumns ~= "" then
+        keepSet = {}
+        for _, name in ipairs(split(keepColumns, "|")) do
+            if not allColNames[name] then
+                return nil, "column not found in source: " .. name
+            end
+            keepSet[name] = true
+        end
+        -- Warn if primary key not in keepColumns
+        if primaryKeyName and not keepSet[primaryKeyName] then
+            self.logger:warn("splitFile: primary key column '" .. primaryKeyName ..
+                "' not in keepColumns for source file '" .. sourceName .. "'")
+        end
+    end
+    -- Parse and validate targetColumns
+    if targetColumns and targetColumns ~= "" then
+        targetSet = {}
+        for _, name in ipairs(split(targetColumns, "|")) do
+            if not allColNames[name] then
+                return nil, "column not found in source: " .. name
+            end
+            targetSet[name] = true
+        end
+        -- Warn if primary key not in targetColumns
+        if primaryKeyName and not targetSet[primaryKeyName] then
+            self.logger:warn("splitFile: primary key column '" .. primaryKeyName ..
+                "' not in targetColumns for target file '" .. targetName .. "'")
+        end
+    end
+    -- Create the copy
+    local ok
+    ok, err = self:copyFile(sourceName, targetName)
+    if not ok then return nil, err end
+    -- Remove unlisted columns from source (iterate in reverse to preserve indices)
+    if keepSet then
+        local colNames = self:getColumnNames(sourceName)
+        for i = #colNames, 1, -1 do
+            if not keepSet[colNames[i]] then
+                ok, err = self:removeColumn(sourceName, colNames[i])
+                if not ok then return nil, err end
+            end
+        end
+    end
+    -- Remove unlisted columns from target
+    if targetSet then
+        local colNames = self:getColumnNames(targetName)
+        for i = #colNames, 1, -1 do
+            if not targetSet[colNames[i]] then
+                ok, err = self:removeColumn(targetName, colNames[i])
+                if not ok then return nil, err end
+            end
+        end
+    end
+    return true
+end
+
 --- Return list of file names in the dataset.
 --- @return table Sorted list of file names
 function DataSet:listFiles()
@@ -912,6 +986,55 @@ function DataSet:setColumnDefault(fileName, columnName, defaultValue)
     return true
 end
 
+--- Copy/duplicate a column under a new name.
+--- @param fileName string
+--- @param sourceColumn string Name of the column to copy
+--- @param newColumnName string Name for the new column
+--- @param position table|nil Position: {after="name"}, {before="name"}, {index=N}, or nil (append)
+--- @return boolean|nil true on success
+--- @return string|nil error message
+function DataSet:copyColumn(fileName, sourceColumn, newColumnName, position)
+    local entry, err = assertFileLoaded(self, fileName)
+    if not entry then return nil, err end
+    local srcCol
+    srcCol, err = assertColumnExists(entry, sourceColumn)
+    if not srcCol then return nil, err end
+    if not isValidColumnName(newColumnName) then
+        return nil, "invalid column name: " .. tostring(newColumnName)
+    end
+    if entry.columnIndex[newColumnName] then
+        return nil, "column already exists: " .. newColumnName
+    end
+    -- Build new column with same type/default but new name
+    local newCol = {
+        name = newColumnName,
+        typeSpec = srcCol.typeSpec,
+        default = srcCol.default,
+        index = 0, -- will be set by reindex
+    }
+    newCol.spec = rebuildSpec(newCol)
+    -- Save the original source column index before modifying column metadata
+    local origSrcIdx = srcCol.index
+    -- Resolve insertion position
+    local targetIdx
+    targetIdx, err = resolveColumnPosition(entry.columns, entry.columnIndex, position)
+    if not targetIdx then return nil, err end
+    -- Insert column metadata
+    table.insert(entry.columns, targetIdx, newCol)
+    reindexColumns(entry)
+    -- Update header row
+    entry.rawTSV[entry.headerRowIndex] = rebuildHeaderRow(entry.columns)
+    -- Copy cell values from source to new column in all data rows.
+    -- Each row is unmodified, so read from the original source index first,
+    -- then insert at targetIdx.
+    for _, row in iterDataRows(entry) do
+        local val = row[origSrcIdx] or ""
+        table.insert(row, targetIdx, val)
+    end
+    markDirty(entry)
+    return true
+end
+
 ---------------------------------------------------------------------------
 -- Row operations
 ---------------------------------------------------------------------------
@@ -1031,6 +1154,38 @@ function DataSet:removeRow(fileName, key)
         return nil, "cannot remove the header row"
     end
     table.remove(entry.rawTSV, idx)
+    markDirty(entry)
+    return true
+end
+
+--- Copy/duplicate a row under a new primary key.
+--- @param fileName string
+--- @param sourceKey string Primary key of the row to copy
+--- @param newKey string Primary key for the new row
+--- @return boolean|nil true on success
+--- @return string|nil error message
+function DataSet:copyRow(fileName, sourceKey, newKey)
+    local entry, err = assertFileLoaded(self, fileName)
+    if not entry then return nil, err end
+    if type(newKey) ~= "string" or newKey == "" then
+        return nil, "newKey must be a non-empty string"
+    end
+    local _, srcRow = findDataRowByKey(entry, sourceKey)
+    if not srcRow then
+        return nil, "row not found: " .. tostring(sourceKey)
+    end
+    -- Check for duplicate primary key
+    local existing = findDataRowByKey(entry, newKey)
+    if existing then
+        return nil, "duplicate primary key: " .. tostring(newKey)
+    end
+    -- Deep copy the row and replace the primary key
+    local newRow = {}
+    for i, v in ipairs(srcRow) do
+        newRow[i] = v
+    end
+    newRow[1] = newKey
+    table.insert(entry.rawTSV, newRow)
     markDirty(entry)
     return true
 end

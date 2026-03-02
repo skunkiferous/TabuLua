@@ -104,6 +104,15 @@ not validate types — it preserves them as-is in the header cells.
 | `createFile` | fileName | colSpecs | Create a new file (see below) |
 | `deleteFile` | fileName | | Remove file from dataset and delete from disk |
 | `renameFile` | oldName | newName | Rename a file in the dataset |
+| `splitFile` | sourceName | targetName | Copy/split a file (see below) |
+
+**`splitFile` parameters**: p3 = `keepColumns` (pipe-delimited column names to keep in source),
+p4 = `targetColumns` (pipe-delimited column names to keep in target). Both are optional — omit to
+keep all columns. Warns if the primary key column is missing from either list.
+
+```
+splitFile	Source.tsv	Target.tsv	name|value	name|desc|status
+```
 
 **`createFile` column specs** are pipe-delimited in p2 to work within the TSV column limit:
 
@@ -113,13 +122,14 @@ createFile	NewFile.tsv	id:string|name:text|value:number
 
 ### Column Commands
 
-| Command | p1 | p2 | p3 | Description |
-|---------|----|----|-----|-------------|
-| `addColumn` | fileName | columnSpec | afterCol | Add a column (see position below) |
-| `removeColumn` | fileName | columnName | | Remove a column and its data |
-| `renameColumn` | fileName | oldName | newName | Rename a column |
-| `moveColumn` | fileName | columnName | afterCol | Move a column (see position below) |
-| `setColumnType` | fileName | columnName | newType | Change the type in a column header |
+| Command | p1 | p2 | p3 | p4 | Description |
+|---------|----|----|-----|-----|-------------|
+| `addColumn` | fileName | columnSpec | afterCol | | Add a column (see position below) |
+| `removeColumn` | fileName | columnName | | | Remove a column and its data |
+| `renameColumn` | fileName | oldName | newName | | Rename a column |
+| `moveColumn` | fileName | columnName | afterCol | | Move a column (see position below) |
+| `setColumnType` | fileName | columnName | newType | | Change the type in a column header |
+| `copyColumn` | fileName | sourceColumn | newName | afterCol | Copy a column under a new name (see position below) |
 
 **Column position** (`afterCol` parameter):
 - Empty or omitted: append at the end
@@ -128,10 +138,11 @@ createFile	NewFile.tsv	id:string|name:text|value:number
 
 ### Row Commands
 
-| Command | p1 | p2 | Description |
-|---------|----|----|-------------|
-| `addRow` | fileName | values | Add a row with pipe-delimited values |
-| `removeRow` | fileName | key | Remove a row by its primary key (column 1 value) |
+| Command | p1 | p2 | p3 | Description |
+|---------|----|----|-----|-------------|
+| `addRow` | fileName | values | | Add a row with pipe-delimited values |
+| `removeRow` | fileName | key | | Remove a row by its primary key (column 1 value) |
+| `copyRow` | fileName | sourceKey | newKey | Copy a row under a new primary key |
 
 **`addRow` values** are pipe-delimited in p2:
 
@@ -255,6 +266,7 @@ data_set.new(rootDir, options)
 | `deleteFile(fileName)` | Remove from dataset and delete from disk |
 | `renameFile(oldName, newName)` | Rename a file (saved to new path on next save) |
 | `copyFile(sourceName, targetName)` | Create an independent deep copy |
+| `splitFile(src, target, keep, tgtCols)` | Copy/split with optional column filtering |
 
 ### Query Operations
 
@@ -284,6 +296,7 @@ data_set.new(rootDir, options)
 | `moveColumn(fileName, colName, pos)` | Reorder column (same position format as `addColumn`) |
 | `setColumnType(fileName, colName, type)` | Change column type in header |
 | `setColumnDefault(fileName, colName, def)` | Set or remove default value |
+| `copyColumn(fileName, src, new, pos)` | Copy a column under a new name |
 
 ### Row Operations
 
@@ -291,6 +304,7 @@ data_set.new(rootDir, options)
 |--------|-------------|
 | `addRow(fileName, values)` | Append row from a sequence or `{col=val}` table |
 | `removeRow(fileName, key)` | Remove row by primary key |
+| `copyRow(fileName, srcKey, newKey)` | Copy a row under a new primary key |
 
 ### Cell Operations
 

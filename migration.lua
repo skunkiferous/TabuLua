@@ -158,6 +158,10 @@ COMMANDS.renameFile = function(ds, row)
     return ds:renameFile(row[2], row[3])
 end
 
+COMMANDS.splitFile = function(ds, row)
+    return ds:splitFile(row[2], row[3], param(row, 4), param(row, 5))
+end
+
 -- Column commands
 COMMANDS.addColumn = function(ds, row)
     local fileName = row[2]
@@ -195,6 +199,19 @@ COMMANDS.setColumnType = function(ds, row)
     return ds:setColumnType(row[2], row[3], row[4])
 end
 
+COMMANDS.copyColumn = function(ds, row)
+    local fileName = row[2]
+    local sourceColumn = row[3]
+    local newColumnName = row[4]
+    local afterCol = param(row, 5)
+    local columns = ds:getColumnNames(fileName)
+    if not columns then
+        return nil, "file not loaded: " .. tostring(fileName)
+    end
+    local position = resolveScriptColumnPosition(afterCol, columns)
+    return ds:copyColumn(fileName, sourceColumn, newColumnName, position)
+end
+
 -- Row commands
 COMMANDS.addRow = function(ds, row)
     local fileName = row[2]
@@ -208,6 +225,10 @@ end
 
 COMMANDS.removeRow = function(ds, row)
     return ds:removeRow(row[2], row[3])
+end
+
+COMMANDS.copyRow = function(ds, row)
+    return ds:copyRow(row[2], row[3], row[4])
 end
 
 -- Cell commands
@@ -387,10 +408,10 @@ Options:
 
 Script commands:
   File:     loadFile, loadTransposedFile, saveFile, saveAll,
-            createFile, deleteFile, renameFile
+            createFile, deleteFile, renameFile, splitFile
   Column:   addColumn, removeColumn, renameColumn, moveColumn,
-            setColumnType
-  Row:      addRow, removeRow
+            setColumnType, copyColumn
+  Row:      addRow, removeRow, copyRow
   Cell:     setCell, setCells, setCellsWhere, transformCells
   Comment:  addComment, addBlankLine
   Files:    filesUpdatePath, filesUpdateSuperType,
