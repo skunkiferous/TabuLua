@@ -680,7 +680,7 @@ parse_type = function(badVal, parsed, log_unknown)
     end
     if not result then
         if state.UNKNOWN_TYPES[type_spec] then
-            return nil
+            return nil, type_spec
         end
         -- Is this a collection type? "string" parsed types should already be in PARSERS
         local tmp_result = nil
@@ -816,6 +816,9 @@ end
 
 -- Returns true, if this type never parses to a table.
 isNeverTable = function(type_spec)
+    if type(type_spec) ~= "string" then
+        return false
+    end
     local parsed = lpeg_parser.type_parser(type_spec)
     if not parsed then
         return false

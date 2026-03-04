@@ -1,0 +1,3 @@
+name:name	parent:type_spec|nil	description:text
+Foo	{extend:float}	First bad type
+Count	{extend:integer}	Second bad type

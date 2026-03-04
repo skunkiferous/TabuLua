@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Fixed crash when the same unknown map key type (e.g., `{extend:float}` instead
+  of `{extends:float}`) appeared in multiple type definitions. The type parser's
+  `UNKNOWN_TYPES` early-return was missing the second return value, causing
+  `isNeverTable()` to receive nil and crash in the LPEG matcher.
+
 ## [0.14.0] - 2026-03-01
 
 ### Added

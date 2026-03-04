@@ -1,0 +1,4 @@
+package_id:package_id	test.type.extendtypo
+name:string	Test Extend Typo in Custom Type
+version:version	1.0.0
+description:markdown	Custom type def uses extend instead of extends
