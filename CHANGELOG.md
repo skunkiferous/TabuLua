@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Fixed `restrictWithExpression` silently overwriting existing type definitions
+  instead of detecting duplicates. Expression-validated types now properly allow
+  identical re-registration and reject conflicting re-registration (different
+  parent or expression), consistent with all other constraint types.
 - Fixed crash when the same unknown map key type (e.g., `{extend:float}` instead
   of `{extends:float}`) appeared in multiple type definitions. The type parser's
   `UNKNOWN_TYPES` early-return was missing the second return value, causing

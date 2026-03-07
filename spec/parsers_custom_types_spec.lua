@@ -634,6 +634,107 @@ describe("parsers - registerTypesFromSpec", function()
     end)
   end)
 
+  describe("identical re-registration", function()
+    it("should allow identical alias re-registration", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctDupAlias", parent = "integer" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+      -- Re-register with identical definition
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+    end)
+
+    it("should error on alias re-registration with different parent", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupAliasDiff", parent = "integer" }}))
+      assert.equals(0, badVal.errors)
+      assert.is_false(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupAliasDiff", parent = "float" }}))
+      assert.is_true(badVal.errors > 0)
+    end)
+
+    it("should allow identical numeric constraint re-registration", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctDupNum", parent = "integer", min = 0, max = 100 }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+      -- Re-register with identical definition
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+    end)
+
+    it("should error on numeric constraint re-registration with different range", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupNumDiff", parent = "integer", min = 0, max = 100 }}))
+      assert.equals(0, badVal.errors)
+      assert.is_false(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupNumDiff", parent = "integer", min = 0, max = 50 }}))
+      assert.is_true(badVal.errors > 0)
+    end)
+
+    it("should allow identical string constraint re-registration", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctDupStr", parent = "string", minLen = 1, maxLen = 10 }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+      -- Re-register with identical definition
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+    end)
+
+    it("should error on string constraint re-registration with different limits", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupStrDiff", parent = "string", minLen = 1, maxLen = 10 }}))
+      assert.equals(0, badVal.errors)
+      assert.is_false(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupStrDiff", parent = "string", minLen = 1, maxLen = 20 }}))
+      assert.is_true(badVal.errors > 0)
+    end)
+
+    it("should allow identical expression constraint re-registration", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctDupExpr", parent = "integer", validate = "value > 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+      -- Re-register with identical definition
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, badVal.errors)
+    end)
+
+    it("should error on expression constraint re-registration with different expression", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupExprDiff", parent = "integer", validate = "value > 0" }}))
+      assert.equals(0, badVal.errors)
+      assert.is_false(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupExprDiff", parent = "integer", validate = "value > 5" }}))
+      assert.is_true(badVal.errors > 0)
+    end)
+
+    it("should error on expression constraint re-registration with different parent", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupExprParent", parent = "integer", validate = "value > 0" }}))
+      assert.equals(0, badVal.errors)
+      assert.is_false(parsers.registerTypesFromSpec(badVal,
+        {{ name = "ctDupExprParent", parent = "number", validate = "value > 0" }}))
+      assert.is_true(badVal.errors > 0)
+    end)
+  end)
+
   describe("bare extends type spec", function()
     it("should parse {extends,number} as type spec accepting number-extending types", function()
       local log_messages = {}

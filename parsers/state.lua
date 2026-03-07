@@ -117,6 +117,9 @@ M.RECORD_PARSERS = {}
 -- All built-in parsers (populated after setup)
 M.BUILT_IN = {}
 
+-- Maps expression-validated type names to their definitions: name -> {parent, expr}
+M.EXPR_VALIDATORS = {}
+
 -- Maps type tag names to their member sets: tag_name -> {member1=true, member2=true, ...}
 M.TAG_MEMBERS = {}
 

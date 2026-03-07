@@ -669,6 +669,23 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
     local parent = parseType(badVal, parentName)
     if not parent then return nil end
 
+    -- Check for duplicate registration
+    local existing = state.EXPR_VALIDATORS[newParserName]
+    if existing then
+        if existing.parent == parentName and existing.expr == exprString then
+            -- Already registered with identical definition
+            return state.PARSERS[newParserName]
+        end
+        utils.log(badVal, newParserName, exprString,
+            "expression-validated type '" .. newParserName
+            .. "' is already registered with a different definition (parent='"
+            .. existing.parent .. "', expr='" .. existing.expr .. "')")
+        return nil
+    end
+    if not generators.checkAcceptableParserName(badVal, newParserName, true) then
+        return nil
+    end
+
     -- Validate that the expression compiles
     local code = "return (" .. exprString .. ")"
     local compile_env = {
@@ -767,6 +784,7 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
 
     -- Register the new parser
     state.PARSERS[newParserName] = newParser
+    state.EXPR_VALIDATORS[newParserName] = {parent = parentName, expr = exprString}
 
     -- Register type relationship and comparator
     generators.extendsOrRestrictsType(newParserName, parentName)

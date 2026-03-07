@@ -217,6 +217,78 @@ describe("manifest_loader - custom type definition files", function()
             assert.equals(0, badVal.errors)
         end)
 
+        it("allows identical re-registration of an alias type across files", function()
+            local pkg_dir = makePkg("DirectDupAlias", {
+                "TypesA.tsv\tcustom_type_def\t\ttrue\t\t\t1\tFirst types",
+                "TypesB.tsv\tcustom_type_def\t\ttrue\t\t\t2\tSecond types"
+            }, {
+                ["TypesA.tsv"] =
+                    "name:name\tparent:type_spec|nil\n" ..
+                    "ctdDupAlias\tinteger\n",
+                ["TypesB.tsv"] =
+                    "name:name\tparent:type_spec|nil\n" ..
+                    "ctdDupAlias\tinteger\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+        end)
+
+        it("allows identical re-registration of a numeric-constrained type across files", function()
+            local pkg_dir = makePkg("DirectDupNum", {
+                "TypesA.tsv\tcustom_type_def\t\ttrue\t\t\t1\tFirst types",
+                "TypesB.tsv\tcustom_type_def\t\ttrue\t\t\t2\tSecond types"
+            }, {
+                ["TypesA.tsv"] =
+                    "name:name\tparent:type_spec|nil\tmin:number|nil\tmax:number|nil\n" ..
+                    "ctdDupNum\tinteger\t0\t100\n",
+                ["TypesB.tsv"] =
+                    "name:name\tparent:type_spec|nil\tmin:number|nil\tmax:number|nil\n" ..
+                    "ctdDupNum\tinteger\t0\t100\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+        end)
+
+        it("allows identical re-registration of an expression-validated type across files", function()
+            local pkg_dir = makePkg("DirectDupExpr", {
+                "TypesA.tsv\tcustom_type_def\t\ttrue\t\t\t1\tFirst types",
+                "TypesB.tsv\tcustom_type_def\t\ttrue\t\t\t2\tSecond types"
+            }, {
+                ["TypesA.tsv"] =
+                    "name:name\tparent:type_spec|nil\tvalidate:string|nil\n" ..
+                    "ctdDupExpr\tinteger\tvalue > 0\n",
+                ["TypesB.tsv"] =
+                    "name:name\tparent:type_spec|nil\tvalidate:string|nil\n" ..
+                    "ctdDupExpr\tinteger\tvalue > 0\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+        end)
+
+        it("errors on duplicate expression type with different expression across files", function()
+            local pkg_dir = makePkg("DirectDupExprDiff", {
+                "TypesA.tsv\tcustom_type_def\t\ttrue\t\t\t1\tFirst types",
+                "TypesB.tsv\tcustom_type_def\t\ttrue\t\t\t2\tSecond types"
+            }, {
+                ["TypesA.tsv"] =
+                    "name:name\tparent:type_spec|nil\tvalidate:string|nil\n" ..
+                    "ctdDupExprDiff\tinteger\tvalue > 0\n",
+                ["TypesB.tsv"] =
+                    "name:name\tparent:type_spec|nil\tvalidate:string|nil\n" ..
+                    "ctdDupExprDiff\tinteger\tvalue > 5\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.is_true(badVal.errors > 0)
+        end)
+
         it("errors on duplicate name with a different type (collision detection)", function()
             -- ctdCollide is already registered by the first row as an alias to integer.
             -- The second row tries to register ctdCollide as float — must fail.
