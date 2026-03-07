@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.15.0] - 2026-03-07
+
+### Added
+
 - New migration commands `copyColumn`, `copyRow`, and `splitFile` for duplicating
   columns, rows, and files within the migration tool.
   - `copyColumn`: duplicates a column with all its data under a new name, with
@@ -28,8 +38,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 
 - To make declaring type tags without members easier, use "true" for the `members` field.
-
-### Removed
 
 ### Fixed
 
