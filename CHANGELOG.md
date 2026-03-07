@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- To make declaring type tags without members easier, use "true" for the `members` field.
+
 ### Removed
 
 ### Fixed

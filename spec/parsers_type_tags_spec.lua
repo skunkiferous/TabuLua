@@ -267,6 +267,73 @@ describe("parsers - type tags", function()
     end)
   end)
 
+  describe("empty tag declaration with 'true' member", function()
+    it("should register a tag with members={'true'} successfully", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+
+      local specs = {{ name = "ttEmptyTag", parent = "number", members = {"true"} }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+    end)
+
+    it("should parse as a type but reject all values (no members tagged)", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+
+      local parser = parsers.parseType(badVal, "ttEmptyTag")
+      assert.is_not_nil(parser)
+
+      -- No types were tagged, so all values should be rejected
+      assert.is_nil(parser(badVal, "integer", "tsv"))
+      assert.is_nil(parser(badVal, "float", "tsv"))
+      assert.is_nil(parser(badVal, "number", "tsv"))
+    end)
+
+    it("should return empty members list from listMembersOfTag", function()
+      local members = introspection.listMembersOfTag("ttEmptyTag")
+      assert.is_not_nil(members)
+      assert.same({}, members)
+    end)
+
+    it("should allow merging real members into a 'true'-only tag later", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+
+      -- Merge real members into the previously empty tag
+      local specs = {{ name = "ttEmptyTag", parent = "number", members = {"integer"} }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      -- Now integer should be accepted
+      local parser = parsers.parseType(badVal, "ttEmptyTag")
+      assert.is_not_nil(parser)
+      assert.equals("integer", parser(badVal, "integer", "tsv"))
+
+      -- float still not a member
+      assert.is_nil(parser(badVal, "float", "tsv"))
+    end)
+
+    it("should work with 'true' mixed with real members", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+
+      local specs = {{ name = "ttMixedTrue", parent = "number", members = {"true", "integer", "true"} }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.equals(0, #log_messages)
+
+      local parser = parsers.parseType(badVal, "ttMixedTrue")
+      assert.is_not_nil(parser)
+      assert.equals("integer", parser(badVal, "integer", "tsv"))
+      assert.is_nil(parser(badVal, "float", "tsv"))
+
+      -- listMembersOfTag should only contain the real member
+      local members = introspection.listMembersOfTag("ttMixedTrue")
+      assert.is_not_nil(members)
+      assert.same({"integer"}, members)
+    end)
+  end)
+
   describe("usage in type specs", function()
     it("should work as a field type in a record", function()
       local log_messages = {}

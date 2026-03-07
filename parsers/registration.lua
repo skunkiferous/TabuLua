@@ -832,6 +832,10 @@ local function registerTypeTag(badVal, name, parent, members)
                 "type tag '" .. name .. "': member must be a non-empty string")
             return false
         end
+        if member == "true" then
+            -- Trick to have members non-empty, but still contain no types to mark
+            goto continue
+        end
         if not parseType(nullBadVal, member, false) then
             utils.log(badVal, 'type', member,
                 "type tag '" .. name .. "': member '" .. member .. "' is not a registered type")
@@ -853,6 +857,7 @@ local function registerTypeTag(badVal, name, parent, members)
             return false
         end
         memberSet[member] = true
+        ::continue::
     end
 
     -- Check for merge mode (tag already exists)

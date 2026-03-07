@@ -1,5 +1,5 @@
-TS	ERROR	[reformatter]	Bad type description, col 3 in {DIR}/Types.tsv on line 0: 'extend' (map key_type can never be a table)
-TS	ERROR	[reformatter]	Bad type description, col 3 in {DIR}/Types.tsv on line 0: 'extend' (map key_type can never be a table)
-TS	ERROR	[reformatter]	Bad type description, col 3 in {DIR}/Types.tsv on line 0: 'extend' (unknown/bad type)
-TS	ERROR	[reformatter]	Reformatting errors: 3
-TS	WARN	[reformatter]	typeName 'custom_type_def' in {DIR}/Files.tsv should match fileName 'Types.tsv' without extension
+TS      ERROR   [reformatter]   Bad type description, col 3 in {DIR}/Types.tsv on line 2 (Foo): 'extend' (map key_type can never be a table)
+TS      ERROR   [reformatter]   Bad type description, col 3 in {DIR}/Types.tsv on line 2 (Foo): 'extend' (unknown/bad type)
+TS      ERROR   [reformatter]   Bad type description, col 3 in {DIR}/Types.tsv on line 3 (Count): 'extend' (map key_type can never be a table)
+TS      ERROR   [reformatter]   Reformatting errors: 3
+TS      WARN    [reformatter]   typeName 'custom_type_def' in {DIR}/Files.tsv should match fileName 'Types.tsv' without extension

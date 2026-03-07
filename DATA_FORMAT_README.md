@@ -409,6 +409,9 @@ unitCol:Unit
 
 When a tag member is itself a tag, its ancestor must be compatible (same or a subtype of the parent tag's ancestor).
 
+**Empty members list:** If the `members` field is left empty, then it is not a type tag definition, but a plain `{extends,...}` constraint.
+If you just want to declare a type tag, but not tag any type, just set the `members` field to `true`.
+
 #### Tag Assignment
 
 Instead of listing members when defining a tag, you can assign a type to one or more existing tags using the `tags` field. This is especially useful in files extending `custom_type_def`, where a `tags` column lets each row declare its tag membership:
