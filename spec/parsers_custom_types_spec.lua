@@ -10,6 +10,7 @@ local describe = busted.describe
 local it = busted.it
 
 local parsers = require("parsers")
+local introspection = require("parsers.introspection")
 local error_reporting = require("error_reporting")
 
 -- Returns a "badVal" object that stores errors in the given table
@@ -732,6 +733,112 @@ describe("parsers - registerTypesFromSpec", function()
       assert.is_false(parsers.registerTypesFromSpec(badVal,
         {{ name = "ctDupExprParent", parent = "number", validate = "value > 0" }}))
       assert.is_true(badVal.errors > 0)
+    end)
+  end)
+
+  describe("tags assignment", function()
+    it("should add a type to a single tag", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      -- First register a type and a tag
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctTaggedGold", parent = "integer", min = 0 },
+        { name = "ctCurrencyTag", parent = "number", members = {"ctTaggedGold"} },
+      }))
+      assert.equals(0, badVal.errors)
+      -- Now register a new type and add it to the existing tag
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctTaggedGem", parent = "integer", min = 0, tags = "ctCurrencyTag" },
+      }))
+      assert.equals(0, badVal.errors)
+      -- Verify membership
+      assert.is_true(introspection.isMemberOfTag("ctCurrencyTag", "ctTaggedGem"))
+    end)
+
+    it("should add a type to multiple tags", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctMultiTagType", parent = "integer", min = 0 },
+        { name = "ctTagA", parent = "number", members = {"ctMultiTagType"} },
+        { name = "ctTagB", parent = "number", members = {"ctMultiTagType"} },
+      }))
+      assert.equals(0, badVal.errors)
+      -- Register a new type and add it to both tags
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctMultiTagNew", parent = "integer", min = 0,
+          tags = {"ctTagA", "ctTagB"} },
+      }))
+      assert.equals(0, badVal.errors)
+      assert.is_true(introspection.isMemberOfTag("ctTagA", "ctMultiTagNew"))
+      assert.is_true(introspection.isMemberOfTag("ctTagB", "ctMultiTagNew"))
+    end)
+
+    it("should work with simple alias types", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctAliasTagTarget", parent = "number", members = {"integer"} },
+      }))
+      assert.equals(0, badVal.errors)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctAliasTagged", parent = "float", tags = "ctAliasTagTarget" },
+      }))
+      assert.equals(0, badVal.errors)
+      assert.is_true(introspection.isMemberOfTag("ctAliasTagTarget", "ctAliasTagged"))
+    end)
+
+    it("should error when tag does not exist", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_false(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctTagNoExist", parent = "integer", tags = "nonExistentTag" },
+      }))
+      assert.is_true(badVal.errors > 0)
+    end)
+
+    it("should error when type is incompatible with tag ancestor", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctNumOnlyTag", parent = "number", members = {"integer"} },
+      }))
+      assert.equals(0, badVal.errors)
+      -- Try to add a string type to a number tag
+      assert.is_false(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctBadTagMember", parent = "string", tags = "ctNumOnlyTag" },
+      }))
+      assert.is_true(badVal.errors > 0)
+    end)
+
+    it("should work with tags on expression-validated types", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctExprTag", parent = "number", members = {"integer"} },
+      }))
+      assert.equals(0, badVal.errors)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctExprTagged", parent = "integer", validate = "value > 0",
+          tags = "ctExprTag" },
+      }))
+      assert.equals(0, badVal.errors)
+      assert.is_true(introspection.isMemberOfTag("ctExprTag", "ctExprTagged"))
+    end)
+
+    it("should not assign tags when type registration fails", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_true(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctFailTag", parent = "number", members = {"integer"} },
+      }))
+      assert.equals(0, badVal.errors)
+      -- Invalid expression should fail registration; tags should not be applied
+      assert.is_false(parsers.registerTypesFromSpec(badVal, {
+        { name = "ctFailTagged", parent = "integer", validate = "value >",
+          tags = "ctFailTag" },
+      }))
+      assert.is_false(introspection.isMemberOfTag("ctFailTag", "ctFailTagged"))
     end)
   end)
 

@@ -17,6 +17,7 @@ local lfs = require("lfs")
 local file_util = require("file_util")
 local manifest_loader = require("manifest_loader")
 local parsers = require("parsers")
+local introspection = require("parsers.introspection")
 local error_reporting = require("error_reporting")
 
 -- Simple path join helper
@@ -363,6 +364,84 @@ describe("manifest_loader - custom type definition files", function()
             local result = manifest_loader.processFiles({pkg_dir}, badVal)
             assert.is_not_nil(result)
             assert.equals(0, badVal.errors)
+        end)
+
+    end)
+
+    -- -------------------------------------------------------------------------
+    describe("tags assignment in custom type definition files", function()
+
+        it("assigns a type to a tag defined in an earlier file", function()
+            local pkg_dir = makePkg("TagAssign", {
+                "Tags.tsv\tcustom_type_def\t\ttrue\t\t\t1\tTag definitions",
+                "Types.tsv\tcustom_type_def\t\ttrue\t\t\t2\tType definitions"
+            }, {
+                ["Tags.tsv"] =
+                    "name:name\tparent:type_spec|nil\tmembers:{name}|nil\n" ..
+                    "ctdUnitTag\tnumber\tinteger\n",
+                ["Types.tsv"] =
+                    "name:name\tparent:type_spec|nil\tmin:number|nil\ttags:name|{name}|nil\n" ..
+                    "ctdWeight\tinteger\t0\tctdUnitTag\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+            assert.is_true(introspection.isMemberOfTag("ctdUnitTag", "ctdWeight"))
+        end)
+
+        it("assigns a type to a tag defined in the manifest", function()
+            local pkg_dir = makePkg("TagAssignManifest", {
+                "Types.tsv\tcustom_type_def\t\ttrue\t\t\t1\tType definitions"
+            }, {
+                ["Types.tsv"] =
+                    "name:name\tparent:type_spec|nil\tmin:number|nil\ttags:name|{name}|nil\n" ..
+                    "ctdManiWeight\tinteger\t0\tctdManiUnitTag\n"
+            })
+            -- Manifest registers a type tag
+            local manifest_with_tag = makeManifest("TagAssignManifest") ..
+                "custom_types:{custom_type_def}|nil\t" ..
+                "{name=\"ctdManiSeed\",parent=\"integer\",min=0}," ..
+                "{name=\"ctdManiUnitTag\",parent=\"number\",members={\"ctdManiSeed\"}}\n"
+            assert(file_util.writeFile(
+                path_join(pkg_dir, MANIFEST_FILENAME), manifest_with_tag))
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors)
+            assert.is_true(introspection.isMemberOfTag("ctdManiUnitTag", "ctdManiWeight"))
+        end)
+
+        it("errors when assigning to a non-existent tag", function()
+            local pkg_dir = makePkg("TagAssignBad", {
+                "Types.tsv\tcustom_type_def\t\ttrue\t\t\t1\tType definitions"
+            }, {
+                ["Types.tsv"] =
+                    "name:name\tparent:type_spec|nil\ttags:name|{name}|nil\n" ..
+                    "ctdBadTag\tinteger\tnoSuchTag\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.is_true(badVal.errors > 0)
+        end)
+
+        it("errors when type is incompatible with tag ancestor", function()
+            local pkg_dir = makePkg("TagAssignIncompat", {
+                "Tags.tsv\tcustom_type_def\t\ttrue\t\t\t1\tTag definitions",
+                "Types.tsv\tcustom_type_def\t\ttrue\t\t\t2\tType definitions"
+            }, {
+                ["Tags.tsv"] =
+                    "name:name\tparent:type_spec|nil\tmembers:{name}|nil\n" ..
+                    "ctdNumTag\tnumber\tinteger\n",
+                ["Types.tsv"] =
+                    "name:name\tparent:type_spec|nil\ttags:name|{name}|nil\n" ..
+                    "ctdStrForNumTag\tstring\tctdNumTag\n"
+            })
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.is_true(badVal.errors > 0)
         end)
 
     end)

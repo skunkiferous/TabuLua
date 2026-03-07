@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
     of columns in the source and/or target, enabling file splitting. Warns if the
     primary key column is missing from either file.
 - Corresponding DataSet API methods: `copyColumn()`, `copyRow()`, `splitFile()`.
+- New `tags` field in `custom_type_def` for assigning a type to one or more
+  existing type tags. Accepts a single tag name (`name`) or a list of tag names
+  (`{name}`). This is the reverse of `members` — instead of listing members when
+  defining a tag, you specify which tags a type belongs to when defining the type.
+  Especially useful in files extending `custom_type_def`, where a `tags` column
+  lets each row declare its tag membership.
 
 ### Changed
 

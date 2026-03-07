@@ -409,6 +409,31 @@ unitCol:Unit
 
 When a tag member is itself a tag, its ancestor must be compatible (same or a subtype of the parent tag's ancestor).
 
+#### Tag Assignment
+
+Instead of listing members when defining a tag, you can assign a type to one or more existing tags using the `tags` field. This is especially useful in files extending `custom_type_def`, where a `tags` column lets each row declare its tag membership:
+
+```tsv
+# Tags.tsv (loadOrder=1) — define the tag with initial members
+name:name    parent:type_spec|nil    members:{name}|nil
+UnitTag      number                  integer
+
+# Types.tsv (loadOrder=2) — assign new types to the tag
+name:name    parent:type_spec|nil    min:number|nil    tags:name|{name}|nil
+weight       integer                 0                 UnitTag
+height       integer                 0                 UnitTag
+```
+
+After loading, both `weight` and `height` are members of `UnitTag`.
+
+The `tags` field accepts a single tag name or a list of tag names. It is orthogonal to constraints — a type can have both a constraint (e.g., `min`/`max`) and tag assignments. The referenced tags must already be registered, and the type must be compatible with each tag's ancestor (same rules as `members`).
+
+In the manifest, tag assignment works the same way:
+
+```text
+custom_types:{custom_type_def}|nil  {name="UnitTag",parent="number",members={"integer"}},{name="weight",parent="integer",min=0,tags="UnitTag"}
+```
+
 **Differences from enums:**
 
 | Aspect | Enum | Type Tag |
@@ -1029,6 +1054,7 @@ Each custom type is defined as a record with the following fields:
 | `maxLen` | `integer\|nil` | Maximum string length (for string types) |
 | `members` | `{name}\|nil` | Type tag members (see [Type Tags](#type-tags-named-type-groups)) |
 | `pattern` | `string\|nil` | Lua pattern that strings must match (for string types) |
+| `tags` | `{name}\|nil` | Type tag(s) to add this type to as a member (see [Tag Assignment](#tag-assignment)) |
 | `validate` | `string\|nil` | Expression-based validator (see below) |
 | `values` | `{string}\|nil` | Allowed values (for enum types) |
 
@@ -1153,7 +1179,7 @@ nonEmptyStr  string                                                       predic
 
 After this file is loaded, `positiveInt`, `percentage`, and `nonEmptyStr` are registered types and can be used as column types in all subsequently loaded files.
 
-Only the standard `custom_type_def` fields (`name`, `parent`, `min`, `max`, `minLen`, `maxLen`, `members`, `pattern`, `validate`, `values`) feed into type registration. Extra columns in a sub-type file (e.g., a `gameCategory:string` annotation column) are parsed and stored but ignored during registration.
+Only the standard `custom_type_def` fields (`name`, `parent`, `min`, `max`, `minLen`, `maxLen`, `members`, `pattern`, `tags`, `validate`, `values`) feed into type registration. Extra columns in a sub-type file (e.g., a `gameCategory:string` annotation column) are parsed and stored but ignored during registration.
 
 **Load ordering:** A custom type definition file must have a lower `loadOrder` than any file that uses the types it defines. The recommended convention is `loadOrder=1` (or another low value). Defining a type after it is referenced produces an "unknown type" parse error. A custom type definition file may itself reference types from an earlier custom type definition file (by `loadOrder`), enabling cascaded type hierarchies.
 

@@ -300,7 +300,7 @@ local function registerCustomTypes(badVal, manifest)
                 else
                     -- Tuple format: convert to record
                     -- Fields are alphabetically ordered: max, maxLen, members, min, minLen,
-                    -- name, parent, pattern, validate, values
+                    -- name, parent, pattern, tags, validate, values
                     spec = {
                         max = ct[1],
                         maxLen = ct[2],
@@ -310,8 +310,9 @@ local function registerCustomTypes(badVal, manifest)
                         name = ct[6],
                         parent = ct[7],
                         pattern = ct[8],
-                        validate = ct[9],
-                        values = ct[10],
+                        tags = ct[9],
+                        validate = ct[10],
+                        values = ct[11],
                     }
                 end
                 typeSpecs[#typeSpecs + 1] = spec

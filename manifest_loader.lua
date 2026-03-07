@@ -237,7 +237,7 @@ end
 -- The fields of custom_type_def that are extracted from each row for type registration
 local CUSTOM_TYPE_DEF_FIELDS = {
     'name', 'parent', 'min', 'max', 'minLen', 'maxLen',
-    'members', 'pattern', 'validate', 'values'
+    'members', 'pattern', 'tags', 'validate', 'values'
 }
 
 -- Registers custom types from a file whose typeName is or extends custom_type_def.

@@ -913,6 +913,63 @@ local function registerTypeTag(badVal, name, parent, members)
     return true
 end
 
+-- Adds a type as a member of one or more existing type tags.
+-- tags can be a single tag name (string) or a list of tag names (table).
+-- Returns true if all tag assignments succeeded, false otherwise.
+local function addTypeToTags(badVal, typeName, tags)
+    -- Normalize to a list
+    local tagList
+    if type(tags) == "string" then
+        tagList = {tags}
+    elseif type(tags) == "table" then
+        tagList = tags
+    else
+        utils.log(badVal, 'tags', tostring(tags),
+            "tags must be a name or a list of names")
+        return false
+    end
+    local success = true
+    for _, tagName in ipairs(tagList) do
+        if type(tagName) ~= "string" or tagName == "" then
+            utils.log(badVal, 'tags', tostring(tagName),
+                "tag name must be a non-empty string")
+            success = false
+        elseif not state.TAG_MEMBERS[tagName] then
+            utils.log(badVal, 'tags', tagName,
+                "'" .. tagName .. "' is not a registered type tag")
+            success = false
+        else
+            -- Validate that the type is compatible with the tag's ancestor
+            local ancestor = state.TAG_ANCESTOR[tagName]
+            if state.TAG_MEMBERS[typeName] then
+                -- typeName is itself a tag; check ancestor compatibility
+                if not introspection.typeSameOrExtends(state.TAG_ANCESTOR[typeName], ancestor) then
+                    utils.log(badVal, 'tags', typeName,
+                        "tag '" .. typeName .. "' has incompatible ancestor '"
+                        .. state.TAG_ANCESTOR[typeName]
+                        .. "' for tag '" .. tagName .. "' (expected '"
+                        .. ancestor .. "' or a subtype)")
+                    success = false
+                else
+                    state.TAG_MEMBERS[tagName][typeName] = true
+                    state.logger:info("Added tag member '" .. typeName
+                        .. "' to type tag '" .. tagName .. "'")
+                end
+            elseif not introspection.typeSameOrExtends(typeName, ancestor) then
+                utils.log(badVal, 'tags', typeName,
+                    "type '" .. typeName .. "' does not extend ancestor '"
+                    .. ancestor .. "' of tag '" .. tagName .. "'")
+                success = false
+            else
+                state.TAG_MEMBERS[tagName][typeName] = true
+                state.logger:info("Added tag member '" .. typeName
+                    .. "' to type tag '" .. tagName .. "'")
+            end
+        end
+    end
+    return success
+end
+
 -- Registers custom types from a data-driven specification.
 -- typeSpecs is a sequence of records with fields:
 --   name: string - the name of the new type
@@ -923,6 +980,7 @@ end
 --   minLen: integer|nil - minimum string length (for string types)
 --   maxLen: integer|nil - maximum string length (for string types)
 --   pattern: string|nil - regex pattern (for string types)
+--   tags: name|{name}|nil - type tag(s) to add this type to as a member
 --   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
 --   values: {string}|nil - allowed values (for enum types)
 -- Returns true if all types were registered successfully, false otherwise.
@@ -958,74 +1016,61 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             if hasExpressionConstraint then constraintCount = constraintCount + 1 end
             if hasTagMembers then constraintCount = constraintCount + 1 end
 
+            local registered = false
             if constraintCount == 0 then
                 -- No constraints - just register as an alias
-                if not M.registerAlias(badVal, name, parent) then
-                    success = false
-                end
+                registered = M.registerAlias(badVal, name, parent)
             elseif constraintCount > 1 then
                 utils.log(badVal, 'spec', name,
                     'cannot mix constraint types (numeric, string, enum, expression, members) in the same type definition')
-                success = false
             elseif hasTagMembers then
                 -- Type tag with explicit member list
-                if not registerTypeTag(badVal, name, parent, spec.members) then
-                    success = false
-                end
+                registered = registerTypeTag(badVal, name, parent, spec.members)
             elseif hasExpressionConstraint then
                 -- Expression-based validator
-                local parser = M.restrictWithExpression(badVal, parent, name, spec.validate)
-                if not parser then
-                    success = false
-                end
+                registered = M.restrictWithExpression(badVal, parent, name, spec.validate) ~= nil
             elseif hasNumericConstraints then
                 -- Numeric type with range constraints
                 if not introspection.typeSameOrExtends(parent, "number") then
                     utils.log(badVal, 'type', parent,
                         'min/max constraints require a type that extends number')
-                    success = false
                 elseif introspection.unionTypes(parent) then
                     utils.log(badVal, 'type', parent,
                         'numeric constraints cannot be applied to union types')
-                    success = false
                 else
-                    local parser = M.restrictNumber(badVal, parent, spec.min, spec.max, name)
-                    if not parser then
-                        success = false
-                    end
+                    registered = M.restrictNumber(badVal, parent, spec.min, spec.max, name) ~= nil
                 end
             elseif hasStringConstraints then
                 -- String type with length/pattern constraints
                 if not introspection.typeSameOrExtends(parent, "string") then
                     utils.log(badVal, 'type', parent,
                         'minLen/maxLen/pattern constraints require a type that extends string')
-                    success = false
                 elseif introspection.unionTypes(parent) then
                     utils.log(badVal, 'type', parent,
                         'string constraints cannot be applied to union types')
-                    success = false
                 else
-                    local parser = M.restrictString(badVal, parent, spec.minLen, spec.maxLen,
-                        spec.pattern, name)
-                    if not parser then
-                        success = false
-                    end
+                    registered = M.restrictString(badVal, parent, spec.minLen, spec.maxLen,
+                        spec.pattern, name) ~= nil
                 end
             elseif hasEnumConstraints then
                 -- Enum type with restricted values
                 if not introspection.extendsOrRestrict(parent, "enum") then
                     utils.log(badVal, 'type', parent,
                         'values constraint requires a type that extends enum')
-                    success = false
                 elseif introspection.unionTypes(parent) then
                     utils.log(badVal, 'type', parent,
                         'enum constraints cannot be applied to union types')
-                    success = false
                 else
-                    local parser = M.restrictEnum(badVal, parent, spec.values, name)
-                    if not parser then
-                        success = false
-                    end
+                    registered = M.restrictEnum(badVal, parent, spec.values, name) ~= nil
+                end
+            end
+            if not registered then
+                success = false
+            end
+            -- Process tags assignment (orthogonal to constraints)
+            if registered and spec.tags ~= nil then
+                if not addTypeToTags(badVal, name, spec.tags) then
+                    success = false
                 end
             end
         end
