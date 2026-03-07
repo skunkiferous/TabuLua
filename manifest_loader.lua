@@ -244,7 +244,6 @@ local CUSTOM_TYPE_DEF_FIELDS = {
 -- Each data row is treated as a custom_type_def record; its parsed fields are fed into
 -- parsers.registerTypesFromSpec, which handles aliases, constrained types, and type tags.
 local function registerCustomTypesFromFile(file, badVal)
-    local typeSpecs = {}
     for i, row in ipairs(file) do
         if i > 1 and type(row) == "table" then
             local spec = {}
@@ -254,10 +253,11 @@ local function registerCustomTypesFromFile(file, badVal)
                     spec[field] = cell.parsed
                 end
             end
-            typeSpecs[#typeSpecs + 1] = spec
+            badVal.line_no = i
+            badVal.row_key = row[1].reformatted
+            parsers.registerTypesFromSpec(badVal, {spec})
         end
     end
-    parsers.registerTypesFromSpec(badVal, typeSpecs)
 end
 
 -- Builds the table subscribers. The context that the subscribers should use is stored under

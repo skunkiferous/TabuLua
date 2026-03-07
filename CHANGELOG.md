@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Fixed line numbers in registerCustomTypesFromFile() error messages
 - Fixed `restrictWithExpression` silently overwriting existing type definitions
   instead of detecting duplicates. Expression-validated types now properly allow
   identical re-registration and reject conflicting re-registration (different
