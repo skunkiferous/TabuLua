@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- The reformatter (and export tester) now excludes the export directory from file
+  collection. Previously, when the data directory contained an `exported/`
+  subdirectory from a prior export run, the recursive file scan would descend
+  into it and produce spurious "No priority found" and "Don't know how to
+  process" warnings for every exported file. `file_util.getFilesAndDirs` and
+  `collectFiles` now accept an optional `excludeDirs` set of directory paths to
+  skip entirely (no recursion).
 - Type tag names and type names now properly detect collisions in both
   directions. Previously, registering a type tag after a type with the same name
   would silently overwrite the type's parser. Both directions now produce a clear

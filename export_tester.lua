@@ -394,12 +394,22 @@ local function runTests(sourceDirectories, exportDir, formats, verbose)
         return false, {}
     end
 
-    -- Load source data
+    -- Load source data, excluding the export directory from file collection
     logger:info("Loading source data from: " .. table.concat(sourceDirectories, ", "))
     local badVal = badValGen()
     badVal.logger = logger
 
-    local result = manifest_loader.processFiles(sourceDirectories, badVal)
+    local excludeDirs = {}
+    for _, directory in ipairs(sourceDirectories) do
+        if directory and directory ~= "" then
+            local candidate = normalizePath(directory .. "/" .. exportDir)
+            if candidate then
+                excludeDirs[candidate] = true
+            end
+        end
+    end
+
+    local result = manifest_loader.processFiles(sourceDirectories, badVal, excludeDirs)
     if not result then
         logger:error("Failed to load source data")
         return false, {}

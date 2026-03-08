@@ -690,8 +690,8 @@ end
 -- Collects files from directories and logs any errors
 -- Also validates that each top-level directory contains package markers
 -- Returns files list, or nil if validation fails
-local function collectAndLogFiles(directories, file2dir)
-    local files, errors = collectFiles(directories, EXTENSIONS, file2dir, logger)
+local function collectAndLogFiles(directories, file2dir, opt_excludeDirs)
+    local files, errors = collectFiles(directories, EXTENSIONS, file2dir, logger, opt_excludeDirs)
     if errors then
         for _, err in ipairs(errors) do
             logger:error(err)
@@ -878,15 +878,16 @@ end
 --- Resolves package dependencies, loads file descriptors, parses files with type registration.
 --- @param directories table Sequence of directory paths to process
 --- @param badVal table|nil Optional badVal instance for error reporting (created if nil)
+--- @param opt_excludeDirs table|nil Optional set of normalized directory paths to skip during file collection
 --- @return table|nil Result table with {raw_files, tsv_files, package_order, packages}, or nil on error
 --- @side_effect Logs progress and errors; registers type parsers and aliases
-local function processFiles(directories, badVal)
+local function processFiles(directories, badVal, opt_excludeDirs)
     badVal = initializeBadVal(badVal)
     -- Reset file-registered types tracking for this processing run
     fileRegisteredTypes = {}
 
     local file2dir = {}
-    local files = collectAndLogFiles(directories, file2dir)
+    local files = collectAndLogFiles(directories, file2dir, opt_excludeDirs)
     if not files then
         return nil
     end

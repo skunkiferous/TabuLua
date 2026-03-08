@@ -404,7 +404,19 @@ local function processFiles(directories, exporters, exportParams)
     local badVal = badValGen()
     badVal.logger = logger
 
-    local result = manifest_loader.processFiles(directories, badVal)
+    -- Determine export directory early so we can exclude it from file collection
+    local exportDir = (exportParams and exportParams.exportDir) or DEFAULT_EXPORT_DIR
+    local excludeDirs = {}
+    for _, directory in ipairs(directories) do
+        if directory and directory ~= "" then
+            local candidate = normalizePath(directory .. "/" .. exportDir)
+            if candidate then
+                excludeDirs[candidate] = true
+            end
+        end
+    end
+
+    local result = manifest_loader.processFiles(directories, badVal, excludeDirs)
     if result then
         local tsv_files = result.tsv_files
         local raw_files = result.raw_files
@@ -414,7 +426,6 @@ local function processFiles(directories, exporters, exportParams)
             logger:error("Reformatting errors: " .. errors)
         else
             if exporters and #exporters > 0 then
-                local exportDir = (exportParams and exportParams.exportDir) or DEFAULT_EXPORT_DIR
                 logger:info("Using export directory: " .. exportDir)
                 if not isDir(exportDir) then
                     logger:warn("Export directory " .. exportDir .. " does not exist, creating it...")

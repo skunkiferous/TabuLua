@@ -223,8 +223,9 @@ end
 
 -- Function to get all files and sub-directories in a directory
 -- Search is recursive, only if recursively is true
+-- opt_excludeDirs is an optional set of normalized directory paths to skip
 -- On error, returns nil and the error message
-local function getFilesAndDirs(directory, recursively, opt_logger)
+local function getFilesAndDirs(directory, recursively, opt_logger, opt_excludeDirs)
     recursively = recursively or false
     if directory == nil or directory == "" then
         return nil, "directory is nil/empty-string"
@@ -248,7 +249,13 @@ local function getFilesAndDirs(directory, recursively, opt_logger)
             else
                 local path = directory .. "/" .. file
                 if isDir(path) then
-                    dirs_set[path] = true
+                    if opt_excludeDirs and opt_excludeDirs[normalizePath(path)] then
+                        if opt_logger then
+                            opt_logger:info("Skipping excluded directory: " .. path)
+                        end
+                    else
+                        dirs_set[path] = true
+                    end
                 else
                     files_set[path] = true
                 end
@@ -257,7 +264,7 @@ local function getFilesAndDirs(directory, recursively, opt_logger)
     end
     if recursively then
         for _,dir in ipairs(setToSeq(dirs_set)) do
-            local new_files, new_dirs = getFilesAndDirs(dir, true, opt_logger)
+            local new_files, new_dirs = getFilesAndDirs(dir, true, opt_logger, opt_excludeDirs)
             if not new_files then
                 -- new_dirs contains the error message
                 return nil, new_dirs
@@ -408,8 +415,9 @@ end
 -- Directories should not overlap, for optimal performance
 -- Optionally takes a file2dir table to map files to (one) source directory
 -- Optionally takes a logger, to log progress
+-- opt_excludeDirs is an optional set of normalized directory paths to skip
 -- Returns a list of files, and a list of errors
-local function collectFiles(directories, extensions, file2dir, opt_logger)
+local function collectFiles(directories, extensions, file2dir, opt_logger, opt_excludeDirs)
     if type(directories) ~= "table" then
         error("collectFiles: directories not a table: "..type(directories))
     end
@@ -428,7 +436,7 @@ local function collectFiles(directories, extensions, file2dir, opt_logger)
                 if opt_logger then
                     opt_logger:info("Checking files in directory: " .. directory)
                 end
-                local files, err = getFilesAndDirs(directory, true, opt_logger)
+                local files, err = getFilesAndDirs(directory, true, opt_logger, opt_excludeDirs)
                 if files then
                     for _, file in ipairs(files) do
                         for _, ext in ipairs(extensions) do
