@@ -219,8 +219,9 @@ The dataset is callable: `dataset(line, col)`
 
 | Key | Value |
 |-----|-------|
-| `__tostring` | Returns the full TSV content. For transposed files, re-transposes before output, converting `__comment` placeholder columns back to comment lines |
+| `__tostring` | Returns the full TSV content. For transposed files, re-transposes before output, converting `__comment` placeholder columns back to comment lines. If `__preamble` is present, it is emitted before the header |
 | `__type` | `"tsv"` |
+| `__preamble` | Raw TSV sub-sequence of comment/blank lines that appeared before the header row (non-transposed files only). Preserved for round-trip fidelity and emitted first on output |
 | `__transposed` | `true` if this file was loaded from a `.transposed.tsv` file |
 | `__call` | The callable access function described above |
 | `["primaryKey"]` | Direct primary key → row mappings are stored in the metatable's own table |
@@ -274,11 +275,14 @@ Each entry in `manifest.custom_types` has:
 | `minLen` | `integer\|nil` | Minimum string length |
 | `maxLen` | `integer\|nil` | Maximum string length |
 | `members` | `table\|nil` | Type tag members (set of type names) |
+| `tags` | `table\|nil` | Tag names this type belongs to (single name or array of names) |
 | `pattern` | `string\|nil` | Lua pattern constraint |
 | `values` | `table\|nil` | Allowed enum values |
 | `validate` | `string\|nil` | Expression-based validator |
 
-When `members` is present, the custom type is a **type tag** — a named group of types sharing a common ancestor. The `parent` field specifies the required ancestor, and `members` lists the type names belonging to the tag. Type tags support cross-package merging: if the same tag name is declared in multiple packages with the same ancestor, their members are merged additively. Members can themselves be type tags (nested/transitive tagging); when a member is a tag, its ancestor must be compatible (same or a subtype of the parent tag's ancestor). Membership is checked transitively through nested tags. The internal state tables `TAG_MEMBERS` (tag name → set of member names) and `TAG_ANCESTOR` (tag name → ancestor type name) track tag registrations.
+When `members` is present, the custom type is a **type tag** — a named group of types sharing a common ancestor. The `parent` field specifies the required ancestor, and `members` lists the type names belonging to the tag. Use `"true"` for `members` to declare a type tag with no initial members. Type tags support cross-package merging: if the same tag name is declared in multiple packages with the same ancestor, their members are merged additively. Members can themselves be type tags (nested/transitive tagging); when a member is a tag, its ancestor must be compatible (same or a subtype of the parent tag's ancestor). Membership is checked transitively through nested tags. The internal state tables `TAG_MEMBERS` (tag name → set of member names) and `TAG_ANCESTOR` (tag name → ancestor type name) track tag registrations.
+
+When `tags` is present, the type is assigned to one or more existing type tags. This is the reverse of `members` — instead of listing members when defining a tag, you specify which tags a type belongs to when defining the type. Accepts a single tag name or an array of tag names. Especially useful in files extending `custom_type_def`, where a `tags` column lets each row declare its tag membership.
 
 ---
 
@@ -427,13 +431,16 @@ The complete processing pipeline, in order:
 6. **Load file descriptors** (`Files.tsv`) in package dependency order
 7. **Process data files** in `loadOrder` within each package:
    a. Run COG processing on raw content
-   b. Parse raw TSV into `raw_tsv` structure
+   b. Parse raw TSV into `raw_tsv` structure (preserving preamble lines)
    c. Build header (column definitions)
    d. For each row, process cells in dependency order
    e. Publish data if `publishContext`/`publishColumn` configured
-   f. Register enum parsers for enum-type files
-   g. Register type aliases for type-definition files
-   h. Register file column structure as a record type
+   f. Publish dataset to `loadEnv.files[typeName]` for COG view access by later files
+   g. Register enum parsers for enum-type files
+   h. Register type aliases for type-definition files
+   i. For `custom_type_def` files (or subtypes thereof), register each data row as a custom type
+   j. For `custom_type_def` child files, validate that child field types are subtypes of parent field types
+   k. Register file column structure as a record type
 8. **Run validators** (row → file → package)
 9. **Return result** with all parsed data and metadata
 

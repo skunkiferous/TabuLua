@@ -71,6 +71,7 @@ The COG environment contains whatever is passed as the `env` parameter. When use
 
 - All code libraries (by name)
 - All published data (by context name or globally)
+- `files.TypeName` — previously-loaded datasets, keyed by their `typeName` from `Files.tsv`. COG scripts in files with a higher `loadOrder` can access earlier-loaded datasets (e.g., `files.Item`). View-of-view chains are supported provided `loadOrder` values are ordered correctly.
 - Standard Lua globals (`math`, `string`, `table`, etc.)
 
 **COG does NOT have a `self` variable** — it runs at the file level, not the cell/row level.
@@ -292,7 +293,7 @@ All expression contexts (cell expressions, validators, COG) share a common set o
 |----------|-----------|
 | **Lua libraries** | `math`, `string`, `table` |
 | **Lua functions** | `pairs`, `ipairs`, `type`, `tostring`, `tonumber`, `select`, `unpack`, `next`, `pcall` |
-| **TabuLua API** | `predicates` (all predicate functions), `stringUtils` (`trim`, `split`, `parseVersion`), `tableUtils` (`keys`, `values`, `pairsCount`), `equals` (deep comparison) |
+| **TabuLua API** | `predicates` (all predicate functions), `stringUtils` (`trim`, `split`, `parseVersion`), `tableUtils` (`keys`, `values`, `pairsCount`, `longestMatchingPrefix`, `sortCaseInsensitive`), `equals` (deep comparison) |
 | **Validator helpers** | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy`, `listMembersOfTag`, `isMemberOfTag` (validators only) |
 | **Code libraries** | By declared name (e.g., `gameLib`, `utils`) |
 | **Published data** | By context name or globally |

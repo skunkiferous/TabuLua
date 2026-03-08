@@ -9,17 +9,33 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.16.0] - 2026-03-08
+
+### Added
+
 - New `--no-unquoted-warn` option in the reformatter CLI to suppress the
   "Assuming ... is a single unquoted string" informational warnings. Useful when
   TSV data intentionally contains unquoted string values in array columns.
 
 ### Changed
 
+- Updated `INTERNAL_MODEL.md`: added dataset `__preamble` field (v0.12.0),
+  `loadEnv.files` publishing in processing pipeline (v0.12.0), custom type
+  definition file processing steps (v0.10.0/v0.14.0), and `tags` field in
+  custom type definition records (v0.15.0).
+- Updated `USER_DATA_VIEW.md`: added `files.TypeName` to COG script variables
+  (v0.12.0), and added missing `longestMatchingPrefix` and
+  `sortCaseInsensitive` to `tableUtils` sandbox built-ins listing.
+- Updated `MODULES.md`: added `data_set` and `migration` modules (v0.13.0).
 - Reduced log level to DEBUG for noisy messages on non-essential files:
   "No priority found for" and "Don't know how to process" for `.md` files,
   and "Skipping hidden entry" for hidden directory entries.
-
-### Removed
 
 ### Fixed
 

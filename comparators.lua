@@ -5,7 +5,7 @@ local NAME = "comparators"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 15, 0)
+local VERSION = semver(0, 16, 0)
 
 -- Dependencies
 local sparse_sequence = require("sparse_sequence")

@@ -8,6 +8,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
+| [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, predicates, named_logger |
 | [deserialization](#deserialization) | Data deserialization (Lua, JSON, XML, MessagePack) | read_only |
 | [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization |
 | [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
@@ -20,6 +21,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
+| [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | *(none)* |
 | [normalize_output](#normalize_output) | Normalizes reformatter output for bad input test comparison | *(none — standalone CLI script)* |
 | [number_identifiers](#number_identifiers) | Numeric/string identifier conversion | error_reporting, read_only |
@@ -68,6 +70,15 @@ Pure-Lua RFC 4648 Base64 encode/decode. Provides `encode()`, `decode()`, and `is
 Value comparison and equality functions for tables and primitive types. Provides custom comparators for sorting and deep equality testing.
 
 **Dependencies:** read_only, sparse_sequence, table_utils
+
+---
+
+### data_set
+**File:** [data_set.lua](data_set.lua)
+
+Mutable in-memory representation of multiple TSV files for the migration tool. Supports loading, saving, creating, deleting, renaming, and copying files. Provides column operations (add, remove, rename, move, set type/default), row operations (add, remove, copy), cell operations (get, set, conditional set, sandboxed transform), and comment/blank line management. Includes `filesHelper()` for `Files.tsv` manipulation and `manifestHelper()` for `Manifest.transposed.tsv` access.
+
+**Dependencies:** raw_tsv, file_util, string_utils, read_only, sandbox, predicates, named_logger
 
 ---
 
@@ -177,6 +188,15 @@ Handles `Manifest.transposed.tsv` files for package metadata, versioning, type a
 Orchestrates package loading: discovers packages, resolves dependencies, registers types, loads data files in order, and runs all validators (row, file, package) after loading.
 
 **Dependencies:** error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor
+
+---
+
+### migration
+**File:** [migration.lua](migration.lua)
+
+Migration script executor for batch modifications to TSV data files at the raw level (no type parsing). Reads a TSV script file where each row is a command with positional parameters, and executes them sequentially against a DataSet. Supports `--dry-run` (validate without writing), `--verbose` (log each step), and `--log-level=LEVEL` options. CLI entry point: `lua54 migration.lua <script.tsv> <rootDir> [options]`. See [MIGRATION.md](MIGRATION.md) for full documentation.
+
+**Dependencies:** named_logger, raw_tsv, data_set, string_utils, read_only, file_util
 
 ---
 
@@ -485,6 +505,9 @@ file_util
 exploded_columns
     └── tsv_model
     └── exporter
+data_set
+    └── migration
+
 schema_validator (standalone)
 ```
 
