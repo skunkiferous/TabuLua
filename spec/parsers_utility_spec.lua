@@ -103,7 +103,7 @@ describe("parsers - utility functions", function()
         "Bad type  in test on line 1: 'abcdefg' (unknown/bad type)",
         "Bad type  in test on line 1: 'hjiklmn' (unknown/bad type)",
         "Bad type  in test on line 1: '123' (Cannot parse type specification: 123)",
-        "Bad type  in test on line 1: 'boolean' (Parser with name 'boolean' is already exists)",
+        "Bad type  in test on line 1: 'boolean' (Parser name 'boolean' is already in use)",
         "Bad type  in test on line 1: 'false' (Parser name 'false' must be a string, but was boolean)"},
         log_messages)
     end)
@@ -466,7 +466,7 @@ describe("parsers - utility functions", function()
         assert.is_nil(parser3)
         assert.equals(name1, name3)  -- Should still return the original name
         assert.equals(
-          "Bad type  in  on line 0: 'percent' (Parser with name 'percent' is already exists)",
+          "Bad type  in  on line 0: 'percent' (Parser name 'percent' is already in use)",
           log_messages[#log_messages])
     end)
 

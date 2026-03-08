@@ -1,0 +1,2 @@
+fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil	joinedTypeName:type_spec|nil	rowValidators:{validator_spec}|nil	fileValidators:{validator_spec}|nil
+Files.tsv	Files		true	Files		0	This file

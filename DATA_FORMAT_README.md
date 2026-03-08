@@ -448,6 +448,16 @@ custom_types:{custom_type_def}|nil  {name="UnitTag",parent="number",members={"in
 | Nesting | Not supported | Tags can be members of other tags |
 | Introspection | `enumLabels()` | `listMembersOfTag()`, `isMemberOfTag()` |
 
+**Naming restriction:** Type names and type tag names share a single namespace (`state.PARSERS`). A type tag and a regular type (alias, restricted number, enum, etc.) **cannot have the same name**. This is because type tag names can be used as column type specifications (e.g., `myColumn:density`), and all column type resolution goes through a single parser lookup. If you define a type tag `density` (a category of units) and also a custom type `density` (e.g., an alias for `kg/m³`), the second registration will fail with an explicit error message indicating the name collision.
+
+```text
+# This will fail — "density" is used as both a tag and a type:
+{name="density",parent="number",members={"integer"}},{name="density",parent="number",min=0}
+
+# Fix: use distinct names, e.g., "DensityUnit" for the tag and "density" for the type
+{name="DensityUnit",parent="number",members={"integer"}},{name="density",parent="number",min=0}
+```
+
 ## Self-Referencing Field Types
 
 Tuples and records support **self-referencing field types**, where one field's type is determined by the value of another field at parse time. This enables "dependent types" — fields whose validation depends on data in a sibling field.

@@ -1,0 +1,5 @@
+package_id:package_id	test.manifest.tagconflict
+name:string	Test Type Tag Name Conflict
+version:version	1.0.0
+description:markdown	Type tag name conflicts with type name
+custom_types:{custom_type_def}|nil	{name="density",parent="number",members={"integer"}},{name="density",parent="number",min=0},{name="speed",parent="number",min=0},{name="speed",parent="number",members={"integer"}}

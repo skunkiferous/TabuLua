@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Type tag names and type names now properly detect collisions in both
+  directions. Previously, registering a type tag after a type with the same name
+  would silently overwrite the type's parser. Both directions now produce a clear
+  error message explaining that type names and type tag names share a single
+  namespace and cannot collide.
+- Fixed grammar in parser name collision error message ("is already exists" →
+  "is already in use").
+
 ## [0.15.0] - 2026-03-07
 
 ### Added

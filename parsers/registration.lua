@@ -76,8 +76,14 @@ function M.registerAlias(badVal, name, type_spec)
         return false
     end
     if parseType(nullBadVal, name, false) then
-        utils.log(badVal, 'type', name, "Parser with name '" .. name ..
-            "' is already exists")
+        if state.TAG_MEMBERS[name] then
+            utils.log(badVal, 'type', name, "Type name '" .. name ..
+                "' conflicts with an existing type tag of the same name"
+                .. " (type names and type tag names share a single namespace and cannot collide)")
+        else
+            utils.log(badVal, 'type', name, "Parser name '" .. name ..
+                "' is already in use")
+        end
         return false
     end
     state.ALIASES[name] = utils.resolve(type_spec)
@@ -879,6 +885,13 @@ local function registerTypeTag(badVal, name, parent, members)
 
     -- New tag mode: register parser directly (not as alias, so parseType finds our wrapper)
     if not generators.checkAcceptableParserName(badVal, name, false) then
+        return false
+    end
+    -- Check that name is not already taken by another type or alias
+    if state.PARSERS[name] or state.ALIASES[name] then
+        utils.log(badVal, 'type', name, "Type tag name '" .. name ..
+            "' conflicts with an existing type of the same name"
+            .. " (type names and type tag names share a single namespace and cannot collide)")
         return false
     end
 
