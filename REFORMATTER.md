@@ -44,6 +44,7 @@ lua reformatter.lua [OPTIONS] <dir1> [dir2] ...
 | `--collapse-exploded` | Collapse exploded columns into single composite columns during export (e.g., `location.level` + `location.x` → `location:{level,x}`). Default: keep exploded columns as separate flat columns. |
 | `--clean` | Empty the export directory before exporting. Removes all existing files and subdirectories. |
 | `--no-number-warn` | Suppress the informational warnings about `number` type usage (recommending `float` instead). Useful when `number` is intentionally used for mixed integer/decimal formatting. |
+| `--no-unquoted-warn` | Suppress the informational warnings about assuming a value is a single unquoted string. Useful when TSV data intentionally contains unquoted string values in array columns. |
 | `--log-level=<level>` | Set log verbosity: `debug`, `info`, `warn`, `error`, `fatal` (default: `info`). |
 
 ## File Formats

@@ -153,12 +153,22 @@ function M.get_array_parser(elem_type, elem_parser)
             if  utils.expectTSV(context) and state.refs.extendsOrRestrict(elem_type, 'string') and
                 value ~= nil and value ~= '' and value:sub(1,1) ~= '"' and value:sub(1,1) ~= "'"
                 then
+                local loc = ""
+                if badVal.source_name and badVal.source_name ~= "" then
+                    loc = badVal.source_name
+                    if badVal.line_no and badVal.line_no > 0 then
+                        loc = loc .. " on line " .. badVal.line_no
+                    end
+                    loc = loc .. ": "
+                elseif badVal.line_no and badVal.line_no > 0 then
+                    loc = "line " .. badVal.line_no .. ": "
+                end
                 if value:sub(1,1) == '{' and value:sub(-1) == '}' then
-                    state.logger:warn("Value " .. value
+                    state.logger:warn(loc .. "Value " .. value
                         .. " is wrapped in {} but array braces are added automatically;"
                         .. " remove the outer {}")
-                else
-                    state.logger:warn("Assuming " .. value .. " is a single unquoted string")
+                elseif not state.suppressUnquotedStringWarning then
+                    state.logger:warn(loc .. "Assuming " .. value .. " is a single unquoted string")
                 end
                 return {value}, value
             end
@@ -367,6 +377,9 @@ function M.get_union_parser(types, fields_parsers)
             -- errors from failed trials affecting parsers that check error counts (like
             -- the array parser's element-by-element error checking)
             local saved_errors = nullBadVal.errors
+            -- Copy location info so sub-parsers can include it in warnings
+            nullBadVal.source_name = badVal.source_name
+            nullBadVal.line_no = badVal.line_no
             for i, p in ipairs(fields_parsers) do
                 local parsed_v, reformatted_v = M.callParser(p, nullBadVal,
                     value, context)

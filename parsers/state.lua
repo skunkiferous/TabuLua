@@ -75,6 +75,9 @@ M.WARNED_TYPES = {}
 -- When true, suppresses the "'number' type" informational warnings
 M.suppressNumberTypeWarning = false
 
+-- When true, suppresses the "Assuming ... is a single unquoted string" warnings
+M.suppressUnquotedStringWarning = false
+
 -- Maps number parser names to their limits
 M.NUMBER_LIMITS = {}
 

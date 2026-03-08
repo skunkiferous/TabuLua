@@ -273,6 +273,8 @@ local function generateUsage()
         "",
         "  --no-number-warn      Suppress 'number' type informational warnings",
         "",
+        "  --no-unquoted-warn    Suppress 'Assuming ... is a single unquoted string' warnings",
+        "",
         "  --clean               Empty the export directory before exporting",
         "                        Removes all existing files and subdirectories",
         "",
@@ -570,6 +572,8 @@ if isMainScript then
                 collapseExploded = true
             elseif arg_i == "--no-number-warn" then
                 require("parsers.state").suppressNumberTypeWarning = true
+            elseif arg_i == "--no-unquoted-warn" then
+                require("parsers.state").suppressUnquotedStringWarning = true
             elseif arg_i == "--clean" then
                 cleanExportDir = true
             elseif arg_i:match("^%-%-") then

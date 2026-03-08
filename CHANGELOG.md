@@ -9,11 +9,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- New `--no-unquoted-warn` option in the reformatter CLI to suppress the
+  "Assuming ... is a single unquoted string" informational warnings. Useful when
+  TSV data intentionally contains unquoted string values in array columns.
+
 ### Changed
 
 ### Removed
 
 ### Fixed
+
+- The "Assuming ... is a single unquoted string" and "Value ... is wrapped in {}"
+  warnings now include the source file name and line number (e.g.,
+  `myfile.tsv on line 42: Assuming foo is a single unquoted string`). Previously,
+  these warnings used `state.logger:warn()` without any location context, making
+  them hard to track down when they appeared many times in the same file.
+- Fixed missing location info when array parsers were called from within union
+  type trial parsing. The union parser uses a silent `nullBadVal` for trial
+  parsing, which had empty `source_name` and `line_no = 0`. The location fields
+  are now copied from the real `badVal` before the trial loop.
 
 - The reformatter (and export tester) now excludes the export directory from file
   collection. Previously, when the data directory contained an `exported/`
