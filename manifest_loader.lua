@@ -108,7 +108,11 @@ local function orderFilesByPriorities(files, priorities)
     end)
     for _,file in ipairs(keys(missingPriority)) do
         if not hasExtension(file, "lua") then
-            logger:warn("No priority found for " .. file)
+            if hasExtension(file, "md") then
+                logger:debug("No priority found for " .. file)
+            else
+                logger:warn("No priority found for " .. file)
+            end
         end
     end
     logger:debug("Sorted files: "..table.concat(files, ", "))
@@ -444,6 +448,8 @@ end
 local function processUnknownFile(file_name, raw_files, badVal)
     if hasExtension(file_name, "lua") then
         logger:info("Loading code library: " .. file_name)
+    elseif hasExtension(file_name, "md") then
+        logger:debug("Don't know how to process " .. file_name)
     else
         logger:warn("Don't know how to process " .. file_name)
     end

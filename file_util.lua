@@ -244,7 +244,7 @@ local function getFilesAndDirs(directory, recursively, opt_logger, opt_excludeDi
         if file ~= "." and file ~= ".." then
             if file:sub(1, 1) == "." then
                 if opt_logger then
-                    opt_logger:info("Skipping hidden entry: " .. directory .. "/" .. file)
+                    opt_logger:debug("Skipping hidden entry: " .. directory .. "/" .. file)
                 end
             else
                 local path = directory .. "/" .. file

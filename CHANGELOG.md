@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- Reduced log level to DEBUG for noisy messages on non-essential files:
+  "No priority found for" and "Don't know how to process" for `.md` files,
+  and "Skipping hidden entry" for hidden directory entries.
+
 ### Removed
 
 ### Fixed
