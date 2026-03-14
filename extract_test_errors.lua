@@ -1,28 +1,74 @@
-#!/usr/bin/env lua
 -- extract_test_errors.lua
--- Extracts failed test information from TAP format test output
+-- Extracts failed test information from TAP format test output.
 
-local function extract_errors(input_file, output_file)
-    local input = io.open(input_file, "r")
-    if not input then
-        io.stderr:write("Error: Could not open input file: " .. input_file .. "\n")
-        return false
+-- Module versioning
+local semver = require("semver")
+
+-- Module version
+local VERSION = semver(0, 16, 0)
+
+-- Module name
+local NAME = "extract_test_errors"
+
+--- Returns the module version as a string.
+--- @return string The semantic version string (e.g., "0.16.0")
+local function getVersion()
+    return tostring(VERSION)
+end
+
+local named_logger = require("named_logger")
+
+-- Map of log level name strings to level constants
+local LOG_LEVELS = {
+    ["debug"] = named_logger.DEBUG,
+    ["info"]  = named_logger.INFO,
+    ["warn"]  = named_logger.WARN,
+    ["error"] = named_logger.ERROR,
+    ["fatal"] = named_logger.FATAL,
+}
+
+-- Apply --log-level early, before other modules are loaded, so their
+-- loggers are created at the correct level from the start.
+if arg then
+    for _, a in ipairs(arg) do
+        local levelName = a:match("^%-%-log%-level=(.+)$")
+        if levelName then
+            local level = LOG_LEVELS[levelName:lower()]
+            if level then
+                named_logger.setGlobalLevel(level)
+            else
+                named_logger.setGlobalLevel(named_logger.ERROR)
+            end
+            break
+        end
     end
+end
 
-    local output = io.open(output_file, "w")
-    if not output then
-        io.stderr:write("Error: Could not open output file: " .. output_file .. "\n")
-        input:close()
-        return false
-    end
+local logger = named_logger.getLogger(NAME)
 
+local read_only = require("read_only")
+local readOnly = read_only.readOnly
+
+local file_util = require("file_util")
+local normalizePath = file_util.normalizePath
+local readFile = file_util.readFile
+local writeFile = file_util.writeFile
+
+---------------------------------------------------------------------------
+-- TAP parser
+---------------------------------------------------------------------------
+
+--- Parses TAP format test output and extracts error information.
+--- @param content string The TAP format test output
+--- @return table result { total, passed, failed, errorText }
+local function parseTAP(content)
     local in_error_block = false
     local error_lines = {}
     local total_tests = 0
     local failed_tests = 0
     local passed_tests = 0
 
-    for line in input:lines() do
+    for line in content:gmatch("[^\r\n]+") do
         if in_error_block then
             -- Continue collecting error details (lines starting with #)
             if line:match("^#") then
@@ -60,48 +106,182 @@ local function extract_errors(input_file, output_file)
         end
     end
 
-    input:close()
-
-    -- Write summary header
-    output:write(string.format("=" .. string.rep("=", 78) .. "\n"))
-    output:write(string.format("TEST RESULTS SUMMARY\n"))
-    output:write(string.format("=" .. string.rep("=", 78) .. "\n"))
-    output:write(string.format("Total Tests: %d\n", total_tests))
-    output:write(string.format("Passed: %d\n", passed_tests))
-    output:write(string.format("Failed: %d\n", failed_tests))
-    output:write(string.format("=" .. string.rep("=", 78) .. "\n\n"))
-
-    -- Write all error details
-    if failed_tests > 0 then
-        output:write("FAILED TESTS:\n\n")
-        for _, line in ipairs(error_lines) do
-            output:write(line .. "\n")
-        end
-    else
-        output:write("All tests passed!\n")
-    end
-
-    output:close()
-
-    return true, failed_tests, passed_tests, total_tests
+    return {
+        total = total_tests,
+        passed = passed_tests,
+        failed = failed_tests,
+        errorText = table.concat(error_lines, "\n"),
+    }
 end
 
--- Main execution
-local input_file = arg[1] or "test_results.txt"
-local output_file = arg[2] or "test_errors.txt"
+---------------------------------------------------------------------------
+-- Report formatter
+---------------------------------------------------------------------------
 
-local success, failed, passed, total = extract_errors(input_file, output_file)
+--- Formats a parsed TAP result into a human-readable summary report.
+--- @param result table Parsed TAP result from parseTAP
+--- @return string The formatted report text
+local function formatReport(result)
+    local separator = "=" .. string.rep("=", 78)
+    local parts = {
+        separator,
+        "TEST RESULTS SUMMARY",
+        separator,
+        string.format("Total Tests: %d", result.total),
+        string.format("Passed: %d", result.passed),
+        string.format("Failed: %d", result.failed),
+        separator,
+        "",
+    }
 
-if success then
-    print(string.format("Test results extracted to: %s", output_file))
-    print(string.format("Total: %d | Passed: %d | Failed: %d", total or 0, passed or 0, failed or 0))
+    if result.failed > 0 then
+        table.insert(parts, "FAILED TESTS:")
+        table.insert(parts, "")
+        table.insert(parts, result.errorText)
+    else
+        table.insert(parts, "All tests passed!")
+    end
+
+    return table.concat(parts, "\n") .. "\n"
+end
+
+---------------------------------------------------------------------------
+-- Main entry point
+---------------------------------------------------------------------------
+
+--- Extracts failed test information from a TAP format input file and writes
+--- a summary report to an output file.
+--- @param input_file string Path to the TAP format test output file
+--- @param output_file string Path for the summary report output
+--- @return boolean|nil true on success, nil on error
+--- @return string|nil error message
+--- @return table|nil parsed result with total/passed/failed counts
+local function extractErrors(input_file, output_file)
+    local content, readErr = readFile(input_file)
+    if not content then
+        return nil, "could not open input file: " .. input_file .. ": " .. tostring(readErr)
+    end
+
+    local result = parseTAP(content)
+    local report = formatReport(result)
+
+    local ok, writeErr = writeFile(output_file, report)
+    if not ok then
+        return nil, "could not open output file: " .. output_file .. ": " .. tostring(writeErr)
+    end
+
+    logger:info(string.format("Total: %d | Passed: %d | Failed: %d",
+        result.total, result.passed, result.failed))
+
+    return true, nil, result
+end
+
+---------------------------------------------------------------------------
+-- Command-line interface
+---------------------------------------------------------------------------
+
+--- Generate usage/help text for the CLI.
+--- @return string
+local function generateUsage()
+    return [[
+extract_test_errors — TAP test error extractor (version ]] .. tostring(VERSION) .. [[)
+
+Usage:
+  lua54 extract_test_errors.lua <input_file> [output_file] [options]
+
+Arguments:
+  input_file    Path to the TAP format test output file
+  output_file   Path for the summary report (default: test_errors.txt)
+
+Options:
+  --log-level=LEVEL     Set log level (debug, info, warn, error, fatal)]]
+end
+
+local isMainScript = arg and arg[0] and arg[0]:match("extract_test_errors")
+if isMainScript then
+    if #arg == 0 then
+        print(generateUsage())
+        os.exit(1)
+    end
+
+    -- Parse: <input_file> [output_file] [--log-level=LEVEL]
+    local input_file, output_file, hasError = nil, nil, false
+    local cliLogger = named_logger.getLogger(NAME)
+
+    for i = 1, #arg do
+        local arg_i = arg[i]
+        if arg_i:match("^%-%-log%-level=") then
+            -- Already handled early; validate here for error reporting
+            local levelName = arg_i:match("^%-%-log%-level=(.+)$")
+            if not LOG_LEVELS[levelName:lower()] then
+                cliLogger:error("Unknown log level: " .. levelName)
+                cliLogger:error("Valid levels: debug, info, warn, error, fatal")
+                hasError = true
+            end
+        elseif arg_i:match("^%-%-") then
+            cliLogger:error("Unknown option: " .. arg_i)
+            hasError = true
+        elseif not input_file then
+            input_file = normalizePath(arg_i)
+        elseif not output_file then
+            output_file = normalizePath(arg_i)
+        else
+            cliLogger:error("Unexpected argument: " .. arg_i)
+            hasError = true
+        end
+    end
+
+    if not input_file then
+        cliLogger:error("Missing required argument: <input_file>")
+        hasError = true
+    end
+
+    if hasError then
+        print("\nUse 'lua54 extract_test_errors.lua' without arguments to see usage.")
+        os.exit(1)
+    end
+
+    output_file = output_file or "test_errors.txt"
+
+    local ok, err, result = extractErrors(input_file, output_file)
+    if not ok or not result then
+        cliLogger:error(err or "unknown error")
+        os.exit(2)
+    end
+
+    cliLogger:info("Test results extracted to: " .. output_file)
 
     -- Return exit code based on test results
-    if failed and failed > 0 then
+    if result.failed > 0 then
         os.exit(1)
     else
         os.exit(0)
     end
-else
-    os.exit(2)
 end
+
+---------------------------------------------------------------------------
+-- Module API
+---------------------------------------------------------------------------
+
+local function apiToString()
+    return NAME .. " version " .. tostring(VERSION)
+end
+
+local API = {
+    extractErrors = extractErrors,
+    parseTAP = parseTAP,
+    formatReport = formatReport,
+    getVersion = getVersion,
+}
+
+local function apiCall(_, operation, ...)
+    if operation == "version" then
+        return VERSION
+    elseif API[operation] then
+        return API[operation](...)
+    else
+        error("Unknown operation: " .. tostring(operation), 2)
+    end
+end
+
+return readOnly(API, {__tostring = apiToString, __call = apiCall, __type = NAME})
