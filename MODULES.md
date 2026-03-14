@@ -14,6 +14,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
 | [exploded_columns](#exploded_columns) | Handles exploded/collapsed column structures | read_only, table_utils |
 | [file_joining](#file_joining) | Joins related TSV files by key columns | read_only, table_utils |
+| [global_reset](#global_reset) | Registry for resetting all module-level mutable state | *(none)* |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
 | [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model |
@@ -22,10 +23,10 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
-| [named_logger](#named_logger) | Logging system with named loggers and levels | *(none)* |
+| [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
 | [normalize_output](#normalize_output) | Normalizes reformatter output for bad input test comparison | *(none — standalone CLI script)* |
 | [number_identifiers](#number_identifiers) | Numeric/string identifier conversion | error_reporting, read_only |
-| [parsers](#parsers) | Main entry point for type parsing system | parsers.*, read_only |
+| [parsers](#parsers) | Main entry point for type parsing system | global_reset, parsers.*, read_only |
 | [parsers.builtin](#parsersbuiltin) | Built-in type parsers (boolean, number, string, etc.) | base64, error_reporting, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils |
 | [parsers.generators](#parsersgenerators) | Factory functions for specialized parsers | error_reporting, parsers.state, parsers.utils, predicates, read_only, sparse_sequence, table_utils |
 | [parsers.introspection](#parsersintrospection) | Type querying and relationship analysis | parsers.state, parsers.utils |
@@ -119,6 +120,15 @@ Analyzes and handles "exploded" columns in TSV files where nested structures (re
 
 ---
 
+### global_reset
+**File:** [global_reset.lua](global_reset.lua)
+
+Central registry for resetting module-level mutable state. Modules with internal caches or other post-load state call `register(fn)` during initialization, passing a function that restores their state. Calling `reset()` invokes all registered functions, returning every participating module to its original condition. Registrations persist across resets.
+
+**Dependencies:** *(none)*
+
+---
+
 ### export_tester
 **File:** [export_tester.lua](export_tester.lua)
 
@@ -205,7 +215,7 @@ Migration script executor for batch modifications to TSV data files at the raw l
 
 Logging system with named loggers, multiple log levels (DEBUG, INFO, WARN, ERROR), and configurable output targets.
 
-**Dependencies:** *(none - uses external `logging` library)*
+**Dependencies:** global_reset *(also uses external `logging` library)*
 
 ---
 
@@ -233,7 +243,7 @@ Converts between numeric and string identifiers with special handling for ranges
 
 Main entry point and public API for the modular type parsing system. Assembles all parser submodules and provides a clean, read-only interface.
 
-**Dependencies:** parsers.builtin, parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.registration, parsers.schema_export, parsers.state, parsers.type_parsing, parsers.utils, read_only
+**Dependencies:** global_reset, parsers.builtin, parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.registration, parsers.schema_export, parsers.state, parsers.type_parsing, parsers.utils, read_only
 
 ---
 
@@ -471,8 +481,9 @@ table_utils (base)
                 └── raw_tsv
                     └── tsv_model
 
-named_logger (base)
-    └── parsers.state
+global_reset (base)
+    └── named_logger
+        └── parsers.state
         └── parsers.utils
             └── parsers.lpeg_parser
             └── parsers.introspection

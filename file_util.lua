@@ -17,8 +17,6 @@ local lfs = require("lfs")
 
 -- Pattern to extract the parent directory of a path in Unix
 local UNIX_PARENT_DIR = "^(.+)/"
--- Pattern to extract the parent directory of a path in Windows
-local WIN_PARENT_DIR = "^(.+)\\"
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly

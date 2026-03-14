@@ -129,4 +129,59 @@ M.TAG_MEMBERS = {}
 -- Maps type tag names to their ancestor type: tag_name -> ancestor_name
 M.TAG_ANCESTOR = {}
 
+-- ============================================================
+-- State snapshot/restore for global_reset support
+-- ============================================================
+
+-- List of table fields that hold mutable state (excluding BUILT_IN which is
+-- made read-only after initialization, and refs which is stable after init)
+local MUTABLE_TABLES = {
+    "PARSERS", "ALIASES", "EXTENDS", "COMPARATORS",
+    "nilUnions", "NEVER_TABLE", "FORCE_REFORMATTED_AS_STRING", "OPTIONAL",
+    "UNKNOWN_TYPES", "WARNED_TYPES", "NUMBER_LIMITS",
+    "STR_MIN_LEN", "STR_MAX_LEN", "STR_REGEX",
+    "TYPES_PARAMS_TODO", "ARRAY_PARSERS", "MAP_PARSERS",
+    "TUPLE_PARSERS", "UNION_PARSERS", "UNION_FIRST_TYPE",
+    "RECORD_PARSERS", "EXPR_VALIDATORS", "TAG_MEMBERS", "TAG_ANCESTOR",
+}
+
+local snapshot = nil
+
+--- Saves a shallow copy of all mutable state tables and flags.
+--- Called once after built-in parser initialization is complete.
+function M.snapshotState()
+    snapshot = {
+        suppressNumberTypeWarning = M.suppressNumberTypeWarning,
+        suppressUnquotedStringWarning = M.suppressUnquotedStringWarning,
+        tables = {},
+    }
+    for _, name in ipairs(MUTABLE_TABLES) do
+        local copy = {}
+        for k, v in pairs(M[name]) do
+            copy[k] = v
+        end
+        snapshot.tables[name] = copy
+    end
+end
+
+--- Restores all mutable state from the last snapshot.
+--- Wipes each table in-place (preserving references held by other modules)
+--- and repopulates from the snapshot.
+function M.restoreState()
+    assert(snapshot, "No snapshot to restore from; call snapshotState() first")
+    M.suppressNumberTypeWarning = snapshot.suppressNumberTypeWarning
+    M.suppressUnquotedStringWarning = snapshot.suppressUnquotedStringWarning
+    for _, name in ipairs(MUTABLE_TABLES) do
+        -- Wipe the existing table in-place
+        local t = M[name]
+        for k in pairs(t) do
+            t[k] = nil
+        end
+        -- Copy from snapshot
+        for k, v in pairs(snapshot.tables[name]) do
+            t[k] = v
+        end
+    end
+end
+
 return M

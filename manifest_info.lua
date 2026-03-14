@@ -88,13 +88,16 @@ local MANIFEST_SPEC = [[{
 }]]
 
 -- Our own badVal (uses module logger by default)
-local BAD_VAL = error_reporting.badValGen()
-BAD_VAL.logger = logger
+local function myBadVal()
+    local bad_val = error_reporting.badValGen()
+    bad_val.logger = logger
+    return bad_val
+end
 
 -- We define 'package_id' as an alias to 'name'
-parsers.registerAlias(BAD_VAL, "package_id", "name")
+parsers.registerAlias(myBadVal(), "package_id", "name")
 
-local MANIFEST_SPEC_PARSER = parsers.parseType(BAD_VAL, MANIFEST_SPEC)
+local MANIFEST_SPEC_PARSER = parsers.parseType(myBadVal(), MANIFEST_SPEC)
 local FORMATTED_MANIFEST_SPEC = parsers.findParserSpec(MANIFEST_SPEC_PARSER)
 
 -- Returns true if the installed version satisfies the given version requirement

@@ -13,9 +13,7 @@ local readOnly = read_only.readOnly
 local dkjson = require("dkjson")
 
 -- lua-MessagePack
-local mpk = require("MessagePack")
--- Modify MessagePack global configuration for sparse arrays
-mpk.set_array('with_hole')
+local mpk = require("serialization").messagePack
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")

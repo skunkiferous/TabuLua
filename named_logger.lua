@@ -33,7 +33,7 @@ local ERROR = logging.ERROR
 local FATAL = logging.FATAL
 
 -- Default Loglevel
-local DEFAULT_LOG_LEVEL = INFO
+local defaultLogLevel = INFO
 
 -- We need file-system access
 local lfs = require("lfs")
@@ -175,8 +175,8 @@ local function getLogger(name)
 
     local logger = logging.new(function(self, level, message)
         if not valid_levels[level] then
-            printError("WARN\tUnknown log level: " .. level .. ". Defaulting to " .. DEFAULT_LOG_LEVEL)
-            level = DEFAULT_LOG_LEVEL
+            printError("WARN\tUnknown log level: " .. level .. ". Defaulting to " .. defaultLogLevel)
+            level = defaultLogLevel
         end
         local formatted_message = string.format("[%s]\t%s", name, message)
         return defaultLogger:log(level, formatted_message)
@@ -189,7 +189,7 @@ local function getLogger(name)
         __logger = logger
     }, LoggerInstance)
 
-    namedLogger:setLevel(DEFAULT_LOG_LEVEL)
+    namedLogger:setLevel(defaultLogLevel)
 
     loggers[name] = namedLogger
     return namedLogger
@@ -203,7 +203,7 @@ local function setGlobalLevel(level)
         printError("WARN\tInvalid log level for setGlobalLevel: " .. tostring(level))
         return false
     end
-    DEFAULT_LOG_LEVEL = level
+    defaultLogLevel = level
     for _, logger in pairs(loggers) do
         logger:setLevel(level)
     end
@@ -227,6 +227,16 @@ end
 --------------------------------------------------------------------------------
 -- Module Definition
 --------------------------------------------------------------------------------
+
+-- Register with global_reset to keep the logger cache but restore default level
+-- Loggers, at least in this project, are not temporary objects. They are usually created at the top of the module,
+-- and usually a single instance per module, and never modified after creation, and basically treated as a "constant".
+-- So I think clearing the references to the loggers in the "cache" would cause more trouble than good. Rather,
+-- we keep the loggers, but "reset their internal state" to what it was like when they were created.
+local global_reset = require("global_reset")
+global_reset.register(function()
+    setGlobalLevel(INFO)
+end)
 
 -- The public API of this module
 local API = {

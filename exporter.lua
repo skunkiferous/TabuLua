@@ -36,7 +36,6 @@ local serializeJSON = serialization.serializeJSON
 local serializeNaturalJSON = serialization.serializeNaturalJSON
 local serializeSQL = serialization.serializeSQL
 local serializeTableJSON = serialization.serializeTableJSON
-local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
 local serializeXML = serialization.serializeXML
 local serializeMessagePack = serialization.serializeMessagePack
 local serializeSQLBlob = serialization.serializeSQLBlob
@@ -69,6 +68,14 @@ local shouldExport = file_joining.shouldExport
 local groupSecondaryFiles = file_joining.groupSecondaryFiles
 local findFilePath = file_joining.findFilePath
 local joinFiles = file_joining.joinFiles
+
+-- Column names used for file joining metadata (to be excluded from exported Files.tsv)
+local JOIN_COLUMNS = {
+    joinInto = true,
+    joinColumn = true,
+    export = true,
+    joinedTypeName = true,
+}
 
 -- Returns true if a column is of type comment (or comment|nil, or a user type extending comment).
 -- Comment columns are developer-only and should be stripped from exports.
@@ -108,7 +115,7 @@ local function bytesToBinary(col, value)
 end
 
 -- Lua base types
-local base_types = {"boolean", "integer", "number", "string", "table"}
+local BASE_TYPES = {"boolean", "integer", "number", "string", "table"}
 
 -- Computes the relative path of a file for export.
 -- Uses file2dir to strip the source directory prefix from absolute paths.
@@ -148,14 +155,6 @@ local function writeExportFile(path, content)
     end
     return true
 end
-
--- Column names used for file joining metadata (to be excluded from exported Files.tsv)
-local JOIN_COLUMNS = {
-    joinInto = true,
-    joinColumn = true,
-    export = true,
-    joinedTypeName = true,
-}
 
 -- Transforms Files.tsv for export by:
 -- 1. Removing join-related columns from header
@@ -266,16 +265,6 @@ local function registerJoinedType(joinedTypeName, joinedHeader)
         return false
     end
 end
-
--- Maps "our types" to SQLite types. This is a *cache*; it will be extended with every new column type
--- we encounters.
-local sql_types = {
-    ["string"] = "TEXT",
-    ["number"] = "REAL",
-    ["integer"] = "BIGINT",
-    ["boolean"] = "SMALLINT", -- BOOLEAN is not available everywhere, so use SMALLINT with values 0/1
-    ["table"] = "TEXT", -- tables are encoded as JSON, and therefore become strings
-}
 
 -- Export the parsed files in the "TSV" format.
 -- Returns true on success
@@ -588,7 +577,7 @@ local function exportLua(process_files, exportParams)
 end
 
 -- Converts TSV column model to SQL column string
-local function colToSQL(col)
+local function colToSQL(sql_types, col)
     local colType = col.type
     local optional = false
     local key = colType .. ":" .. tostring(optional)
@@ -603,7 +592,7 @@ local function colToSQL(col)
             or (colType == "base64bytes") or extendsOrRestrict(colType, "base64bytes") then
             sqlType = optional and "BLOB" or "BLOB NOT NULL"
         else
-            for _, b in ipairs(base_types) do
+            for _, b in ipairs(BASE_TYPES) do
                 if (colType == b) or extendsOrRestrict(colType, b) then
                     sqlType = sql_types[b]
                     if not optional and not sqlType:find("NOT NULL") then
@@ -652,7 +641,7 @@ end
 
 -- Builds the SQL CREATE TABLE statement followed by the INSERT statement
 -- export_cols: optional array of {col_idx, is_root, root_name, structure} for collapsed column export
-local function createTableInsertSQL(header, export_cols)
+local function createTableInsertSQL(sql_types, header, export_cols)
     local source_path = splitPath(header.__source or "")
     local file = source_path[#source_path] or "unknown"
     local file_without_ext = file:match("^(.*)%.[^%.]+$") or file
@@ -673,7 +662,7 @@ local function createTableInsertSQL(header, export_cols)
                 end
                 result = result .. sep .. colDef
             else
-                result = result .. sep .. colToSQL(col)
+                result = result .. sep .. colToSQL(sql_types, col)
             end
             sep = ",\n  "
             is_first = false
@@ -681,7 +670,7 @@ local function createTableInsertSQL(header, export_cols)
     else
         -- Original behavior: iterate all columns
         for _, col in ipairs(header) do
-            result = result .. sep .. colToSQL(col)
+            result = result .. sep .. colToSQL(sql_types, col)
             sep = ",\n  "
         end
     end
@@ -715,7 +704,16 @@ local function exportSQL(process_files, exportParams)
     logger:info("Exporting files as SQL to: " .. exportParams.exportDir)
     local copy = { }
     for k, v in pairs(exportParams) do copy[k] = v end
-    copy.filePrefix = createTableInsertSQL
+    -- Maps "our types" to SQLite types. This is a *cache*; it will be extended with every new column type
+    -- we encounters.
+    local sql_types = {
+        ["string"] = "TEXT",
+        ["number"] = "REAL",
+        ["integer"] = "BIGINT",
+        ["boolean"] = "SMALLINT", -- BOOLEAN is not available everywhere, so use SMALLINT with values 0/1
+        ["table"] = "TEXT", -- tables are encoded as JSON, and therefore become strings
+    }
+    copy.filePrefix = function(header, export_cols) return createTableInsertSQL(sql_types, header, export_cols) end
     copy.fileSuffix = "\n;\n"
     copy.linePrefix = "("
     copy.lineSuffix = ")"

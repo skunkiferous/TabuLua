@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- New `global_reset` module: a central registry for resetting module-level mutable
+  state (caches, registries, etc.) back to its original post-load condition. Modules
+  call `register(fn)` during initialization; calling `reset()` invokes all registered
+  functions. Has no project dependencies.
+
 ### Changed
 
 ### Removed

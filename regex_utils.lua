@@ -22,6 +22,8 @@ local readOnly = read_only.readOnly
 local predicates = require("predicates")
 local isValidRegex = predicates.isValidRegex
 
+local global_reset = require("global_reset")
+
 local lua_to_pcre = {
     -- Character classes
     ['%a'] = '[[:alpha:]]',   -- letters
@@ -364,6 +366,8 @@ local function clearMultiMatcherCache()
     multiMatcher_cache = {}
     multiMatcher_cache_size = 0
 end
+
+global_reset.register(clearMultiMatcherCache)
 
 --- Returns the number of entries in the multi-matcher cache.
 --- @return number The cache size

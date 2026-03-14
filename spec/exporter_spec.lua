@@ -510,7 +510,7 @@ describe("exporter", function()
         end)
 
         it("should be decodable by MessagePack library", function()
-            local mpk = require("MessagePack")
+            local mpk = require("serialization").messagePack
             local process_files = createProcessFiles(temp_dir)
             local exportParams = {
                 exportDir = temp_dir,

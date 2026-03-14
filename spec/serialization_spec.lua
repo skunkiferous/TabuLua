@@ -540,7 +540,7 @@ describe("serialization", function()
   end)
 
   describe("serializeMessagePack", function()
-    local mpk = require("MessagePack")
+    local mpk = require("serialization").messagePack
 
     it("should serialize nil", function()
       local result = serialization.serializeMessagePack(nil)
@@ -631,7 +631,7 @@ describe("serialization", function()
   end)
 
   describe("serializeMessagePackSQLBlob", function()
-    local mpk = require("MessagePack")
+    local mpk = require("serialization").messagePack
 
     it("should produce valid SQL BLOB literal", function()
       local result = serialization.serializeMessagePackSQLBlob("test")

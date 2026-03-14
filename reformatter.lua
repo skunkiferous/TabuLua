@@ -54,6 +54,7 @@ local safeReplaceFile = file_util.safeReplaceFile
 local normalizePath = file_util.normalizePath
 local isDir = file_util.isDir
 local emptyDir = file_util.emptyDir
+local mkdir = file_util.mkdir
 
 local manifest_loader = require("manifest_loader")
 
@@ -67,9 +68,6 @@ local serializeTableJSON = serialization.serializeTableJSON
 local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
 local serializeTableXML = serialization.serializeTableXML
 local serializeMessagePackSQLBlob = serialization.serializeMessagePackSQLBlob
-
-local isDir = file_util.isDir
-local mkdir = file_util.mkdir
 
 -- Default export directory
 local DEFAULT_EXPORT_DIR = "exported"

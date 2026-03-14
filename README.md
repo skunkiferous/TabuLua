@@ -15,6 +15,7 @@ TabuLua provides a robust way to define, validate, and manage structured data in
 - **Package System** - Organize data into packages with dependencies and versioning
 - **Multi-Format Export** - Export to JSON, Lua tables, XML, SQL, and MessagePack
 - **Comprehensive Validation** - Custom types, row/file/package validators
+- **Global Reset** - Reset all module-level mutable state (caches, registries) in one call
 
 ## Quick Example
 

@@ -16,6 +16,8 @@ local tableShallowCopy = table_utils.tableShallowCopy
 local wrappedPairs = table_utils.wrappedPairs
 local wrappedIpairs = table_utils.wrappedIpairs
 
+local global_reset = require("global_reset")
+
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
 local function getVersion()
@@ -62,6 +64,11 @@ local readOnly_mt = {
 -- Cache for meta-tables for read-only tables, which were created using opt_index
 local readOnly_mt_cache = {}
 setmetatable(readOnly_mt_cache, { __mode = "k" })
+
+global_reset.register(function()
+    readOnly_mt_cache = {}
+    setmetatable(readOnly_mt_cache, { __mode = "k" })
+end)
 
 --- Converts a value to a string representation for debugging.
 --- This is a local implementation to avoid circular dependency with serialization module.

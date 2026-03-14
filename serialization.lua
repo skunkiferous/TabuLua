@@ -807,6 +807,7 @@ end
 local API = {
     dump=dump,
     getVersion=getVersion,
+    messagePack=mpk,
     serialize=serialize,
     serializeInSandbox=serializeInSandbox,
     serializeJSON=serializeJSON,

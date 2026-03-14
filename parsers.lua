@@ -59,6 +59,19 @@ end
 state.BUILT_IN = readOnly(state.BUILT_IN)
 
 -- ============================================================
+-- Register with global_reset
+-- ============================================================
+
+-- Snapshot the parser state now (all built-in types registered)
+state.snapshotState()
+
+-- Register a reset function that restores parser state to post-initialization
+local global_reset = require("global_reset")
+global_reset.register(function()
+    state.restoreState()
+end)
+
+-- ============================================================
 -- Public API
 -- ============================================================
 

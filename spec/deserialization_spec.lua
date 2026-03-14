@@ -553,7 +553,7 @@ describe("deserialization", function()
   end)
 
   describe("deserializeMessagePack", function()
-    local mpk = require("MessagePack")
+    local mpk = require("serialization").messagePack
 
     it("should deserialize nil", function()
       local packed = mpk.pack(nil)

@@ -180,14 +180,10 @@ local function registerAliases(file, fileType, extends, badVal)
     end
 end
 
--- Tracks types registered by registerFileType (as opposed to pre-existing/built-in types).
--- Used to limit parent-child field validation to user-defined file record types only.
-local fileRegisteredTypes = {}
-
 -- Register a record type for a TSV file based on its column structure.
 -- When 'extends' is provided and the fileType has a parent with a registered record type,
 -- validates that each child field type is same-or-subtype of the corresponding parent field.
-local function registerFileType(file, fileType, typesSet, enumsSet, extends, badVal)
+local function registerFileType(fileRegisteredTypes, file, fileType, typesSet, enumsSet, extends, badVal)
     if not fileType or #fileType == 0 then
         return  -- No type name specified
     end
@@ -394,7 +390,7 @@ local function isMigrationScript(rawtsv)
 end
 
 -- Processes a single TSV/CSV file: reads, parses, and registers types/enums if applicable
-local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
+local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
     typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
     options_extractor, expr_eval, loadEnv, badVal)
     badVal.source = file_name
@@ -440,7 +436,7 @@ local function processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lc
             registerCustomTypesFromFile(file, badVal)
         end
         -- Register the file's column structure as a type
-        registerFileType(file, fileType, typesSet, enumsSet, extends, badVal)
+        registerFileType(fileRegisteredTypes, file, fileType, typesSet, enumsSet, extends, badVal)
     end
 end
 
@@ -466,9 +462,12 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
     typesSet, enumsSet, customTypesSet, extends, raw_files, loadEnv, badVal)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
 
+    -- Tracks types registered by registerFileType (as opposed to pre-existing/built-in types).
+    -- Used to limit parent-child field validation to user-defined file record types only.
+    local fileRegisteredTypes = {}
     for _, file_name in ipairs(files) do
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV) then
-            processSingleTSVFile(file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
+            processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
                 typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
                 options_extractor, expr_eval, loadEnv, badVal)
         else
