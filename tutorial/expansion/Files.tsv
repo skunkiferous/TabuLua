@@ -3,5 +3,6 @@ ExpansionTypes.tsv	custom_type_def		false			5	Custom boss stat types demonstrati
 BossType.tsv	BossType	enum	true			10	Boss encounter categories for the Shadow Realm						
 Boss.tsv	Boss		true			100	Boss creatures with enhanced stats and type inheritance						
 ExpansionItem.tsv	ExpansionItem		true			200	New expansion items using core enums and custom types					"self.price > 0 or 'price must be positive'"	
+BossEncounter.tsv	BossEncounter		true			150	Boss encounters using MULTIPLE INHERITANCE: merges BaseStats + Localizable (v0.17.0)						
 ExpansionSpell.tsv	ExpansionSpell		true			300	New powerful spells using expansion library functions						
 Files.tsv	Files		true	Files		0	This file; describes all expansion data files						

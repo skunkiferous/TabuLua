@@ -25,6 +25,8 @@ local schema_export = require("parsers.schema_export")
 state.refs.extendsOrRestrict = introspection.extendsOrRestrict
 state.refs.getTypeKind = introspection.getTypeKind
 state.refs.tupleFieldTypes = introspection.tupleFieldTypes
+state.refs.recordFieldNames = introspection.recordFieldNames
+state.refs.recordFieldTypes = introspection.recordFieldTypes
 state.refs.parse_type = type_parsing.parse_type
 state.refs.parseType = type_parsing.parseType
 

@@ -370,18 +370,96 @@ local function parse_type_map(badVal, xparsed, type_spec)
             if kt == "enum" then
                 return get_enum_parser(badVal, parsed, type_spec)
             elseif kt == "extends" then
-                -- Bare extends in record syntax: {extends:<type>}
-                -- Normalize to tuple form {extends,<type>} and delegate
                 local ancestor_spec = utils.serializeType(value_type)
-                local normalized = "{extends," .. ancestor_spec .. "}"
-                local norm_result = state.refs.parseType(badVal, normalized)
-                if norm_result then
-                    state.COMPARATORS[type_spec] = state.COMPARATORS[normalized]
-                    state.NEVER_TABLE[type_spec] = true
-                    -- Alias colon form to comma form so they are interchangeable
-                    state.ALIASES[type_spec] = normalized
+                -- Check if this is bare multi-extends: {extends:{TypeA,TypeB}}
+                local parsed_value = lpeg_parser.type_parser(ancestor_spec)
+                if parsed_value and parsed_value.tag == "tuple" then
+                    -- Bare multi-extends: merge all parent fields into a flat record
+                    local parent_names = {}
+                    local seen = {}
+                    for _, elem in ipairs(parsed_value.value) do
+                        if elem.tag ~= "name" then
+                            utils.log(badVal, 'extends', type_spec,
+                                "each parent in multiple inheritance must be a named type, got: "
+                                .. utils.serializeType(elem))
+                            return nil
+                        end
+                        local pname = elem.value
+                        if seen[pname] then
+                            utils.log(badVal, 'extends', type_spec,
+                                "duplicate parent in multiple inheritance: " .. pname)
+                            return nil
+                        end
+                        seen[pname] = true
+                        parent_names[#parent_names + 1] = pname
+                    end
+                    -- Merge fields from all parents into a record spec string
+                    local merged_types = {}   -- field_name -> type_spec
+                    local merged_source = {}  -- field_name -> parent_name
+                    for _, pname in ipairs(parent_names) do
+                        local pfield_names = state.refs.recordFieldNames(pname)
+                        local pfield_types = state.refs.recordFieldTypes(pname)
+                        if not pfield_names or not pfield_types then
+                            utils.log(badVal, 'extends', type_spec,
+                                "parent type is not a record: " .. pname)
+                            return nil
+                        end
+                        for _, fname in ipairs(pfield_names) do
+                            local ftype = pfield_types[fname]
+                            if merged_types[fname] then
+                                local existing = merged_types[fname]
+                                if existing == ftype then
+                                    -- Same type: no conflict
+                                elseif existing:sub(1, 5) == "self." or ftype:sub(1, 5) == "self." then
+                                    utils.log(badVal, 'record', type_spec,
+                                        "field '" .. fname .. "' has conflicting self-ref types from parents: '"
+                                        .. existing .. "' (from " .. merged_source[fname]
+                                        .. ") vs '" .. ftype .. "' (from " .. pname .. ")")
+                                    return nil
+                                elseif state.refs.extendsOrRestrict(ftype, existing) then
+                                    merged_types[fname] = ftype
+                                    merged_source[fname] = pname
+                                elseif state.refs.extendsOrRestrict(existing, ftype) then
+                                    -- existing is narrower, keep it
+                                else
+                                    utils.log(badVal, 'record', type_spec,
+                                        "field '" .. fname .. "' has incompatible types from parents: '"
+                                        .. existing .. "' (from " .. merged_source[fname]
+                                        .. ") vs '" .. ftype .. "' (from " .. pname .. ")")
+                                    return nil
+                                end
+                            else
+                                merged_types[fname] = ftype
+                                merged_source[fname] = pname
+                            end
+                        end
+                    end
+                    -- Build flat record type spec from merged fields
+                    local field_names = keys(merged_types)
+                    local parts = {}
+                    for _, fname in ipairs(field_names) do
+                        parts[#parts + 1] = fname .. ":" .. merged_types[fname]
+                    end
+                    local flat_spec = "{" .. table.concat(parts, ",") .. "}"
+                    local flat_result = state.refs.parseType(badVal, flat_spec)
+                    if flat_result then
+                        state.COMPARATORS[type_spec] = state.COMPARATORS[flat_spec]
+                        state.ALIASES[type_spec] = flat_spec
+                    end
+                    return flat_result
+                else
+                    -- Bare single extends: {extends:<type>}
+                    -- Normalize to tuple form {extends,<type>} and delegate
+                    local normalized = "{extends," .. ancestor_spec .. "}"
+                    local norm_result = state.refs.parseType(badVal, normalized)
+                    if norm_result then
+                        state.COMPARATORS[type_spec] = state.COMPARATORS[normalized]
+                        state.NEVER_TABLE[type_spec] = true
+                        -- Alias colon form to comma form so they are interchangeable
+                        state.ALIASES[type_spec] = normalized
+                    end
+                    return norm_result
                 end
-                return norm_result
             else
                 local key_parse, key_spec = parse_type(badVal, key_type)
                 if not isNeverTable(key_spec) then
@@ -423,25 +501,47 @@ end
 local recordFieldNames
 local recordFieldTypes
 
--- Process the "extends" part of a "record" type specification
-local function parse_type_extends_record(badVal, copy, fields_parsers, type_spec)
-    local parent_spec = copy['extends']
-    copy['extends'] = nil
-    fields_parsers['extends'] = nil -- No need
-    local parent_field_names = recordFieldNames(parent_spec)
-    local parent_field_types = recordFieldTypes(parent_spec)
-    if not parent_field_names or not parent_field_types then
-        utils.log(badVal, 'extends', type_spec,
-            "parent type is not record: "..utils.serializeType(parent_spec))
-        return nil
-    end
+-- Applies a single parent's fields to the child record (copy/fields_parsers).
+-- merged_types/merged_source track already-merged parent fields for multi-parent conflict detection.
+-- Returns true on success, nil on error.
+local function apply_parent_fields(badVal, copy, fields_parsers, self_refs, type_spec,
+                                   parent_field_names, parent_field_types, parent_name,
+                                   merged_types, merged_source)
     for j = 1, #parent_field_names do
         local name = parent_field_names[j]
         local parent_type = parent_field_types[name]
-        if copy[name] then
+        local is_self_ref = parent_type:sub(1, 5) == "self."
+        -- Multi-parent conflict detection: check against previously merged parent fields
+        if merged_types and merged_types[name] then
+            local existing_type = merged_types[name]
+            if existing_type == parent_type then
+                -- Identical types from different parents: no conflict
+            elseif existing_type:sub(1, 5) == "self." or is_self_ref then
+                -- Self-ref fields must be identical across parents
+                utils.log(badVal, 'record', type_spec,
+                    "field '" .. name .. "' has conflicting self-ref types from parents: '"
+                    .. existing_type .. "' (from " .. merged_source[name]
+                    .. ") vs '" .. parent_type .. "' (from " .. parent_name .. ")")
+                return nil
+            elseif state.refs.extendsOrRestrict(parent_type, existing_type) then
+                -- New parent's type is narrower: update to the narrower type
+                merged_types[name] = parent_type
+                merged_source[name] = parent_name
+                copy[name] = parent_type
+                fields_parsers[name] = state.refs.parseType(badVal, parent_type)
+            elseif state.refs.extendsOrRestrict(existing_type, parent_type) then
+                -- Existing type is already narrower: keep it
+            else
+                utils.log(badVal, 'record', type_spec,
+                    "field '" .. name .. "' has incompatible types from parents: '"
+                    .. existing_type .. "' (from " .. merged_source[name]
+                    .. ") vs '" .. parent_type .. "' (from " .. parent_name .. ")")
+                return nil
+            end
+        elseif copy[name] then
             -- Child re-declares a parent field; validate the redefinition.
             -- Disallow re-declaring self-ref parent fields (structural, not type-narrowable).
-            if parent_type:sub(1, 5) == "self." then
+            if is_self_ref then
                 utils.log(badVal, 'record', type_spec,
                     "field '" .. name .. "' cannot redefine parent self-ref field '"
                     .. parent_type .. "'")
@@ -461,8 +561,84 @@ local function parse_type_extends_record(badVal, copy, fields_parsers, type_spec
         else
             -- Inherit parent field unchanged.
             copy[name] = parent_type
-            local fields_parser = state.refs.parseType(badVal, parent_type)
-            fields_parsers[name] = fields_parser
+            if is_self_ref then
+                -- Self-ref fields are resolved at parse time, not registration time.
+                -- Record the reference so get_record_parser can handle it.
+                self_refs[name] = parent_type:sub(6)  -- strip "self." prefix
+            else
+                fields_parsers[name] = state.refs.parseType(badVal, parent_type)
+            end
+        end
+        -- Track this field for multi-parent conflict detection
+        if merged_types and not merged_types[name] then
+            merged_types[name] = parent_type
+            merged_source[name] = parent_name
+        end
+    end
+    return true
+end
+
+-- Process the "extends" part of a "record" type specification.
+-- Supports both single inheritance (extends:ParentType) and
+-- multiple inheritance (extends:{ParentA,ParentB}).
+local function parse_type_extends_record(badVal, copy, fields_parsers, self_refs, type_spec)
+    local parent_spec = copy['extends']
+    copy['extends'] = nil
+    fields_parsers['extends'] = nil -- No need
+
+    -- Check if parent_spec is a tuple (multiple inheritance)
+    local parsed_parent = lpeg_parser.type_parser(parent_spec)
+    if parsed_parent and parsed_parent.tag == "tuple" then
+        -- Multiple inheritance: extract parent names from tuple
+        local parent_names = {}
+        local seen = {}
+        for _, elem in ipairs(parsed_parent.value) do
+            if elem.tag ~= "name" then
+                utils.log(badVal, 'extends', type_spec,
+                    "each parent in multiple inheritance must be a named type, got: "
+                    .. utils.serializeType(elem))
+                return nil
+            end
+            local pname = elem.value
+            if seen[pname] then
+                utils.log(badVal, 'extends', type_spec,
+                    "duplicate parent in multiple inheritance: " .. pname)
+                return nil
+            end
+            seen[pname] = true
+            parent_names[#parent_names + 1] = pname
+        end
+
+        -- Merge fields from all parents
+        local merged_types = {}   -- field_name -> type_spec (across parents)
+        local merged_source = {}  -- field_name -> parent_name (for error messages)
+        for _, pname in ipairs(parent_names) do
+            local pfield_names = recordFieldNames(pname)
+            local pfield_types = recordFieldTypes(pname)
+            if not pfield_names or not pfield_types then
+                utils.log(badVal, 'extends', type_spec,
+                    "parent type is not a record: " .. pname)
+                return nil
+            end
+            if not apply_parent_fields(badVal, copy, fields_parsers, self_refs, type_spec,
+                                       pfield_names, pfield_types, pname,
+                                       merged_types, merged_source) then
+                return nil
+            end
+        end
+    else
+        -- Single inheritance (existing behavior)
+        local parent_field_names = recordFieldNames(parent_spec)
+        local parent_field_types = recordFieldTypes(parent_spec)
+        if not parent_field_names or not parent_field_types then
+            utils.log(badVal, 'extends', type_spec,
+                "parent type is not record: "..utils.serializeType(parent_spec))
+            return nil
+        end
+        if not apply_parent_fields(badVal, copy, fields_parsers, self_refs, type_spec,
+                                   parent_field_names, parent_field_types, parent_spec,
+                                   nil, nil) then
+            return nil
         end
     end
 end
@@ -591,7 +767,7 @@ local function parse_type_record(badVal, xparsed, type_spec)
             end
         end
         if extends then
-            parse_type_extends_record(badVal, copy, fields_parsers, type_spec)
+            parse_type_extends_record(badVal, copy, fields_parsers, self_refs, type_spec)
         end
         if errors_before == badVal.errors then
             local field_names = keys(copy)

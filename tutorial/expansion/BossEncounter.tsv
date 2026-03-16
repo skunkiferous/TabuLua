@@ -1,0 +1,13 @@
+name:name	difficulty:integer	attack:integer	defense:integer	speed:integer	displayName:text	description:text
+# ^ This file demonstrates MULTIPLE INHERITANCE (v0.17.0):
+# ^ BossEncounter = {difficulty:integer, extends:{BaseStats, Localizable}}
+# ^   BaseStats (from core CoreTypes.tsv) provides: attack, defense, speed
+# ^   Localizable (from core CoreTypes.tsv) provides: displayName, description
+# ^   difficulty is the child's own field
+# ^ The two parent record types have no overlapping fields, so the merge is clean.
+# ^ This pattern is useful for combining structural data with localization data,
+# ^ e.g., when translations are maintained in a separate file and "joined into"
+# ^ the main data at export time.
+shadowLord	5	80	40	30	Shadow Lord	The lord of the shadow realm, master of darkness
+infernalGuardian	3	60	70	20	Infernal Guardian	An ancient fire guardian bound to protect the realm gate
+lightbringer	10	100	50	40	Lightbringer	The primordial being of pure light, final boss of the expansion

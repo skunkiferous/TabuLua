@@ -335,6 +335,67 @@ A child record type may **re-declare** a field that already exists in the parent
 
 **Multi-level narrowing:** Re-declaration is validated against the immediate parent only, and the result is itself a valid type that can be further narrowed by grandchildren. For example, if parent has `x:number` and child narrows to `x:integer`, a grandchild may further narrow to `x:ubyte`.
 
+### Multiple Inheritance
+
+A record type can extend **multiple parent records** by specifying a tuple of parent type names in the `extends` field:
+
+```
+# Single inheritance (existing)
+{extends:<ParentType>,<name>:<type>,...}
+
+# Multiple inheritance (new)
+{extends:{<ParentA>,<ParentB>},<name>:<type>,...}
+```
+
+All fields from every parent are merged into the child type. The child may also declare its own additional fields.
+
+**Example:**
+
+```text
+# Define two parent record types
+{name="Localized",parent="{displayName:string,description:string}"}
+{name="Measured",parent="{unit:string,precision:integer}"}
+
+# Child extends both — gets all four parent fields plus its own
+{name="LocalizedMeasurement",parent="{extends:{Localized,Measured},value:float}"}
+```
+
+The `LocalizedMeasurement` type has fields: `description`, `displayName`, `precision`, `unit`, and `value`.
+
+**Field conflict resolution:**
+
+| Scenario | Result |
+| --- | --- |
+| Both parents define the same field with the **same type** | No conflict — field appears once |
+| Both parents define the same field with **compatible types** (one extends the other) | The **narrower** type wins (e.g., `integer` beats `number`) |
+| Both parents define the same field with **incompatible types** | **Error** |
+| Both parents define a `self.X` field targeting the **same** reference | No conflict |
+| Both parents define a `self.X` field targeting **different** references | **Error** |
+
+**Rules:**
+
+- Each parent must be a **named type** (a registered alias) that resolves to a record. Inline record specs in the parent tuple are not allowed.
+- Duplicate parents (e.g., `{extends:{A,A}}`) are an error.
+- Parent order does not affect the result — conflicts are errors, not resolved by ordering.
+- The child may re-declare an inherited field to narrow its type, following the same compatibility rules as single inheritance.
+- Diamond inheritance (two parents sharing a common ancestor) works naturally: overlapping fields have identical types from the shared ancestor.
+- `extendsOrRestrict` recognizes a multi-extends child as extending each of its parents individually.
+
+**Bare multi-extends:**
+
+The bare form `{extends:{<ParentA>,<ParentB>}}` — without additional child fields — creates a merged record type containing all fields from both parents. This is useful for "joining" two record types into one.
+
+```text
+# Two complementary record types
+{name="CoreData",parent="{id:string,value:number}"}
+{name="Translation",parent="{displayName:string,description:string}"}
+
+# Merged type — all four fields, no additional child fields
+{name="FullData",parent="{extends:{CoreData,Translation}}"}
+```
+
+> **Note:** `{extends:{A}}` with a single type in braces is **not** treated as multiple inheritance — a single element in braces is parsed as an array type, not a tuple. Use `{extends:A}` for single inheritance.
+
 ### Bare Extends (Ancestor Constraint)
 
 The bare forms `{extends,<type>}` (tuple syntax) and `{extends:<type>}` (record syntax) — without additional fields — define a type whose values must be **names of registered types** extending the specified ancestor. This is useful for constraining a field to only accept type names from a specific type family.

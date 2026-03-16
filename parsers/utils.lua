@@ -59,7 +59,7 @@ function M.resolve(name)
     local alias = state.ALIASES[name]
     if alias then return alias end
     -- Normalize {extends:X} colon form to {extends,X} comma form on demand
-    local ancestor = name:match("^{extends:([^}]+)}$")
+    local ancestor = name:match("^{extends:([^{}]+)}$")
     if ancestor then
         local normalized = "{extends," .. ancestor .. "}"
         state.ALIASES[name] = normalized

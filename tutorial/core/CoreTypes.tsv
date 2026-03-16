@@ -8,3 +8,4 @@ name:name	parent:type_spec|nil	description:text
 BaseStats	{attack:integer,defense:integer,speed:integer}	Named record alias for creature combat stats (attack / defense / speed)
 Point2D	{float,float}	Named tuple alias for a 2-D coordinate (x, y)
 FlexStats	{attack:integer,critRate:float|nil,defense:integer,speed:integer}	Extended stats record with an optional critical-hit rate (nil = not applicable)
+Localizable	{description:text,displayName:text}	Reusable record for any entity that needs a display name and description (translation pattern)

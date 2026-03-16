@@ -763,4 +763,298 @@ describe("parsers - record types", function()
     end)
 
   end)
+
+  -- =======================================================================
+  -- Record Multiple Inheritance
+  -- =======================================================================
+  describe("record multiple inheritance", function()
+    local badVal, log_messages
+
+    before_each(function()
+      require("global_reset").reset()
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Basic functionality
+    -- -----------------------------------------------------------------------
+    it("should merge fields from two parents", function()
+      assert(parsers.registerAlias(badVal, "MiA", "{a:string,a2:integer}"))
+      assert(parsers.registerAlias(badVal, "MiB", "{b:number,b2:boolean}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiA,MiB},c:string}")
+      assert.is_not_nil(parser)
+
+      assert_equals_2({a="hello", a2=1, b=42, b2=true, c="x"},
+        'a2=1,a="hello",b2=true,b=42,c="x"',
+        parser(badVal, 'a="hello",a2=1,b=42,b2=true,c="x"'))
+      assert.same({}, log_messages)
+    end)
+
+    it("should merge fields from three parents", function()
+      assert(parsers.registerAlias(badVal, "Mi3A", "{a:string,a2:integer}"))
+      assert(parsers.registerAlias(badVal, "Mi3B", "{b:number,b2:boolean}"))
+      assert(parsers.registerAlias(badVal, "Mi3C", "{c:boolean,c2:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{Mi3A,Mi3B,Mi3C},d:integer}")
+      assert.is_not_nil(parser)
+
+      assert_equals_2({a="x", a2=1, b=1.5, b2=true, c=true, c2="y", d=7},
+        'a2=1,a="x",b2=true,b=1.5,c2="y",c=true,d=7',
+        parser(badVal, 'a="x",a2=1,b=1.5,b2=true,c=true,c2="y",d=7'))
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Overlapping fields
+    -- -----------------------------------------------------------------------
+    it("should allow overlapping fields with same type", function()
+      assert(parsers.registerAlias(badVal, "MiOvA", "{id:string,name:string}"))
+      assert(parsers.registerAlias(badVal, "MiOvB", "{id:string,value:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiOvA,MiOvB}}")
+      assert.is_not_nil(parser)
+
+      assert_equals_2({id="x", name="foo", value=42},
+        'id="x",name="foo",value=42',
+        parser(badVal, 'id="x",name="foo",value=42'))
+      assert.same({}, log_messages)
+    end)
+
+    it("should allow overlapping fields with compatible narrowing", function()
+      assert(parsers.registerAlias(badVal, "MiNarA", "{x:number,a:string}"))
+      assert(parsers.registerAlias(badVal, "MiNarB", "{x:integer,b:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiNarA,MiNarB}}")
+      assert.is_not_nil(parser)
+
+      -- x should be integer (narrower than number)
+      local fields = parsers.recordFieldTypes("{extends:{MiNarA,MiNarB}}")
+      assert.is_not_nil(fields)
+      assert.are.equal("integer", fields.x)
+      assert.same({}, log_messages)
+    end)
+
+    it("should reject overlapping fields with incompatible types", function()
+      assert(parsers.registerAlias(badVal, "MiConA", "{x:string,id:string}"))
+      assert(parsers.registerAlias(badVal, "MiConB", "{x:number,id:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiConA,MiConB},y:boolean}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("incompatible types from parents", log_messages[1])
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Diamond inheritance
+    -- -----------------------------------------------------------------------
+    it("should handle diamond inheritance", function()
+      assert(parsers.registerAlias(badVal, "MiBase", "{id:string,tag:string}"))
+      assert(parsers.registerAlias(badVal, "MiLeft", "{extends:MiBase,a:number}"))
+      assert(parsers.registerAlias(badVal, "MiRight", "{extends:MiBase,b:number}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiLeft,MiRight}}")
+      assert.is_not_nil(parser)
+
+      local fields = parsers.recordFieldNames("{extends:{MiLeft,MiRight}}")
+      assert.is_not_nil(fields)
+      assert.same({"a", "b", "id", "tag"}, fields)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Child redefinition
+    -- -----------------------------------------------------------------------
+    it("should allow child to narrow a multi-parent field", function()
+      assert(parsers.registerAlias(badVal, "MiRdA", "{x:number,id:string}"))
+      assert(parsers.registerAlias(badVal, "MiRdB", "{y:string,id:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiRdA,MiRdB},x:integer}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    it("should reject child incompatible redefinition with multi-parent", function()
+      assert(parsers.registerAlias(badVal, "MiRd2A", "{x:number,id:string}"))
+      assert(parsers.registerAlias(badVal, "MiRd2B", "{y:string,id:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiRd2A,MiRd2B},x:string}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("incompatible type", log_messages[1])
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Self-ref interactions
+    -- -----------------------------------------------------------------------
+    it("should inherit self-ref from a parent in multi-extends", function()
+      assert(parsers.registerAlias(badVal, "MiSrA", "{unit:type_spec,value:self.unit}"))
+      assert(parsers.registerAlias(badVal, "MiSrB", "{label:string,tag:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiSrA,MiSrB},extra:boolean}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    it("should reject conflicting self-ref fields from different parents", function()
+      assert(parsers.registerAlias(badVal, "MiSrC", "{unit:type_spec,value:self.unit}"))
+      assert(parsers.registerAlias(badVal, "MiSrD", "{category:type_spec,value:self.category}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiSrC,MiSrD}}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("conflicting self%-ref", log_messages[1])
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Error cases
+    -- -----------------------------------------------------------------------
+    it("should reject non-record parent in tuple", function()
+      local parser = parsers.parseType(badVal, "{extends:{string,number},field:string}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("parent type is not a record", log_messages[1])
+    end)
+
+    it("should reject non-named parent in tuple", function()
+      -- {a:string} with one kv pair parses as a map, not a name
+      -- The tuple element would not be a simple name tag
+      local parser = parsers.parseType(badVal, "{extends:{{string:string},{integer:integer}},field:string}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("each parent in multiple inheritance must be a named type", log_messages[1])
+    end)
+
+    it("should reject duplicate parents", function()
+      assert(parsers.registerAlias(badVal, "MiDupA", "{a:string,b:integer}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiDupA,MiDupA},c:number}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+      assert.matches("duplicate parent", log_messages[1])
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Introspection
+    -- -----------------------------------------------------------------------
+    it("should return correct recordFieldNames with multi-extends", function()
+      assert(parsers.registerAlias(badVal, "MiFnA", "{a:string,c:number}"))
+      assert(parsers.registerAlias(badVal, "MiFnB", "{b:boolean,e:string}"))
+      assert(parsers.registerAlias(badVal, "MiFnChild", "{extends:{MiFnA,MiFnB},d:integer}"))
+
+      local fields = parsers.recordFieldNames("MiFnChild")
+      assert.is_not_nil(fields)
+      assert.same({"a", "b", "c", "d", "e"}, fields)
+      assert.same({}, log_messages)
+    end)
+
+    it("should return correct recordFieldTypes with multi-extends", function()
+      assert(parsers.registerAlias(badVal, "MiFtA", "{a:string,c:number}"))
+      assert(parsers.registerAlias(badVal, "MiFtB", "{b:boolean,e:string}"))
+      assert(parsers.registerAlias(badVal, "MiFtChild", "{extends:{MiFtA,MiFtB},d:integer}"))
+
+      local fields = parsers.recordFieldTypes("MiFtChild")
+      assert.is_not_nil(fields)
+      assert.are.equal("string", fields.a)
+      assert.are.equal("boolean", fields.b)
+      assert.are.equal("number", fields.c)
+      assert.are.equal("integer", fields.d)
+      assert.are.equal("string", fields.e)
+      assert.same({}, log_messages)
+    end)
+
+    it("should pass extendsOrRestrict for each parent individually", function()
+      assert(parsers.registerAlias(badVal, "MiEorA", "{a:string,id:string}"))
+      assert(parsers.registerAlias(badVal, "MiEorB", "{b:number,id:string}"))
+      assert(parsers.registerAlias(badVal, "MiEorChild", "{extends:{MiEorA,MiEorB},c:boolean}"))
+
+      assert.is_true(parsers.extendsOrRestrict("MiEorChild", "MiEorA"))
+      assert.is_true(parsers.extendsOrRestrict("MiEorChild", "MiEorB"))
+      assert.is_true(parsers.extendsOrRestrict("MiEorChild", "record"))
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Column omission (nil narrowing)
+    -- -----------------------------------------------------------------------
+    it("should support column omission with multi-extends", function()
+      assert(parsers.registerAlias(badVal, "MiNilA", "{x:number|nil,y:string}"))
+      assert(parsers.registerAlias(badVal, "MiNilB", "{z:boolean,w:string}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiNilA,MiNilB},x:nil}")
+      assert.is_not_nil(parser)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Bare multi-extends
+    -- -----------------------------------------------------------------------
+    it("should create merged record with bare multi-extends", function()
+      assert(parsers.registerAlias(badVal, "MiBareA", "{a:string,b:number}"))
+      assert(parsers.registerAlias(badVal, "MiBareB", "{c:boolean,d:integer}"))
+
+      local parser = parsers.parseType(badVal, "{extends:{MiBareA,MiBareB}}")
+      assert.is_not_nil(parser)
+
+      assert_equals_2({a="hello", b=42, c=true, d=7},
+        'a="hello",b=42,c=true,d=7',
+        parser(badVal, 'a="hello",b=42,c=true,d=7'))
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Single parent in braces (edge case: {extends:{A}} is array, not tuple)
+    -- -----------------------------------------------------------------------
+    it("should handle {extends:{A}} as array type (not multiple inheritance)", function()
+      assert(parsers.registerAlias(badVal, "MiSingle", "{a:string,b:integer}"))
+
+      -- {MiSingle} with one element parses as array tag, not tuple
+      -- So this is treated as bare single extends with {MiSingle} as ancestor
+      -- which is an array type, not a record -> should fail
+      local parser = parsers.parseType(badVal, "{extends:{MiSingle},field:string}")
+      assert.is_nil(parser)
+      assert.is_true(#log_messages > 0)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Order independence
+    -- -----------------------------------------------------------------------
+    it("should produce equivalent types regardless of parent order", function()
+      assert(parsers.registerAlias(badVal, "MiOrdA", "{a:string,shared:number}"))
+      assert(parsers.registerAlias(badVal, "MiOrdB", "{b:boolean,shared:number}"))
+
+      local parser1 = parsers.parseType(badVal, "{extends:{MiOrdA,MiOrdB}}")
+      assert.is_not_nil(parser1)
+
+      local parser2 = parsers.parseType(badVal, "{extends:{MiOrdB,MiOrdA}}")
+      assert.is_not_nil(parser2)
+
+      -- Both should produce the same result
+      local r1 = parser1(badVal, 'a="x",b=true,shared=5')
+      local r2 = parser2(badVal, 'a="x",b=true,shared=5')
+      assert.same(r1, r2)
+      assert.same({}, log_messages)
+    end)
+
+    -- -----------------------------------------------------------------------
+    -- Named type with multi-extends via registerAlias
+    -- -----------------------------------------------------------------------
+    it("should register a named type with multiple inheritance", function()
+      assert(parsers.registerAlias(badVal, "MiRegA", "{name:string,tag:string}"))
+      assert(parsers.registerAlias(badVal, "MiRegB", "{value:number,count:integer}"))
+      assert(parsers.registerAlias(badVal, "MiRegChild", "{extends:{MiRegA,MiRegB},active:boolean}"))
+
+      local parser = parsers.parseType(badVal, "MiRegChild")
+      assert.is_not_nil(parser)
+
+      assert_equals_2({name="test", tag="a", value=42, count=1, active=true},
+        'active=true,count=1,name="test",tag="a",value=42',
+        parser(badVal, 'name="test",tag="a",value=42,count=1,active=true'))
+
+      local fields = parsers.recordFieldNames("MiRegChild")
+      assert.same({"active", "count", "name", "tag", "value"}, fields)
+      assert.same({}, log_messages)
+    end)
+  end)
 end)

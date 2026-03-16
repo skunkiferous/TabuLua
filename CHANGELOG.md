@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   state (caches, registries, etc.) back to its original post-load condition. Modules
   call `register(fn)` during initialization; calling `reset()` invokes all registered
   functions. Has no project dependencies.
+- **Multiple inheritance for record types.** A record's `extends` field now accepts
+  a tuple of parent type names (e.g., `{extends:{ParentA,ParentB},field:type}`),
+  merging fields from all parents into the child type. Field conflict resolution:
+  identical types are allowed; compatible types are narrowed to the more specific
+  type; incompatible types produce an error. Self-ref fields must be identical
+  across parents. Duplicate parents, non-record parents, and inline record specs
+  in the parent tuple are rejected. Bare multi-extends (`{extends:{A,B}}` without
+  additional child fields) creates a merged record. Diamond inheritance is handled
+  naturally. `extendsOrRestrict` recognizes multi-extends children as extending
+  each parent individually.
 
 ### Changed
 
