@@ -123,6 +123,9 @@ local function computeRelativePath(file_name, file2dir)
     if not file2dir then return file_name end
     local dir = file2dir[file_name]
     if dir then
+        if dir == "." then
+            return file_name
+        end
         return file_name:sub(#dir + 2)
     end
     return file_name

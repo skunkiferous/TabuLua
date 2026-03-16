@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Fixed `computeRelativePath` in the exporter corrupting file paths when the
+  source directory is `"."`. The `sub(#dir + 2)` prefix-stripping logic would
+  strip the first two characters of every file path (e.g., `"Resource/Bulk/…"`
+  became `"source/Bulk/…"`). Added a special case: when the directory is `"."`,
+  file paths are already relative and are returned as-is.
+
 ## [0.16.0] - 2026-03-08
 
 ### Added

@@ -595,6 +595,82 @@ describe("exporter", function()
         end)
     end)
 
+    describe("computeRelativePath via export (file2dir)", function()
+        it("should return file_name as-is when directory is '.'", function()
+            -- When the data directory is ".", file paths are already relative
+            -- and should not have a prefix stripped.
+            local test_file = "subdir/test.tsv"
+            local tsv = createTestTSV(test_file)
+
+            local process_files = {
+                tsv_files = { [test_file] = tsv },
+                raw_files = { [test_file] = "id\tvalue\nitem1\t42\nitem2\t100" },
+                file2dir = { [test_file] = "." },
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportLuaTSV(process_files, exportParams)
+            assert.is_true(success)
+
+            -- The file should be at exportDir/subdir/test.tsv (path preserved as-is)
+            local exported_file = path_join(temp_dir, "subdir/test.tsv")
+            local content = file_util.readFile(exported_file)
+            assert.is_not_nil(content, "File should be at subdir/test.tsv, not with chars stripped")
+            assert.is_truthy(content:match('"item1"'))
+        end)
+
+        it("should strip directory prefix when directory is not '.'", function()
+            -- When the data directory is a real path, the prefix should be stripped
+            -- so the exported file is relative to the export directory.
+            local test_file = "mydata/test.tsv"
+            local tsv = createTestTSV(test_file)
+
+            local process_files = {
+                tsv_files = { [test_file] = tsv },
+                raw_files = { [test_file] = "id\tvalue\nitem1\t42\nitem2\t100" },
+                file2dir = { [test_file] = "mydata" },
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportLuaTSV(process_files, exportParams)
+            assert.is_true(success)
+
+            -- The file should be at exportDir/test.tsv (prefix "mydata/" stripped)
+            local exported_file = path_join(temp_dir, "test.tsv")
+            local content = file_util.readFile(exported_file)
+            assert.is_not_nil(content, "File should be at test.tsv with directory prefix stripped")
+            assert.is_truthy(content:match('"item1"'))
+        end)
+
+        it("should preserve subdirectory paths when directory is '.'", function()
+            -- Regression test: with dir=".", a file like "Resource/Bulk/data.tsv"
+            -- must NOT become "source/Bulk/data.tsv" (first 2 chars stripped).
+            local test_file = "Resource/Bulk/data.tsv"
+            local tsv = createTestTSV(test_file)
+
+            local process_files = {
+                tsv_files = { [test_file] = tsv },
+                raw_files = { [test_file] = "id\tvalue\nitem1\t42\nitem2\t100" },
+                file2dir = { [test_file] = "." },
+            }
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportLuaTSV(process_files, exportParams)
+            assert.is_true(success)
+
+            -- Must be at the full original path, not the mangled one
+            local exported_file = path_join(temp_dir, "Resource/Bulk/data.tsv")
+            local content = file_util.readFile(exported_file)
+            assert.is_not_nil(content, "File should be at Resource/Bulk/data.tsv, not source/Bulk/data.tsv")
+            assert.is_truthy(content:match('"item1"'))
+
+            -- Verify the mangled path does NOT exist
+            local mangled_file = path_join(temp_dir, "source/Bulk/data.tsv")
+            local mangled_content = file_util.readFile(mangled_file)
+            assert.is_nil(mangled_content, "Mangled path source/Bulk/data.tsv should not exist")
+        end)
+    end)
+
     describe("exploded columns", function()
         it("should export exploded columns as separate flat columns when exportExploded is true", function()
             local process_files = createExplodedProcessFiles(temp_dir)
