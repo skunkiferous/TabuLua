@@ -298,17 +298,15 @@ local function exportTSV(process_files, exportParams, serializer)
     local dirChecked = {}
     for file_name, content in pairs(raw_files) do
         local content2 = content
+        -- Compute relative path for both export and join metadata lookups
+        local relative_name = computeRelativePath(file_name, file2dir)
+        local lcfnKey = relative_name:lower():gsub("\\", "/")
         -- Check if this file should be exported
-        local lcfn = file_name:lower()
-        -- Extract just the filename without path for lookup
-        local idx = lcfn:find("/[^/]*$") or lcfn:find("\\[^\\]*$")
-        local lcfnKey = idx and lcfn:sub(idx + 1) or lcfn
         if joinMeta and not shouldExport(lcfnKey, joinMeta) then
             logger:info("Skipping export of secondary file: " .. file_name)
             goto continue
         end
         local is_tsv = hasExtension(file_name, "tsv")
-        local relative_name = computeRelativePath(file_name, file2dir)
         local new_name = pathJoin(exportDir, relative_name)
         if is_tsv and fileExt ~= "tsv" then
             new_name = changeExtension(new_name, fileExt)
@@ -781,14 +779,22 @@ local function exportMessagePack(process_files, exportParams)
     local tsv_files = process_files.tsv_files
     local raw_files = process_files.raw_files
     local file2dir = process_files.file2dir
+    local joinMeta = process_files.joinMeta
     local baseExportDir = exportParams.exportDir
     local formatSubdir = exportParams.formatSubdir or ""
     local exportDir = formatSubdir ~= "" and pathJoin(baseExportDir, formatSubdir) or baseExportDir
     local dirChecked = {}
     for file_name, content in pairs(raw_files) do
         local content2 = content
-        local is_tsv = hasExtension(file_name, "tsv")
+        -- Compute relative path for both export and join metadata lookups
         local relative_name = computeRelativePath(file_name, file2dir)
+        local lcfnKey = relative_name:lower():gsub("\\", "/")
+        -- Check if this file should be exported
+        if joinMeta and not shouldExport(lcfnKey, joinMeta) then
+            logger:info("Skipping MessagePack export of secondary file: " .. file_name)
+            goto continue
+        end
+        local is_tsv = hasExtension(file_name, "tsv")
         local new_name = pathJoin(exportDir, relative_name)
         if is_tsv then
             new_name = changeExtension(new_name, "mpk")
@@ -834,6 +840,7 @@ local function exportMessagePack(process_files, exportParams)
         if not writeExportFile(new_name, content2) then
             return false
         end
+        ::continue::
     end
     return true
 end

@@ -747,4 +747,132 @@ describe("exporter", function()
             assert.is_truthy(content:match('"location%.position%._2"'))
         end)
     end)
+
+    describe("shouldExport filtering", function()
+        -- Helper to create process_files with a primary and secondary file for join testing
+        local function createJoinProcessFiles(temp_dir)
+            local primary_file = "Resource/Primary.tsv"
+            local secondary_file = "Resource/Secondary.tsv"
+
+            local primary_tsv = createTestTSV(path_join(temp_dir, primary_file))
+            local secondary_tsv = createTestTSV(path_join(temp_dir, secondary_file))
+
+            local joinMeta = {
+                lcFn2JoinInto = {
+                    ["resource/secondary.tsv"] = "resource/primary.tsv",
+                },
+                lcFn2Export = {},
+                lcFn2JoinColumn = {
+                    ["resource/secondary.tsv"] = "id",
+                },
+                lcFn2JoinedTypeName = {},
+            }
+
+            return {
+                tsv_files = {
+                    [primary_file] = primary_tsv,
+                    [secondary_file] = secondary_tsv,
+                },
+                raw_files = {
+                    [primary_file] = "id\tvalue\nitem1\t42\nitem2\t100",
+                    [secondary_file] = "id\tvalue\nitem1\t42\nitem2\t100",
+                },
+                file2dir = {
+                    [primary_file] = ".",
+                    [secondary_file] = ".",
+                },
+                joinMeta = joinMeta,
+            }
+        end
+
+        it("should skip secondary files in exportLuaTSV", function()
+            local process_files = createJoinProcessFiles(temp_dir)
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportLuaTSV(process_files, exportParams)
+            assert.is_true(success)
+
+            -- Primary file should be exported
+            local primary_exported = path_join(temp_dir, "Resource/Primary.tsv")
+            local primary_content = file_util.readFile(primary_exported)
+            assert.is_not_nil(primary_content, "Primary file should be exported")
+
+            -- Secondary file should NOT be exported
+            local secondary_exported = path_join(temp_dir, "Resource/Secondary.tsv")
+            local secondary_content = file_util.readFile(secondary_exported)
+            assert.is_nil(secondary_content, "Secondary file should not be exported")
+        end)
+
+        it("should skip secondary files in exportJSON", function()
+            local process_files = createJoinProcessFiles(temp_dir)
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportJSON(process_files, exportParams)
+            assert.is_true(success)
+
+            -- Primary file should be exported (with .json extension)
+            local primary_exported = path_join(temp_dir, "Resource/Primary.json")
+            local primary_content = file_util.readFile(primary_exported)
+            assert.is_not_nil(primary_content, "Primary file should be exported")
+
+            -- Secondary file should NOT be exported
+            local secondary_exported = path_join(temp_dir, "Resource/Secondary.json")
+            local secondary_content = file_util.readFile(secondary_exported)
+            assert.is_nil(secondary_content, "Secondary file should not be exported")
+        end)
+
+        it("should skip secondary files in exportMessagePack", function()
+            local process_files = createJoinProcessFiles(temp_dir)
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportMessagePack(process_files, exportParams)
+            assert.is_true(success)
+
+            -- Primary file should be exported (with .mpk extension)
+            local primary_exported = path_join(temp_dir, "Resource/Primary.mpk")
+            local primary_content = file_util.readFile(primary_exported)
+            assert.is_not_nil(primary_content, "Primary file should be exported")
+
+            -- Secondary file should NOT be exported
+            local secondary_exported = path_join(temp_dir, "Resource/Secondary.mpk")
+            local secondary_content = file_util.readFile(secondary_exported)
+            assert.is_nil(secondary_content, "Secondary file should not be exported")
+        end)
+
+        it("should export secondary file when lcFn2Export explicitly allows it", function()
+            local process_files = createJoinProcessFiles(temp_dir)
+            -- Explicitly set export=true for the secondary file
+            process_files.joinMeta.lcFn2Export["resource/secondary.tsv"] = true
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportLuaTSV(process_files, exportParams)
+            assert.is_true(success)
+
+            -- Both files should be exported
+            local primary_exported = path_join(temp_dir, "Resource/Primary.tsv")
+            assert.is_not_nil(file_util.readFile(primary_exported), "Primary file should be exported")
+
+            local secondary_exported = path_join(temp_dir, "Resource/Secondary.tsv")
+            assert.is_not_nil(file_util.readFile(secondary_exported),
+                "Secondary file with explicit export=true should be exported")
+        end)
+
+        it("should use relative path, not bare filename, for shouldExport lookup", function()
+            -- Regression test: ensures the lookup key matches Files.tsv format
+            -- (full relative path like "Resource/Secondary.tsv", not bare "Secondary.tsv")
+            local process_files = createJoinProcessFiles(temp_dir)
+            local exportParams = { exportDir = temp_dir }
+
+            local success = exporter.exportLuaTSV(process_files, exportParams)
+            assert.is_true(success)
+
+            -- If the bug were present (bare filename lookup), the secondary file
+            -- would be exported because "secondary.tsv" wouldn't match
+            -- "resource/secondary.tsv" in lcFn2JoinInto
+            local secondary_exported = path_join(temp_dir, "Resource/Secondary.tsv")
+            local secondary_content = file_util.readFile(secondary_exported)
+            assert.is_nil(secondary_content,
+                "Secondary file must not be exported (relative path key must match)")
+        end)
+    end)
 end)

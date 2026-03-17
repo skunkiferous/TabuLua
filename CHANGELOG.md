@@ -45,6 +45,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Fixed `shouldExport` check in `exportTSV` using the wrong key format. The
+  lookup key was stripped to the bare filename (e.g., `"food.en.tsv"`), but the
+  `lcFn2JoinInto` map in `files_desc.lua` stores the full relative path (e.g.,
+  `"resource/bulk/food.en.tsv"`). This caused secondary (joined-into) files to
+  never be recognized and always be exported. Now uses `computeRelativePath` with
+  normalized path separators to produce the correct key.
+- Added missing `shouldExport` check to `exportMessagePack`. Previously,
+  secondary files were always exported in MessagePack format regardless of their
+  join status.
 - Fixed broken error messages in `validateFileJoins` (`files_desc.lua`). Line
   number was always 0, source file was always the last-processed file (e.g.,
   "Shape.en.tsv"), and stale column metadata from previous processing leaked
