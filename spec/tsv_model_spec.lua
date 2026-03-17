@@ -1020,6 +1020,143 @@ describe("tsv_model", function()
         end)
     end)
 
+    describe("inherited default values", function()
+        it("should inherit default from parent header when child has none", function()
+            -- First, build a parent dataset whose header has a default on "status"
+            local parent_raw = {
+                {"name:string", "status:string:Unknown"},
+                {"P1", "Active"}
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local parent = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "parent.tsv", parent_raw, badVal)
+            assert.is_not_nil(parent)
+            assert.same({}, log_messages)
+            local parent_header = parent[1]
+
+            -- Now build a child dataset with no default on "status"
+            local child_raw = {
+                {"name:string", "status:string"},
+                {"C1", ""},       -- empty -> should inherit parent default "Unknown"
+                {"C2", "Done"}    -- has value -> keeps it
+            }
+            log_messages = {}
+            badVal = mockBadVal(log_messages)
+            local child = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "child.tsv", child_raw, badVal, nil, false, parent_header)
+            assert.is_not_nil(child)
+            assert.same({}, log_messages)
+            assert.equals("Unknown", child[2][2].parsed)
+            assert.equals("Done", child[3][2].parsed)
+        end)
+
+        it("should not override child's own default with parent's", function()
+            local parent_raw = {
+                {"name:string", "status:string:ParentDefault"},
+                {"P1", "Active"}
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local parent = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "parent.tsv", parent_raw, badVal)
+            assert.is_not_nil(parent)
+            local parent_header = parent[1]
+
+            -- Child has its OWN default — should NOT be overridden
+            local child_raw = {
+                {"name:string", "status:string:ChildDefault"},
+                {"C1", ""}
+            }
+            log_messages = {}
+            badVal = mockBadVal(log_messages)
+            local child = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "child.tsv", child_raw, badVal, nil, false, parent_header)
+            assert.is_not_nil(child)
+            assert.same({}, log_messages)
+            assert.equals("ChildDefault", child[2][2].parsed)
+        end)
+
+        it("should handle transitive inheritance (grandparent -> parent -> child)", function()
+            -- Grandparent has default
+            local gp_raw = {
+                {"name:string", "level:number:99"},
+                {"GP1", "1"}
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local gp = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "grandparent.tsv", gp_raw, badVal)
+            assert.is_not_nil(gp)
+            local gp_header = gp[1]
+
+            -- Parent inherits grandparent's default (no own default)
+            local parent_raw = {
+                {"name:string", "level:number"},
+                {"P1", ""}
+            }
+            log_messages = {}
+            badVal = mockBadVal(log_messages)
+            local parent = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "parent.tsv", parent_raw, badVal, nil, false, gp_header)
+            assert.is_not_nil(parent)
+            local parent_header = parent[1]
+            -- Parent column should have inherited default_expr
+            assert.equals("99", parent_header["level"].default_expr)
+
+            -- Child inherits from parent (which itself inherited from grandparent)
+            local child_raw = {
+                {"name:string", "level:number"},
+                {"C1", ""}
+            }
+            log_messages = {}
+            badVal = mockBadVal(log_messages)
+            local child = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "child.tsv", child_raw, badVal, nil, false, parent_header)
+            assert.is_not_nil(child)
+            assert.same({}, log_messages)
+            assert.equals(99, child[2][2].parsed)
+        end)
+
+        it("should not inherit default for columns not in parent", function()
+            local parent_raw = {
+                {"name:string", "status:string:Unknown"},
+                {"P1", "Active"}
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local parent = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "parent.tsv", parent_raw, badVal)
+            assert.is_not_nil(parent)
+            local parent_header = parent[1]
+
+            -- Child has a column "extra" that parent doesn't have — no inheritance
+            local child_raw = {
+                {"name:string", "status:string", "extra:string"},
+                {"C1", "", ""}
+            }
+            log_messages = {}
+            badVal = mockBadVal(log_messages)
+            local child = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "child.tsv", child_raw, badVal, nil, false, parent_header)
+            assert.is_not_nil(child)
+            assert.same({}, log_messages)
+            -- "status" inherits parent default
+            assert.equals("Unknown", child[2][2].parsed)
+            -- "extra" has no default from anywhere — stays empty string
+            assert.equals("", child[2][3].parsed)
+        end)
+    end)
+
     describe("column name validation", function()
         it("should mark valid identifier names as valid", function()
             local raw_tsv = {

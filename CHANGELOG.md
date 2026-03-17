@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   additional child fields) creates a merged record. Diamond inheritance is handled
   naturally. `extendsOrRestrict` recognizes multi-extends children as extending
   each parent individually.
+- **Inherited column defaults.** When a child file extends a parent file, columns
+  that have no default value now automatically inherit the parent's default. This
+  avoids having to re-declare `name:type:default` in every child file when the
+  parent already specifies the default. Child-defined defaults always take
+  precedence. Transitive inheritance (grandparent → parent → child) is supported.
 
 ### Changed
 

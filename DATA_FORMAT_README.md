@@ -77,6 +77,17 @@ area:float:=self.width*self.height  # Expression referencing other columns
 - The default expression is preserved in reformatted output
 - Columns with complex type specs (containing colons like `{a:number,b:string}`) can still have defaults
 
+### Inherited Defaults
+
+When a file extends a parent file (via `superType` in `Files.tsv`), columns that have no default value automatically inherit the default from the matching parent column. This avoids repeating the same default in every child file.
+
+**Example:** if the parent file header declares `parent:{extends:float}:float`, child files only need `parent:{extends:float}` — the `:float` default is inherited automatically.
+
+- A child's own default always takes precedence over the inherited one
+- Transitive inheritance is supported (grandparent → parent → child)
+- Only columns with the same name are matched; columns unique to the child are unaffected
+- Alternatively, the child can omit the column entirely, in which case the inherited default is still used.
+
 ## Column Omission
 
 When a file's type definition contains optional fields (typed as `T|nil`), you do not need to include a column for every optional field in the header. Any field absent from the header is treated as `nil` for every row — which is the correct default for an optional field.

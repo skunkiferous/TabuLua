@@ -243,7 +243,28 @@ local CUSTOM_TYPE_DEF_FIELDS = {
 -- Registers custom types from a file whose typeName is or extends custom_type_def.
 -- Each data row is treated as a custom_type_def record; its parsed fields are fed into
 -- parsers.registerTypesFromSpec, which handles aliases, constrained types, and type tags.
-local function registerCustomTypesFromFile(file, badVal)
+local function registerCustomTypesFromFile(file, badVal, fileType, extends, loadedFiles)
+    -- Build inherited defaults by walking the ancestor chain for columns
+    -- that are entirely missing from this file's header
+    local header = file[1]
+    local inherited_defaults = {}
+    local ancestor = fileType
+    while ancestor and extends[ancestor] do
+        ancestor = extends[ancestor]
+        local ancestor_file = loadedFiles[ancestor]
+        if ancestor_file then
+            local ancestor_header = ancestor_file[1]
+            for _, field in ipairs(CUSTOM_TYPE_DEF_FIELDS) do
+                if not inherited_defaults[field] and not header[field] then
+                    local col = ancestor_header[field]
+                    if col and col.default_expr then
+                        inherited_defaults[field] = col.default_expr
+                    end
+                end
+            end
+        end
+    end
+
     for i, row in ipairs(file) do
         if i > 1 and type(row) == "table" then
             local spec = {}
@@ -251,6 +272,8 @@ local function registerCustomTypesFromFile(file, badVal)
                 local cell = row[field]
                 if cell ~= nil then
                     spec[field] = cell.parsed
+                elseif inherited_defaults[field] then
+                    spec[field] = inherited_defaults[field]
                 end
             end
             badVal.line_no = i
@@ -416,8 +439,17 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     local fileType = lcFn2Type[lcFNKey]
     logFile(file_name, fileType, enumsSet, typesSet, customTypesSet, table_subscribers)
 
+    -- Look up parent file's header for inheriting column defaults
+    local parent_header = nil
+    if fileType and extends[fileType] then
+        local parent_file = loadEnv.files[extends[fileType]]
+        if parent_file then
+            parent_header = parent_file[1]
+        end
+    end
+
     local file = processTSV(options_extractor, expr_eval, parseType,
-        file_name, rawtsv, badVal, table_subscribers, false)
+        file_name, rawtsv, badVal, table_subscribers, false, parent_header)
     badVal.line_no = 0
     badVal.row_key = ""
     files_cache[file_name] = file
@@ -433,7 +465,7 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
             registerAliases(file, fileType, extends, badVal)
         end
         if customTypesSet[fileType] then
-            registerCustomTypesFromFile(file, badVal)
+            registerCustomTypesFromFile(file, badVal, fileType, extends, loadEnv.files)
         end
         -- Register the file's column structure as a type
         registerFileType(fileRegisteredTypes, file, fileType, typesSet, enumsSet, extends, badVal)

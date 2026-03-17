@@ -210,7 +210,14 @@ local function newHeaderColumn(params, col_idx, column)
     -- result.parser will be nil, if col_type is not a valid parser type
     -- In that case, the column cannot be parsed
     result.parser = col_parser
-    -- default_expr is nil if no default value was specified
+    -- Inherit default from parent header if this column has no default
+    if not default_expr and params.parent_header then
+        local parent_col = params.parent_header[col_name]
+        if parent_col then
+            default_expr = parent_col.default_expr
+        end
+    end
+    -- default_expr is nil if no default value was specified (and not inherited)
     result.default_expr = default_expr
     -- valid_name is true if the column name is a valid identifier (or exploded path)
     result.valid_name = valid_name
@@ -348,7 +355,7 @@ end
 -- table_subscribers allows defining "callable" subscribers for specific columns.
 -- The parser returns the parsed-value or nil if the value cannot be parsed.
 local function newHeader(options_extractor, expr_eval, parser_finder, source_name, header_row,
-    badVal, dataset, table_subscribers)
+    badVal, dataset, table_subscribers, parent_header)
     assert(type(badVal.col_types) == "table", "badVal.col_types: "..tostring(badVal.col_types))
     assert(#badVal.col_types == 1, "#badVal.col_types: "..tostring(#badVal.col_types))
     assert(badVal.col_types[1] == '', "badVal.col_types[1]: "..tostring(badVal.col_types[1]))
@@ -389,7 +396,8 @@ local function newHeader(options_extractor, expr_eval, parser_finder, source_nam
         end}
     local params = {options_extractor=options_extractor, expr_eval=expr_eval, header=header,
         parser_finder=parser_finder, source_name=source_name, badVal=badVal,
-        opt_index=col_opt_index,table_subscribers=table_subscribers}
+        opt_index=col_opt_index,table_subscribers=table_subscribers,
+        parent_header=parent_header}
     for col_idx, ch in ipairs(hr) do
         local col = newHeaderColumn(params, col_idx, ch)
         header[col_idx] = col
@@ -555,7 +563,7 @@ end
 -- As a convenience, the result is callable, with the line(no/key) and optional column(idx/name).
 -- to get either the whole row or a single cell, if the column is specified.
 local function processTSV(options_extractor, expr_eval, parser_finder, source_name, raw_tsv,
-    badVal, table_subscribers, transposed)
+    badVal, table_subscribers, transposed, parent_header)
     transposed = (transposed == true) or (type(source_name) == "string"
         and source_name:sub(-#TRANSPOSED_TSV_EXT) == TRANSPOSED_TSV_EXT)
     badVal.source_name = source_name
@@ -594,7 +602,7 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
         local dataset = {}
         local header = newHeader(options_extractor, expr_eval,
         parser_finder, source_name, raw_tsv[header_idx],
-        badVal, dataset, table_subscribers)
+        badVal, dataset, table_subscribers, parent_header)
         if not header then
             badVal.col_types[#badVal.col_types] = nil
             return nil
