@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Fixed broken error messages in `validateFileJoins` (`files_desc.lua`). Line
+  number was always 0, source file was always the last-processed file (e.g.,
+  "Shape.en.tsv"), and stale column metadata from previous processing leaked
+  into the message. Now correctly reports the descriptor file name, actual line
+  number, and "joinInto" as the column name.
 - Fixed `computeRelativePath` in the exporter corrupting file paths when the
   source directory is `"."`. The `sub(#dir + 2)` prefix-stripping logic would
   strip the first two characters of every file path (e.g., `"Resource/Bulk/…"`
