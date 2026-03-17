@@ -516,6 +516,24 @@ local function validateSiblingFieldTypes(extends, lcTypeNames, badVal)
     end
 end
 
+-- Sets badVal fields for file join validation errors
+-- @param badVal table: Error reporting object
+-- @param lcfn string: Lowercase filename being validated
+-- @param lcFileNames table: Map of lowercase filename to list of descriptor files
+-- @param lcFn2LineNo table: Map of lowercase filename to line number in descriptor file
+-- @param fn2Idx table: Map of descriptor file to column indices
+local function setBadValForJoin(badVal, lcfn, lcFileNames, lcFn2LineNo, fn2Idx)
+    local descriptorFiles = lcFileNames[lcfn]
+    local descriptorFile = descriptorFiles and descriptorFiles[1]
+    badVal.source_name = descriptorFile or "file joining"
+    badVal.line_no = lcFn2LineNo[lcfn] or 0
+    badVal.row_key = ""
+    badVal.col_name = "joinInto"
+    local indices = descriptorFile and fn2Idx[descriptorFile]
+    badVal.col_idx = indices and indices[8] or 0  -- 8th element is joinIntoIdx
+    badVal.col_types = {}
+end
+
 -- Validates file join configurations
 -- - No chained joins (secondary files joining into other secondary files)
 -- - No circular dependencies
@@ -523,20 +541,20 @@ end
 -- @param lcFn2JoinInto table: Map of lowercase filename to join target
 -- @param lcFileNames table: Map of lowercase filename to list of descriptor files
 -- @param badVal table: Error reporting object
-local function validateFileJoins(lcFn2JoinInto, lcFileNames, badVal)
+-- @param lcFn2LineNo table: Map of lowercase filename to line number in descriptor file
+-- @param fn2Idx table: Map of descriptor file to column indices
+local function validateFileJoins(lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo, fn2Idx)
     -- Check each file with a joinInto
     for lcfn, joinTarget in pairs(lcFn2JoinInto) do
         -- Check that join target exists
         if not lcFileNames[joinTarget] then
-            badVal.source_name = "file joining"
-            badVal.line_no = 0
+            setBadValForJoin(badVal, lcfn, lcFileNames, lcFn2LineNo, fn2Idx)
             badVal(lcfn, "joinInto target '" .. joinTarget .. "' does not exist")
         end
 
         -- Check for chained joins (join target should not itself have a joinInto)
         if lcFn2JoinInto[joinTarget] then
-            badVal.source_name = "file joining"
-            badVal.line_no = 0
+            setBadValForJoin(badVal, lcfn, lcFileNames, lcFn2LineNo, fn2Idx)
             badVal(lcfn, "chained joins not allowed: '" .. lcfn ..
                 "' joins into '" .. joinTarget ..
                 "' which joins into '" .. lcFn2JoinInto[joinTarget] .. "'")
@@ -626,7 +644,7 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     end
     validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     validateSiblingFieldTypes(extends, lcTypeNames, badVal)
-    validateFileJoins(lcFn2JoinInto, lcFileNames, badVal)
+    validateFileJoins(lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo, fn2Idx)
     if fail then
         return nil
     end
