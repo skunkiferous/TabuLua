@@ -28,7 +28,7 @@ end
 -- Create test file content
 local function create_files_desc_content(files)
   local lines = {
-    "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tjoinInto:name|nil\tjoinColumn:name|nil\texport:boolean|nil\tjoinedTypeName:type_spec|nil"
+    "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tjoinInto:filepath|nil\tjoinColumn:name|nil\texport:boolean|nil\tjoinedTypeName:type_spec|nil"
   }
   for _, file in ipairs(files) do
     table.insert(lines, table.concat(file, "\t"))

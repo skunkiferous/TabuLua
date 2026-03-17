@@ -1072,7 +1072,7 @@ describe("data_set", function()
     describe("filesHelper", function()
         local function setupFilesHelper()
             writeTestFile(temp_dir, "Files.tsv",
-                "fileName:string\ttypeName:type_spec\tsuperType:super_type\tloadOrder:number\n" ..
+                "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tloadOrder:number\n" ..
                 "CustomType.tsv\tCustomType\ttype\t50\n" ..
                 "Unit.tsv\tUnit\tCustomType\t100\n")
             local ds = data_set.new(temp_dir)

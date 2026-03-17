@@ -39,7 +39,7 @@ local MANIFEST_FILENAME = "Manifest.transposed.tsv"
 
 -- Standard Files.tsv header (tab-separated)
 local FILES_HEADER = table.concat({
-    "fileName:string", "typeName:type_spec", "superType:super_type",
+    "fileName:filepath", "typeName:type_spec", "superType:super_type",
     "baseType:boolean", "publishContext:name|nil", "publishColumn:name|nil",
     "loadOrder:number", "description:text"
 }, "\t") .. "\n"

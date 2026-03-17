@@ -28,8 +28,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   avoids having to re-declare `name:type:default` in every child file when the
   parent already specifies the default. Child-defined defaults always take
   precedence. Transitive inheritance (grandparent → parent → child) is supported.
+- New core type `filepath`: an ASCII string validated by `isPath()` from
+  `predicates.lua`. Each `/`-separated component must be a valid file name
+  (no `<>:"|?*`, no Windows reserved names, no triple dots or trailing
+  periods/spaces).
 
 ### Changed
+
+- **Breaking:** The `fileName` column in `Files.tsv` changed from `string` to
+  `filepath`; the `joinInto` column changed from `name|nil` to `filepath|nil`.
+  The `joinInto` column now requires the full relative path (e.g.,
+  `Resource/Bulk/Substance/Liquid.tsv`) instead of a basename (`Liquid.tsv`).
+  This eliminates ambiguity when multiple files share the same basename.
 
 ### Removed
 

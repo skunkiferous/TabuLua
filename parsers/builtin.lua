@@ -23,6 +23,7 @@ local isIntegerValue = predicates.isIntegerValue
 local isValidASCII = predicates.isValidASCII
 local isValidUTF8 = predicates.isValidUTF8
 local isValidHttpUrl = predicates.isValidHttpUrl
+local isPath = predicates.isPath
 
 local regex_utils = require("regex_utils")
 
@@ -470,6 +471,9 @@ function M.registerDerivedParsers()
 
     -- An individual identifier
     registration.restrictWithValidator(ownBadVal, 'name', 'identifier', isIdentifier)
+
+    -- A file path (Unix-style, forward slashes, each component a valid file name)
+    registration.restrictWithValidator(ownBadVal, 'ascii', 'filepath', isPath)
 
     -- An HTTP(S) URL
     registration.restrictWithValidator(ownBadVal, 'string', 'http', isValidHttpUrl)

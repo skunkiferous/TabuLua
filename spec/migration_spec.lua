@@ -482,7 +482,7 @@ describe("migration", function()
     describe("filesHelper commands", function()
         it("should update Files.tsv entries", function()
             writeTestFile(temp_dir, "data/Files.tsv",
-                "fileName:string\ttypeName:type_spec\tsuperType:super_type\tloadOrder:number\n" ..
+                "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tloadOrder:number\n" ..
                 "CustomType.tsv\tCustomType\ttype\t50\n" ..
                 "Unit.tsv\tUnit\tCustomType\t100\n")
             writeTestFile(temp_dir, "data/CustomType.tsv",
@@ -683,7 +683,7 @@ describe("migration", function()
         it("should handle a multi-step migration", function()
             -- Setup: two data files and a Files.tsv
             writeTestFile(temp_dir, "data/Files.tsv",
-                "fileName:string\ttypeName:type_spec\tsuperType:super_type\tloadOrder:number\n" ..
+                "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tloadOrder:number\n" ..
                 "CustomType.tsv\tCustomType\ttype\t50\n" ..
                 "Unit.tsv\tUnit\tCustomType\t100\n")
             writeTestFile(temp_dir, "data/CustomType.tsv",

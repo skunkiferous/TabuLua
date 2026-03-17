@@ -41,7 +41,7 @@ description:markdown	A test package for manifest_loader tests
 ]]
 
 -- Files descriptor content
-local FILES_DESC = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 TestData.tsv	TestData		true			1	Test data file
 ]]
 
@@ -59,12 +59,12 @@ blue	The color blue
 ]]
 
 -- Files descriptor with enum
-local FILES_DESC_WITH_ENUM = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC_WITH_ENUM = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 ColorEnum.tsv	ColorEnum	enum	true			1	Color enumeration
 ]]
 
 -- Files descriptor with constants (publishContext and publishColumn)
-local FILES_DESC_WITH_CONSTANTS = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+local FILES_DESC_WITH_CONSTANTS = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Constants.tsv	ConstantDef		true	gameConstants	value	1	Game constants
 ]]
 
@@ -199,7 +199,7 @@ name:string	Package A
 version:version	1.0.0
 description:markdown	First package
 ]]
-      local FILES_A = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_A = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataA.tsv	DataA		true			1	Data file A
 ]]
       local DATA_A = [[name:identifier	val:number
@@ -220,7 +220,7 @@ version:version	1.0.0
 description:markdown	Second package
 dependencies:{{package_id,cmp_version}}|nil	{'PkgA','>=1.0.0'}
 ]]
-      local FILES_B = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_B = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataB.tsv	DataB		true			1	Data file B
 ]]
       local DATA_B = [[name:identifier	val:number
@@ -375,7 +375,7 @@ name:string	Mixed Package
 version:version	0.1.0
 description:markdown	Package with mixed file types
 ]]
-      local FILES_MIXED = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_MIXED = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Data.tsv	MixedData		true			1	TSV data file
 ]]
       local DATA_MIXED = [[name:identifier	val:number
@@ -438,7 +438,7 @@ description:markdown	Package testing priority order
       -- Medium (priority 5) uses BASE_VALUE in an expression.
       -- High (priority 10) uses the result from Medium in an expression.
       -- If priority order is wrong, the expressions will fail or produce wrong values.
-      local FILES_PRIO = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_PRIO = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Low.tsv	LowPrio		true		value	1	Low priority - defines BASE_VALUE
 Medium.tsv	MediumPrio		true		value	5	Medium priority - uses BASE_VALUE
 High.tsv	HighPrio		true			10	High priority - uses MEDIUM_VALUE
@@ -506,7 +506,7 @@ name:string	Package P
 version:version	1.0.0
 description:markdown	First package (no deps)
 ]]
-      local FILES_P = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_P = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataP.tsv	DataP		true			1	Data file P
 ]]
       local DATA_P = [[name:identifier	val:number
@@ -527,7 +527,7 @@ version:version	1.0.0
 description:markdown	Second package (load after P)
 load_after:{package_id}|nil	'PkgP'
 ]]
-      local FILES_Q = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_Q = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 DataQ.tsv	DataQ		true			1	Data file Q
 ]]
       local DATA_Q = [[name:identifier	val:number
@@ -557,7 +557,7 @@ version:version	2.3.4
 description:markdown	Package with detailed info
 url:http|nil	http://example.com/infopkg
 ]]
-      local FILES_INFO = [[fileName:string	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+      local FILES_INFO = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
 Info.tsv	InfoData		true			1	Info data
 ]]
       local DATA_INFO = [[name:identifier	val:number
@@ -617,7 +617,7 @@ version:version	0.1.0
 description:markdown	Package with a file in a subdirectory
 ]]
       -- Files.tsv references a file one level down inside the package.
-      local FILES_SUBDIR = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+      local FILES_SUBDIR = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
                            "Sub/Data.tsv\tSubData\t\ttrue\t\t\t1\tData in subdirectory\n"
       local DATA_SUBDIR = "name:identifier\tvalue:number\nitem1\t100\n"
 
@@ -650,7 +650,7 @@ description:markdown	Package that references a non-existent file
       -- Row 2 (i=2): Present.tsv — this file will exist on disk.
       -- Row 3 (i=3): Missing.tsv — this file will NOT exist on disk.
       -- If the row-tracking fix works the error should say "line 3", not "line 0".
-      local FILES_MISSING = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+      local FILES_MISSING = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
                             "Present.tsv\tPresentData\t\ttrue\t\t\t1\tPresent file\n" ..
                             "Missing.tsv\tMissingData\t\ttrue\t\t\t2\tMissing file\n"
       local DATA_PRESENT = "name:identifier\tvalue:number\nitem1\t100\n"
@@ -704,7 +704,7 @@ version:version	0.1.0
 description:markdown	Package where a file is in the wrong directory
 ]]
       -- Files.tsv references "WrongDir.tsv" (expected at package root)
-      local FILES_WD = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+      local FILES_WD = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
                        "WrongDir.tsv\tWrongDirData\t\ttrue\t\t\t1\tFile in wrong directory\n"
       local DATA_WD = "name:identifier\tvalue:number\nitem1\t100\n"
 
@@ -801,7 +801,7 @@ name:string	View Test Package
 version:version	0.1.0
 description:markdown	Test views feature
 ]]
-      local FILES_VIEW = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+      local FILES_VIEW = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
         "Source.tsv\tSource\t\ttrue\t\t\t1\tSource data\n" ..
         "View.tsv\tView\t\ttrue\t\t\t2\tView of source\n"
 
@@ -867,7 +867,7 @@ name:string	Nil Key Package
 version:version	0.1.0
 description:markdown	Test nil key access
 ]]
-        local FILES_NIL = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+        local FILES_NIL = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
           "NilCheck.tsv\tNilCheck\t\ttrue\t\t\t1\tNil check file\n"
 
         assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_NIL))
@@ -900,7 +900,7 @@ description:markdown	Test nil key access
         local pkg_dir = path_join(temp_dir, "viewofviewpkg")
         assert(lfs.mkdir(pkg_dir))
 
-        local FILES_VOV = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+        local FILES_VOV = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
           "Source.tsv\tSource\t\ttrue\t\t\t1\tSource data\n" ..
           "View1.tsv\tView1\t\ttrue\t\t\t2\tPass-through view of Source\n" ..
           "View2.tsv\tView2\t\ttrue\t\t\t3\tFiltered view of View1\n"
@@ -989,7 +989,7 @@ name:string	Migration Test Package
 version:version	0.1.0
 description:markdown	Package with a migration script
 ]]
-      local FILES_MIG = "fileName:string\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
+      local FILES_MIG = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
                         "Data.tsv\tMigData\t\ttrue\t\t\t1\tData file\n"
       local DATA_MIG = "name:identifier\tvalue:number\nitem1\t42\n"
 

@@ -1074,7 +1074,7 @@ shield	A sturdy defense tool.
 
 **Files.tsv configuration**:
 ```tsv
-fileName:string	typeName:type_spec	...	joinInto:name|nil	joinColumn:name|nil	export:boolean|nil
+fileName:filepath	typeName:type_spec	...	joinInto:filepath|nil	joinColumn:name|nil	export:boolean|nil
 Items.tsv	Item	...
 Items.en.tsv	Item.en	...	Items.tsv	id
 ```
@@ -1338,7 +1338,7 @@ Configured in `Files.tsv` via the `rowValidators` column:
 **Example:**
 
 ```tsv
-fileName:string	typeName:type_spec	rowValidators:{validator_spec}|nil
+fileName:filepath	typeName:type_spec	rowValidators:{validator_spec}|nil
 Items.tsv	Item	{"self.minLevel <= self.maxLevel or 'minLevel must be <= maxLevel'",{expr="self.price < 10000 or 'price seems high'",level="warn"}}
 ```
 
