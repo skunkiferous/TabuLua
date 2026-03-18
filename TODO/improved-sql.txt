@@ -1,0 +1,9 @@
+How could we make the SQL output better?
+
+Could we add foreign key constraints? Do we have the information for that? That would require specifying in which order the files are loaded.
+
+Also, I was wondering something, and decided that loading the exported data in sqlite would make it easy to find out what I wanted, but we haven't defined a way to create a whole DB from the files.
+
+I'm also wondering if we should support specific DB flavors; for example if we specified sqlite or postgres, we could by default add support for the array plugin/extension (sqlite), and import array-style data of basic types natively, instead of as JSON/...
+
+Alternatively, while generating "generic SQL", we could create separate tables, for columns that are either arrays, or maps with basic types keys. That would reduce the amount of JSOM/... that needs to be parsed.

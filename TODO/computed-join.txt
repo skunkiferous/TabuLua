@@ -1,0 +1,2 @@
+ATM, we can create "translation files", and join them when exporting. But the joining is "static"; we would have to edit "Files.tsv" every time we exported to a different language.
+We need a way to write Files.tsv only once, and still somehow control which language files are joined, ideally in a way that is not specific to translations.
