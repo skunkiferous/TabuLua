@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- **Short rows with defaults no longer fail to parse.** When a data row has fewer
+  columns than the header, but every missing column either has its own `default_expr`
+  or inherits one from a parent file, the row is now accepted: the missing values are
+  filled with the defaults and a WARNING is logged instead of an ERROR. The cascading
+  parse failures that previously resulted from a short row in a parent file (causing
+  dependent child files to fail too) no longer occur. Rows that are still missing a
+  column with no default continue to report an ERROR as before.
+
 - Fixed `shouldExport` check in `exportTSV` using the wrong key format. The
   lookup key was stripped to the bare filename (e.g., `"food.en.tsv"`), but the
   `lcFn2JoinInto` map in `files_desc.lua` stores the full relative path (e.g.,

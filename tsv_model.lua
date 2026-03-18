@@ -720,17 +720,36 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
                             and not header[ci].type_spec:find("|nil", 1, true)
                             and header[ci].type_spec ~= "nil" then
                             -- Row is shorter than header and column is not nullable
-                            badVal.col_name = header[ci].name
-                            badVal.col_idx = ci
-                            badVal.col_types[#badVal.col_types] = header[ci].type_spec
-                            badVal(nil, "row has " .. #row .. " columns but header defines "
-                                .. #header .. " -- column '" .. header[ci].name .. "' is missing")
-                            new_row[ci] = readOnly({nil, nil, nil, ""}, cell_mt)
-                            eval_row[ci] = nil
-                            eval_row[header[ci].name] = nil
-                            done_idx[ci] = true
-                            done_count = done_count + 1
-                            progress = true
+                            local missing_msg = "row has " .. #row .. " columns but header defines "
+                                .. #header .. " -- column '" .. header[ci].name .. "' is missing"
+                            if header[ci].default_expr then
+                                -- Column has a default; only warn (don't increment errors)
+                                -- and process normally when dependencies are met
+                                if canProcessCell(header, done_idx, header[ci].default_expr) then
+                                    local rk = badVal.row_key
+                                    local row_part = (rk ~= nil and rk ~= "") and " (" .. tostring(rk) .. ")" or ""
+                                    badVal.logger:warn(badVal.source_name .. " on line "
+                                        .. badVal.line_no .. row_part .. ": "
+                                        .. missing_msg .. " (using default)")
+                                    doCell(badVal, header, ci, row, new_row, eval_row)
+                                    done_idx[ci] = true
+                                    done_count = done_count + 1
+                                    progress = true
+                                end
+                                -- else: default_expr deps not met yet; retry next while-iteration
+                            else
+                                -- No default: log error as before
+                                badVal.col_name = header[ci].name
+                                badVal.col_idx = ci
+                                badVal.col_types[#badVal.col_types] = header[ci].type_spec
+                                badVal(nil, missing_msg)
+                                new_row[ci] = readOnly({nil, nil, nil, ""}, cell_mt)
+                                eval_row[ci] = nil
+                                eval_row[header[ci].name] = nil
+                                done_idx[ci] = true
+                                done_count = done_count + 1
+                                progress = true
+                            end
                         elseif canProcessCell(header, done_idx, row[ci]) then
                             doCell(badVal,header,ci,row,new_row,
                                 eval_row)

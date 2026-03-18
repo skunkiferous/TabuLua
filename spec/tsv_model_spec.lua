@@ -1157,6 +1157,84 @@ describe("tsv_model", function()
         end)
     end)
 
+    describe("short row with defaults", function()
+        -- Note: the warning emitted for missing-but-defaulted columns goes through the
+        -- module-level logger (via withColType), so it appears on the console but cannot
+        -- be captured here.  We test the observable outcomes instead: zero errors and
+        -- the correct default values in the parsed dataset.
+
+        it("should not error when short row's missing column has its own default", function()
+            -- Header defines 4 columns; each data row only has 2 columns.
+            -- Columns 3 and 4 both have their own default_expr.
+            local raw_tsv = {
+                {"id:string", "name:string", "level:number:1", "status:string:active"},
+                {"R1", "Alice"},    -- missing columns 3 and 4
+            }
+            local errors = {}
+            local badVal = mockBadVal(errors)
+
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "test.tsv", raw_tsv, badVal)
+
+            -- No errors; default values are applied
+            assert.same({}, errors)
+            assert.is_not_nil(dataset)
+            assert.equals(1,        dataset[2][3].parsed)
+            assert.equals("active", dataset[2][4].parsed)
+        end)
+
+        it("should not error when short row's missing column has an inherited default", function()
+            -- Build parent with a default on "status"
+            local parent_raw = {
+                {"id:string", "status:string:Unknown"},
+                {"P1", "Active"}
+            }
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+            local parent = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "parent.tsv", parent_raw, badVal)
+            assert.is_not_nil(parent)
+            local parent_header = parent[1]
+
+            -- Child header has "status" with no default; row is short (missing "status")
+            local child_raw = {
+                {"id:string", "status:string"},
+                {"C1"},    -- missing column 2 — inherits parent default "Unknown"
+            }
+            local errors = {}
+            badVal = mockBadVal(errors)
+
+            local child = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "child.tsv", child_raw, badVal, nil, false, parent_header)
+
+            -- No errors; inherited default is applied
+            assert.same({}, errors)
+            assert.is_not_nil(child)
+            assert.equals("Unknown", child[2][2].parsed)
+        end)
+
+        it("should still error when short row's missing column has no default", function()
+            local raw_tsv = {
+                {"id:string", "name:string", "level:number"},
+                {"R1", "Alice"},    -- missing "level" which has no default
+            }
+            local errors = {}
+            local badVal = mockBadVal(errors)
+
+            local dataset = tsv_model.processTSV(
+                mockOptionsExtractor, nil, mockParserFinder,
+                "test.tsv", raw_tsv, badVal)
+
+            -- One error for the missing non-defaulted column
+            assert.equals(1, #errors)
+            assert.is_truthy(errors[1]:match("column 'level' is missing"))
+            assert.is_not_nil(dataset)
+        end)
+    end)
+
     describe("column name validation", function()
         it("should mark valid identifier names as valid", function()
             local raw_tsv = {
