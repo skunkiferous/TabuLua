@@ -132,7 +132,7 @@ local function processLines(lines, env, errors)
             inOutputBlock = true
             
             -- Execute the code block, using th provided environment, "env"
-            local opt = {quota = 10000, env = env or {}}
+            local opt = {quota = 40000, env = env or {}}
             local success, protected_func = pcall(sandbox.protect, codeBuffer, opt)
             local result
             if success then
