@@ -826,4 +826,121 @@ describe("files_desc", function()
       end
     end)
   end)
+
+  describe("variant filtering", function()
+    -- Helper that creates Files.tsv content WITH the variant column
+    local function create_variant_files_desc(files)
+      local lines = {
+        "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean"
+        .. "\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number"
+        .. "\tdescription:text\tjoinInto:filepath|nil\tjoinColumn:name|nil"
+        .. "\texport:boolean|nil\tjoinedTypeName:type_spec|nil\tvariant:name|nil"
+      }
+      for _, file in ipairs(files) do
+        table.insert(lines, table.concat(file, "\t"))
+      end
+      return table.concat(lines, "\n")
+    end
+
+    it("should skip rows with variant tag when no variants provided", function()
+      local file_path = path_join(temp_dir, "files.tsv")
+      local content = create_variant_files_desc({
+        {"Primary.tsv", "Primary", "", "true", "", "", "1", "Primary file", "", "", "", "", ""},
+        {"Secondary.en.tsv", "SecEN", "", "false", "", "", "2", "English", "Primary.tsv", "name", "", "", "en"},
+        {"Secondary.fr.tsv", "SecFR", "", "false", "", "", "3", "French", "Primary.tsv", "name", "", "", "fr"},
+      })
+      assert.is_true(file_util.writeFile(file_path, content))
+
+      local prios = {}
+      local lcFn2Type = {}
+      local lcFn2JoinInto = {}
+      local lcSkippedFiles = {}
+      local log_messages = {}
+      local raw_files = {}
+      local badVal2 = mockBadVal(log_messages)
+      badVal2.logger = nullLogger
+
+      files_desc.loadDescriptorFiles({file_path}, prios,
+        {[file_path] = "mod1"}, {}, {}, lcFn2Type, {}, {},
+        lcFn2JoinInto, {}, {}, {},
+        {}, {}, {},
+        raw_files, {}, badVal2, nil, lcSkippedFiles)
+
+      -- Both en and fr should be skipped (no variants provided)
+      assert.is_true(lcSkippedFiles["secondary.en.tsv"] == true)
+      assert.is_true(lcSkippedFiles["secondary.fr.tsv"] == true)
+      -- Primary should NOT be skipped
+      assert.is_nil(lcSkippedFiles["primary.tsv"])
+      -- Only Primary should be in lcFn2Type
+      assert.is_not_nil(lcFn2Type["primary.tsv"])
+      assert.is_nil(lcFn2Type["secondary.en.tsv"])
+      assert.is_nil(lcFn2Type["secondary.fr.tsv"])
+    end)
+
+    it("should include rows matching the selected variant", function()
+      local file_path = path_join(temp_dir, "files.tsv")
+      local content = create_variant_files_desc({
+        {"Primary.tsv", "Primary", "", "true", "", "", "1", "Primary file", "", "", "", "", ""},
+        {"Secondary.en.tsv", "SecEN", "", "false", "", "", "2", "English", "Primary.tsv", "name", "", "", "en"},
+        {"Secondary.fr.tsv", "SecFR", "", "false", "", "", "3", "French", "Primary.tsv", "name", "", "", "fr"},
+      })
+      assert.is_true(file_util.writeFile(file_path, content))
+
+      local prios = {}
+      local lcFn2Type = {}
+      local lcFn2JoinInto = {}
+      local lcSkippedFiles = {}
+      local log_messages = {}
+      local raw_files = {}
+      local badVal2 = mockBadVal(log_messages)
+      badVal2.logger = nullLogger
+
+      files_desc.loadDescriptorFiles({file_path}, prios,
+        {[file_path] = "mod1"}, {}, {}, lcFn2Type, {}, {},
+        lcFn2JoinInto, {}, {}, {},
+        {}, {}, {},
+        raw_files, {}, badVal2, {en = true}, lcSkippedFiles)
+
+      -- Only fr should be skipped
+      assert.is_true(lcSkippedFiles["secondary.fr.tsv"] == true)
+      assert.is_nil(lcSkippedFiles["secondary.en.tsv"])
+      assert.is_nil(lcSkippedFiles["primary.tsv"])
+      -- en should be in lcFn2Type and lcFn2JoinInto
+      assert.is_not_nil(lcFn2Type["secondary.en.tsv"])
+      assert.is_not_nil(lcFn2JoinInto["secondary.en.tsv"])
+      -- fr should NOT
+      assert.is_nil(lcFn2Type["secondary.fr.tsv"])
+      assert.is_nil(lcFn2JoinInto["secondary.fr.tsv"])
+    end)
+
+    it("should include rows without a variant tag regardless of selection", function()
+      local file_path = path_join(temp_dir, "files.tsv")
+      local content = create_variant_files_desc({
+        {"Primary.tsv", "Primary", "", "true", "", "", "1", "Primary file", "", "", "", "", ""},
+        {"AlwaysOn.tsv", "AlwaysOn", "", "false", "", "", "2", "Always loaded", "", "", "", "", ""},
+        {"OnlyIfEn.tsv", "OnlyIfEn", "", "false", "", "", "3", "English only", "", "", "", "", "en"},
+      })
+      assert.is_true(file_util.writeFile(file_path, content))
+
+      local prios = {}
+      local lcFn2Type = {}
+      local lcSkippedFiles = {}
+      local log_messages = {}
+      local raw_files = {}
+      local badVal2 = mockBadVal(log_messages)
+      badVal2.logger = nullLogger
+
+      files_desc.loadDescriptorFiles({file_path}, prios,
+        {[file_path] = "mod1"}, {}, {}, lcFn2Type, {}, {},
+        {}, {}, {}, {},
+        {}, {}, {},
+        raw_files, {}, badVal2, {en = true}, lcSkippedFiles)
+
+      -- All three should be active
+      assert.is_not_nil(lcFn2Type["primary.tsv"])
+      assert.is_not_nil(lcFn2Type["alwayson.tsv"])
+      assert.is_not_nil(lcFn2Type["onlyifen.tsv"])
+      assert.same({}, lcSkippedFiles)
+    end)
+  end)
 end)

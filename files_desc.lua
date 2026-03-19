@@ -61,6 +61,8 @@ local JOIN_INTO_COL = "joinInto:filepath|nil"
 local JOIN_COLUMN_COL = "joinColumn:name|nil"
 local EXPORT_COL = "export:boolean|nil"
 local JOINED_TYPE_NAME_COL = "joinedTypeName:type_spec|nil"
+-- Variant column
+local VARIANT_COL = "variant:name|nil"
 -- Validator columns
 local ROW_VALIDATORS_COL = "rowValidators:{validator_spec}|nil"
 local FILE_VALIDATORS_COL = "fileValidators:{validator_spec}|nil"
@@ -176,6 +178,7 @@ local function parseFilesDescHeader(file_name, file, log)
     local joinColumnIdx = -1
     local exportIdx = -1
     local joinedTypeNameIdx = -1
+    local variantIdx = -1
     local rowValidatorsIdx = -1
     local fileValidatorsIdx = -1
     for idx, col in ipairs(header) do
@@ -202,6 +205,8 @@ local function parseFilesDescHeader(file_name, file, log)
             exportIdx = idx
         elseif colStr == JOINED_TYPE_NAME_COL then
             joinedTypeNameIdx = idx
+        elseif colStr == VARIANT_COL then
+            variantIdx = idx
         elseif colStr == ROW_VALIDATORS_COL then
             rowValidatorsIdx = idx
         elseif colStr == FILE_VALIDATORS_COL then
@@ -219,10 +224,10 @@ local function parseFilesDescHeader(file_name, file, log)
     warnMissingColumn(file_name, publishContextIdx, "publishContext", log)
     warnMissingColumn(file_name, publishColumnIdx, "publishColumn", log)
     warnMissingColumn(file_name, loadOrderIdx, "loadOrder", log)
-    -- Note: join columns and validator columns are optional, so we don't warn if missing
+    -- Note: join columns, variant column, and validator columns are optional, so we don't warn if missing
     return fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
         publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        rowValidatorsIdx, fileValidatorsIdx
+        variantIdx, rowValidatorsIdx, fileValidatorsIdx
 end
 
 -- Check the file name matches the type name
@@ -333,20 +338,35 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcFn2LineNo = opts.lcFn2LineNo
     local fn2Idx = opts.fn2Idx
     local log = opts.log
+    local variants = opts.variants
+    local lcSkippedFiles = opts.lcSkippedFiles
 
     local fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx, publishColumnIdx,
         loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        rowValidatorsIdx, fileValidatorsIdx =
+        variantIdx, rowValidatorsIdx, fileValidatorsIdx =
         parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = {fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
         publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        rowValidatorsIdx, fileValidatorsIdx}
+        variantIdx, rowValidatorsIdx, fileValidatorsIdx}
     if fileNameIdx ~= -1 and loadOrderIdx ~= -1 then
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
             if i > 1 and type(row) == "table" then
                 local fn = row[fileNameIdx].parsed
                 local lcfn = fn:lower()
+                -- Variant filtering: rows with a non-empty variant tag are only
+                -- active when that variant is explicitly selected
+                if variantIdx ~= -1 then
+                    local variantVal = row[variantIdx] and row[variantIdx].parsed
+                    if variantVal and variantVal ~= '' then
+                        if not variants or not variants[variantVal] then
+                            if lcSkippedFiles then
+                                lcSkippedFiles[lcfn] = true
+                            end
+                            goto continue
+                        end
+                    end
+                end
                 local prio = tonumber(row[loadOrderIdx].parsed) or 0
                 local tn = row[typeNameIdx].parsed
                 local st = row[superTypeIdx].parsed
@@ -408,6 +428,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                         lcFn2FileValidators[lcfn] = fileValidators
                     end
                 end
+                ::continue::
             end
         end
     end
@@ -592,7 +613,7 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
     lcFn2RowValidators, lcFn2FileValidators, lcFn2LineNo,
-    raw_files, loadEnv, badVal)
+    raw_files, loadEnv, badVal, variants, lcSkippedFiles)
     local desc_files = {}
     local max_prio = -math.huge
     local cur_mod = nil
@@ -622,6 +643,8 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2LineNo = lcFn2LineNo,
         fn2Idx = fn2Idx,
         log = log,
+        variants = variants,
+        lcSkippedFiles = lcSkippedFiles,
     }
 
     for _, file_name in ipairs(desc_files_order) do

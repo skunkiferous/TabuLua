@@ -75,6 +75,7 @@ local JOIN_COLUMNS = {
     joinColumn = true,
     export = true,
     joinedTypeName = true,
+    variant = true,
 }
 
 -- Returns true if a column is of type comment (or comment|nil, or a user type extending comment).
@@ -194,9 +195,10 @@ local function transformFilesDescForExport(tsv, joinMeta)
             local fileName = row[1] and row[1].parsed
             local lcfn = fileName and fileName:lower() or ""
 
-            -- Skip secondary files (those with joinInto set)
-            if joinMeta and joinMeta.lcFn2JoinInto[lcfn] then
-                -- This is a secondary file, skip it
+            -- Skip secondary files (those with joinInto set) and variant-filtered files
+            if (joinMeta and joinMeta.lcFn2JoinInto[lcfn])
+                or (joinMeta and joinMeta.lcSkippedFiles and joinMeta.lcSkippedFiles[lcfn]) then
+                -- This is a secondary or variant-skipped file, skip it
             else
                 -- Build new row with remapped columns
                 local newRow = {}
@@ -303,7 +305,11 @@ local function exportTSV(process_files, exportParams, serializer)
         local lcfnKey = relative_name:lower():gsub("\\", "/")
         -- Check if this file should be exported
         if joinMeta and not shouldExport(lcfnKey, joinMeta) then
-            logger:info("Skipping export of secondary file: " .. file_name)
+            if joinMeta.lcSkippedFiles and joinMeta.lcSkippedFiles[lcfnKey] then
+                logger:info("Skipping export of variant-inactive file: " .. file_name)
+            else
+                logger:info("Skipping export of secondary file: " .. file_name)
+            end
             goto continue
         end
         local is_tsv = hasExtension(file_name, "tsv")
@@ -791,7 +797,11 @@ local function exportMessagePack(process_files, exportParams)
         local lcfnKey = relative_name:lower():gsub("\\", "/")
         -- Check if this file should be exported
         if joinMeta and not shouldExport(lcfnKey, joinMeta) then
-            logger:info("Skipping MessagePack export of secondary file: " .. file_name)
+            if joinMeta.lcSkippedFiles and joinMeta.lcSkippedFiles[lcfnKey] then
+                logger:info("Skipping MessagePack export of variant-inactive file: " .. file_name)
+            else
+                logger:info("Skipping MessagePack export of secondary file: " .. file_name)
+            end
             goto continue
         end
         local is_tsv = hasExtension(file_name, "tsv")

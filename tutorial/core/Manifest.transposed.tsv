@@ -26,3 +26,5 @@ dependencies:{{package_id,cmp_version}}|nil
 load_after:{package_id}|nil	
 # Package-level validators run after all files in the package are loaded
 package_validators:{validator_spec}|nil	{expr="count(files) > 0 or 'package must have at least one data file'",level="warn"}
+# Variants, for example, to choose a language
+variant_groups:{{name,{name}}}|nil	{"lang",{"en","fr"}}

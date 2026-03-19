@@ -45,6 +45,7 @@ lua reformatter.lua [OPTIONS] <dir1> [dir2] ...
 | `--clean` | Empty the export directory before exporting. Removes all existing files and subdirectories. |
 | `--no-number-warn` | Suppress the informational warnings about `number` type usage (recommending `float` instead). Useful when `number` is intentionally used for mixed integer/decimal formatting. |
 | `--no-unquoted-warn` | Suppress the informational warnings about assuming a value is a single unquoted string. Useful when TSV data intentionally contains unquoted string values in array columns. |
+| `--variant=<name>` | Activate a named variant for conditional file inclusion. Can be specified multiple times. Only `Files.tsv` rows whose `variant` column matches an active variant are loaded. See [Variant-Based Conditional File Inclusion](#variant-based-conditional-file-inclusion). |
 | `--log-level=<level>` | Set log verbosity: `debug`, `info`, `warn`, `error`, `fatal` (default: `info`). |
 
 ## File Formats
@@ -153,6 +154,20 @@ lua reformatter.lua --clean --file=json tutorial/core/ tutorial/expansion/
 ```
 Empties the export directory before exporting new files.
 
+### Export with variant selection
+
+```bash
+lua reformatter.lua --file=json --variant=en tutorial/core/ tutorial/expansion/
+```
+Activates the `en` variant, so only `Files.tsv` rows with `variant=en` (or no variant) are loaded. Files tagged with other variants (e.g., `fr`) are fully skipped.
+
+### Export with multiple variants
+
+```bash
+lua reformatter.lua --file=json --variant=en --variant=ios tutorial/core/ tutorial/expansion/
+```
+Activates both the `en` and `ios` variants simultaneously.
+
 ### Compact binary export
 ```bash
 lua reformatter.lua --file=mpk --export-dir=bin tutorial/core/ tutorial/expansion/
@@ -217,7 +232,11 @@ local exporters = {
 }
 local exportParams = {exportDir = "output"}
 
+-- Without variants (all rows active)
 reformatter.processFiles(directories, exporters, exportParams)
+
+-- With variants (only matching rows active)
+reformatter.processFiles(directories, exporters, exportParams, {"en", "ios"})
 ```
 
 ### Available Exporter Functions
@@ -316,6 +335,32 @@ local exportParams = {
 }
 reformatter.processFiles(directories, exporters, exportParams)
 ```
+
+## Variant-Based Conditional File Inclusion
+
+The `--variant=<name>` option controls which `Files.tsv` rows are active during processing. This enables listing all localization, platform, or feature variants in a single `Files.tsv` and selecting which to load at processing time -- no more editing `Files.tsv` per export.
+
+### How It Works
+
+`Files.tsv` supports an optional `variant:name|nil` column. Rows with an empty variant value are **always active**. Rows with a non-empty variant value are **only active** when that variant name is passed via `--variant=<name>`. Files with inactive variants are fully skipped: not loaded, not exported, and not validated for joins.
+
+### Example
+
+Given this `Files.tsv`:
+
+| fileName | ... | variant |
+| ----------- | --- | ------- |
+| Item.tsv | ... | |
+| Item.en.tsv | ... | en |
+| Item.fr.tsv | ... | fr |
+
+- `--variant=en` loads `Item.tsv` and `Item.en.tsv`; skips `Item.fr.tsv`
+- `--variant=fr` loads `Item.tsv` and `Item.fr.tsv`; skips `Item.en.tsv`
+- No `--variant` flag skips both `Item.en.tsv` and `Item.fr.tsv`
+
+### Variant Groups
+
+Packages can declare **variant groups** in `Manifest.transposed.tsv` to enforce that exactly one variant from a group is selected. See the `variant_groups` field in the [Data Format Specification](DATA_FORMAT_README.md#variant-groups).
 
 ## Error Handling
 

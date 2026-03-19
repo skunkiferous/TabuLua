@@ -44,6 +44,7 @@ local parseType = parsers.parseType
 local manifest_info = require("manifest_info")
 local isManifestFile = manifest_info.isManifestFile
 local resolveDependencies = manifest_info.resolveDependencies
+local validateVariantGroups = manifest_info.validateVariantGroups
 
 local files_desc = require("files_desc")
 local extractFilesDescriptors = files_desc.extractFilesDescriptors
@@ -491,13 +492,20 @@ end
 
 -- Load all the non-description files
 local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
-    typesSet, enumsSet, customTypesSet, extends, raw_files, loadEnv, badVal)
+    typesSet, enumsSet, customTypesSet, extends, raw_files, loadEnv, badVal, lcSkippedFiles)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
 
     -- Tracks types registered by registerFileType (as opposed to pre-existing/built-in types).
     -- Used to limit parent-child field validation to user-defined file record types only.
     local fileRegisteredTypes = {}
     for _, file_name in ipairs(files) do
+        -- Skip files that were filtered out by variant selection
+        if lcSkippedFiles and next(lcSkippedFiles) then
+            local key = computeFilenameKey(file_name, file2dir)
+            if lcSkippedFiles[key] then
+                goto continue
+            end
+        end
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV) then
             processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
                 typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
@@ -505,6 +513,7 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
         else
             processUnknownFile(file_name, raw_files, badVal)
         end
+        ::continue::
     end
 end
 
@@ -577,7 +586,7 @@ end
 -- Process files once the order has been established
 -- Returns the TSV files and join metadata
 local function processOrderedFiles(badVal, files, file2dir, desc_files_order, desc_file2pkg_id,
-    raw_files, loadEnv)
+    raw_files, loadEnv, opt_variants)
     local priorities = {}
     local post_proc_files = {}
     local extends = {}
@@ -595,11 +604,20 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2RowValidators = {}
     local lcFn2FileValidators = {}
     local lcFn2LineNo = {}
+    -- Variant filtering: convert array to set if needed, collect skipped files
+    local variantsSet = nil
+    if opt_variants then
+        variantsSet = {}
+        for _, v in ipairs(opt_variants) do
+            variantsSet[v] = true
+        end
+    end
+    local lcSkippedFiles = {}
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
         post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         lcFn2RowValidators, lcFn2FileValidators, lcFn2LineNo,
-        raw_files, loadEnv, badVal)
+        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
         return
@@ -620,7 +638,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         basenameToKeys[basename][#basenameToKeys[basename] + 1] = key
     end
     for lcfn, _ in pairs(lcFn2Type) do
-        if not filesOnDisk[lcfn] and not isFilesDescriptor(lcfn) then
+        if not filesOnDisk[lcfn] and not isFilesDescriptor(lcfn) and not lcSkippedFiles[lcfn] then
             badVal.source_name = "Files.tsv"
             badVal.line_no = lcFn2LineNo[lcfn] or 0
             badVal.row_key = ""
@@ -633,11 +651,23 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             if candidates and #candidates > 0 then
                 badVal(lcfn, "file listed in Files.tsv was not found at the expected path; " ..
                     "a file with that name exists at: " .. table.concat(candidates, ", ") ..
-                    " — check if it is in the wrong directory")
+                    " -- check if it is in the wrong directory")
             else
                 badVal(lcfn, "file listed in Files.tsv does not exist on disk")
             end
         end
+    end
+    -- Remove variant-skipped files before sorting, so they don't trigger
+    -- spurious "No priority found" warnings
+    if next(lcSkippedFiles) then
+        local filtered = {}
+        for _, file_name in ipairs(files) do
+            local key = computeFilenameKey(file_name, file2dir)
+            if not lcSkippedFiles[key] then
+                filtered[#filtered + 1] = file_name
+            end
+        end
+        files = filtered
     end
     orderFilesByPriorities(files, priorities)
     local tsv_files = {}
@@ -646,7 +676,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col, typesSet, enumsSet, customTypesSet, extends,
-    raw_files, loadEnv, badVal)
+    raw_files, loadEnv, badVal, lcSkippedFiles)
     -- Build join metadata for exporter
     local joinMeta = {
         lcFn2JoinInto = lcFn2JoinInto,
@@ -656,6 +686,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         -- Validator metadata
         lcFn2RowValidators = lcFn2RowValidators,
         lcFn2FileValidators = lcFn2FileValidators,
+        -- Variant metadata
+        lcSkippedFiles = lcSkippedFiles,
     }
     return tsv_files, joinMeta
 end
@@ -916,9 +948,10 @@ end
 --- @param directories table Sequence of directory paths to process
 --- @param badVal table|nil Optional badVal instance for error reporting (created if nil)
 --- @param opt_excludeDirs table|nil Optional set of normalized directory paths to skip during file collection
+--- @param opt_variants table|nil Optional array of active variant names (e.g., {"en", "debug"})
 --- @return table|nil Result table with {raw_files, tsv_files, package_order, packages}, or nil on error
 --- @side_effect Logs progress and errors; registers type parsers and aliases
-local function processFiles(directories, badVal, opt_excludeDirs)
+local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     badVal = initializeBadVal(badVal)
     -- Reset file-registered types tracking for this processing run
     fileRegisteredTypes = {}
@@ -940,6 +973,28 @@ local function processFiles(directories, badVal, opt_excludeDirs)
         return nil
     end
 
+    -- Validate variant groups declared in manifests
+    if opt_variants then
+        local variantsSet = {}
+        for _, v in ipairs(opt_variants) do
+            variantsSet[v] = true
+        end
+        for _, pkg_id in ipairs(package_order) do
+            local manifest = packages[pkg_id]
+            if manifest and manifest.variant_groups then
+                validateVariantGroups(manifest, variantsSet, badVal)
+            end
+        end
+    else
+        -- No variants provided: check if any package declares required variant groups
+        for _, pkg_id in ipairs(package_order) do
+            local manifest = packages[pkg_id]
+            if manifest and manifest.variant_groups then
+                validateVariantGroups(manifest, nil, badVal)
+            end
+        end
+    end
+
     local desc_files_order, desc_file2pkg_id = resolveFileDescriptors(files, packages, package_order)
     if not desc_files_order then
         return nil
@@ -947,7 +1002,7 @@ local function processFiles(directories, badVal, opt_excludeDirs)
 
     local tsv_files, joinMeta = processOrderedFiles(badVal, files, file2dir,
         desc_files_order, desc_file2pkg_id,
-        raw_files, loadEnv)
+        raw_files, loadEnv, opt_variants)
 
     loadRemainingFiles(files, raw_files)
     mergeManifestFiles(tsv_files, manifest_tsv_files)

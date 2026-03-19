@@ -70,6 +70,7 @@ if [[ $QUICK_MODE -eq 1 ]]; then
     echo ""
 else
     TUTORIAL_DIRS="tutorial/core/ tutorial/expansion/"
+    VARIANT_ARGS="--variant=en"
 
     # Export check helper: runs reformatter with given args,
     # checks for ERROR/FATAL lines in output
@@ -103,19 +104,19 @@ else
     }
 
     # shellcheck disable=SC2086
-    run_export_check "JSON export" --log-level=error --file=json $TUTORIAL_DIRS
+    run_export_check "JSON export" --log-level=error --file=json $VARIANT_ARGS $TUTORIAL_DIRS
     echo ""
 
     # shellcheck disable=SC2086
-    run_export_check "SQL + MPK export" --log-level=error --file=sql --data=mpk $TUTORIAL_DIRS
+    run_export_check "SQL + MPK export" --log-level=error --file=sql --data=mpk $VARIANT_ARGS $TUTORIAL_DIRS
     echo ""
 
     # shellcheck disable=SC2086
-    run_export_check "Lua export" --log-level=error --file=lua $TUTORIAL_DIRS
+    run_export_check "Lua export" --log-level=error --file=lua $VARIANT_ARGS $TUTORIAL_DIRS
     echo ""
 
     # shellcheck disable=SC2086
-    run_export_check "TSV reformat only" --log-level=error $TUTORIAL_DIRS
+    run_export_check "TSV reformat only" --log-level=error $VARIANT_ARGS $TUTORIAL_DIRS
     echo ""
 fi
 

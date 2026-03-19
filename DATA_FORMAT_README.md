@@ -1028,6 +1028,7 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `joinedTypeName` | `type_spec\|nil` | The type name for the joined result |
 | `rowValidators` | `{validator_spec}\|nil` | Validators run on each row after parsing |
 | `fileValidators` | `{validator_spec}\|nil` | Validators run on the complete file |
+| `variant` | `name\|nil` | Variant tag for conditional file inclusion (see [Variant-Based Conditional File Inclusion](#variant-based-conditional-file-inclusion)) |
 
 ### Publishing Data
 
@@ -1096,6 +1097,60 @@ Recommended naming patterns for secondary files:
 - `<Primary>.<purpose>.tsv` for feature splits (e.g., `Items.drops.tsv`)
 - `<Primary>.<locale>.tsv` for translations (e.g., `Items.en.tsv`, `Items.de.tsv`)
 
+### Variant-Based Conditional File Inclusion
+
+The `variant` column in `Files.tsv` enables conditional file inclusion at processing time. This is useful when multiple versions of a file exist (e.g., translations for different languages, platform-specific data, debug/release configurations) and only one should be active per export.
+
+#### Variant Activation Rules
+
+- Rows with an **empty** `variant` value are **always active**
+- Rows with a **non-empty** `variant` value are **only active** when that variant name is explicitly provided at processing time (via `--variant=<name>` on the command line, or `opt_variants` in the API)
+- Inactive rows are **fully skipped**: the file is not loaded, not exported, and not validated for joins
+
+This means adding a variant-tagged row to `Files.tsv` is safe -- it will not affect existing processing unless the variant is explicitly activated.
+
+#### Variant Files.tsv Example
+
+<!-- markdownlint-disable MD010 -->
+```text
+fileName:filepath	...	joinInto:filepath|nil	joinColumn:name|nil	variant:name|nil
+Item.tsv	...
+Item.en.tsv	...	Item.tsv	name	en
+Item.fr.tsv	...	Item.tsv	name	fr
+```
+<!-- markdownlint-enable MD010 -->
+
+With no variants specified: only `Item.tsv` and `Item.en.tsv` are loaded (since `Item.en.tsv` has no variant tag). `Item.fr.tsv` is skipped.
+
+With `--variant=fr`: all three files are loaded. Both `Item.en.tsv` and `Item.fr.tsv` are joined into `Item.tsv`.
+
+#### Variant Group Validation
+
+To enforce that exactly one variant from a set of related options is selected, declare **variant groups** in `Manifest.transposed.tsv` using the `variant_groups` field:
+
+<!-- markdownlint-disable MD010 -->
+```text
+variant_groups:{{name,{name}}}|nil	{"lang",{"en","fr","de"}},{"platform",{"ios","android"}}
+```
+<!-- markdownlint-enable MD010 -->
+
+This declares two groups:
+
+- `lang`: exactly one of `en`, `fr`, or `de` must be selected
+- `platform`: exactly one of `ios` or `android` must be selected
+
+**Validation rules:**
+
+- For each declared group, **exactly one** of its allowed values must be in the provided variants set
+- Variant names must be **globally unique** across all groups within a package
+- Variant values not belonging to any declared group are allowed (free-form variants)
+- If no variants are provided (`opt_variants` is nil), variant group validation is skipped entirely (backward compatible)
+
+**Error examples:**
+
+- No variant from a group: `variant group 'lang' requires exactly one of: en, fr, de -- but no variants were provided`
+- Multiple from same group: `variant group 'lang' has multiple selected variants: en, fr -- expected exactly one`
+
 ## Package Manifest (Manifest.transposed.tsv)
 
 Data files can be grouped in "packages" which can be created independently or depend on each other. A `Manifest.transposed.tsv` file can be defined in the package directory to specify package metadata.
@@ -1116,6 +1171,7 @@ Since the file has only a single data row and multiple values can be quite long,
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
+| `variant_groups` | `{{name,{name}}}\|nil` | Declares groups of mutually exclusive variant names (see [Variant Group Validation](#variant-group-validation)) |
 
 ### Custom Manifest Fields
 

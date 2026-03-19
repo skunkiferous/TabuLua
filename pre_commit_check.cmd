@@ -55,20 +55,21 @@ if %QUICK_MODE%==1 (
 
 set "TUTORIAL_DIRS=tutorial\core\ tutorial\expansion\"
 
+set "VARIANT_ARGS=--variant=en"
 set "EXPORT_LABEL=JSON export"
-set "EXPORT_ARGS=--log-level=error --file=json %TUTORIAL_DIRS%"
+set "EXPORT_ARGS=--log-level=error --file=json %VARIANT_ARGS% %TUTORIAL_DIRS%"
 call :run_export_check
 echo.
 set "EXPORT_LABEL=SQL + MPK export"
-set "EXPORT_ARGS=--log-level=error --file=sql --data=mpk %TUTORIAL_DIRS%"
+set "EXPORT_ARGS=--log-level=error --file=sql --data=mpk %VARIANT_ARGS% %TUTORIAL_DIRS%"
 call :run_export_check
 echo.
 set "EXPORT_LABEL=Lua export"
-set "EXPORT_ARGS=--log-level=error --file=lua %TUTORIAL_DIRS%"
+set "EXPORT_ARGS=--log-level=error --file=lua %VARIANT_ARGS% %TUTORIAL_DIRS%"
 call :run_export_check
 echo.
 set "EXPORT_LABEL=TSV reformat only"
-set "EXPORT_ARGS=--log-level=error %TUTORIAL_DIRS%"
+set "EXPORT_ARGS=--log-level=error %VARIANT_ARGS% %TUTORIAL_DIRS%"
 call :run_export_check
 echo.
 

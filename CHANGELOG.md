@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Variant-based conditional file inclusion.** `Files.tsv` now supports an optional
+  `variant:name|nil` column. Rows with a non-empty variant value are only active
+  when that variant is explicitly passed to `processFiles()`. This enables listing
+  all localization (or platform, debug/release, etc.) variants in a single
+  `Files.tsv` and selecting which to load at processing time — no more editing
+  `Files.tsv` per export. Files with inactive variants are fully skipped: not loaded,
+  not exported, and not validated for joins.
+- **Variant group validation in Manifest.** A new optional `variant_groups` field
+  in `Manifest.transposed.tsv` declares groups of mutually exclusive variant names
+  (e.g., `{"lang",{"en","fr","de"}}`). When variants are provided, the system
+  validates that exactly one value from each declared group is selected. Variant
+  names must be unique across groups within a package. Validation is per-package.
 - New `global_reset` module: a central registry for resetting module-level mutable
   state (caches, registries, etc.) back to its original post-load condition. Modules
   call `register(fn)` during initialization; calling `reset()` invokes all registered

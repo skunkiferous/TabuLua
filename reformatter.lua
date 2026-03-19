@@ -276,6 +276,10 @@ local function generateUsage()
         "  --clean               Empty the export directory before exporting",
         "                        Removes all existing files and subdirectories",
         "",
+        "  --variant=<name>      Activate a named variant for conditional file inclusion",
+        "                        Can be specified multiple times (e.g., --variant=en --variant=ios)",
+        "                        Only Files.tsv rows whose variant matches are loaded",
+        "",
         "FILE FORMATS:",
     }
 
@@ -381,9 +385,10 @@ end
 --- @param directories table Sequence of directory paths containing TSV files
 --- @param exporters table|nil Optional sequence of exporters, each either a function or {fn, subdir, tableSerializer}
 --- @param exportParams table|nil Optional export parameters: {exportDir, ...}
+--- @param opt_variants table|nil Optional sequence of variant names to activate
 --- @side_effect Reformats files in-place; creates export files if exporters specified
 --- @error Throws if directories is not a table or contains non-string values
-local function processFiles(directories, exporters, exportParams)
+local function processFiles(directories, exporters, exportParams, opt_variants)
     local td = type(directories)
     if td == "nil" or (td == "table" and #directories == 0) then
         logger:error("No input directories specified")
@@ -416,7 +421,7 @@ local function processFiles(directories, exporters, exportParams)
         end
     end
 
-    local result = manifest_loader.processFiles(directories, badVal, excludeDirs)
+    local result = manifest_loader.processFiles(directories, badVal, excludeDirs, opt_variants)
     if result then
         local tsv_files = result.tsv_files
         local raw_files = result.raw_files
@@ -493,6 +498,7 @@ if isMainScript then
         local exportDir = DEFAULT_EXPORT_DIR
         local collapseExploded = false  -- --collapse-exploded flag
         local cleanExportDir = false    -- --clean flag
+        local variants = {}             -- --variant=<name> values
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
         local hasError = false
@@ -574,6 +580,14 @@ if isMainScript then
                 require("parsers.state").suppressUnquotedStringWarning = true
             elseif arg_i == "--clean" then
                 cleanExportDir = true
+            elseif arg_i:match("^%-%-variant=") then
+                local variantName = arg_i:match("^%-%-variant=(.+)$")
+                if variantName then
+                    table.insert(variants, variantName)
+                else
+                    logger:error("--variant= requires a name")
+                    hasError = true
+                end
             elseif arg_i:match("^%-%-") then
                 logger:error("Unknown option: " .. arg_i)
                 hasError = true
@@ -603,7 +617,7 @@ if isMainScript then
         if cleanExportDir then
             exportParams.cleanExportDir = true
         end
-        processFiles(directories, exporters, exportParams)
+        processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
     end
 else
     logger:info("reformatter loaded as a module")

@@ -1,0 +1,10 @@
+name:name	displayName:text	description:text
+# ^ French secondary file: joins into Item.tsv by the name column (see Files.tsv).
+ironSword	Epee de fer	Une epee de fer fiable.\nAssez tranchante pour vaincre les ennemis.
+oakShield	Bouclier de chene	Un bouclier robuste.\tOffre une defense solide.
+healthPotion	Potion de soin	Une fiole qui restaure la vitalite.\nBuvez pour recuperer.
+fireStaff	Baton de feu	Un baton de flammes.\nCanalise la magie du feu.
+shadowCloak	Cape d ombre	Une cape tissee d ombre.\nConfere la furtivite.
+legendaryBlade	Lame de l aube	Epee legendaire du premier heros.\nBrille de la lumiere.
+earthAmulet	Amulette de terre	Une amulette qui resonne avec la puissance de la terre.
+manaPotion	Potion de mana	Une potion bleue qui restaure l energie magique.\nGout de myrtilles.

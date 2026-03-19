@@ -84,7 +84,12 @@ local MANIFEST_SPEC = [[{
     # Package-level validators run after all files are loaded
     # Each validator is either a simple expression string (error level) or
     # a structured record {expr:expression, level:error_level|nil}
-    package_validators:{validator_spec}|nil
+    package_validators:{validator_spec}|nil,
+    # Variant groups declare sets of mutually exclusive variant names.
+    # Each group is a tuple of (group_name, {allowed_values}).
+    # When variants are passed to processFiles(), exactly one value from each
+    # declared group must be present. Variant names must be unique across groups.
+    variant_groups:{{name,{name}}}|nil
 }]]
 
 -- Our own badVal (uses module logger by default)
@@ -204,6 +209,11 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         manifest.package_validators = readOnly(manifest.package_validators)
     else
         manifest.package_validators = nil
+    end
+    if manifest.variant_groups and next(manifest.variant_groups) then
+        manifest.variant_groups = readOnly(manifest.variant_groups)
+    else
+        manifest.variant_groups = nil
     end
     return readOnly(manifest)
 end
@@ -577,6 +587,80 @@ local function resolveDependencies(badVal, raw_files, manifest_tsv_files, cog_en
     return load_order, packages
 end
 
+--- Validates that the provided variants satisfy all declared variant groups in a manifest.
+--- Each group requires exactly one of its allowed values to be present in the variants set.
+--- Variant names must be globally unique across all groups within a package.
+--- @param manifest table The package manifest (must have variant_groups field)
+--- @param variants table|nil Set of active variant names (keys=names, values=true), or nil to skip
+--- @param badVal table Error reporting object
+--- @return boolean True if validation passes, false if errors found
+local function validateVariantGroups(manifest, variants, badVal)
+    local groups = manifest.variant_groups
+    if not groups then
+        return true
+    end
+    if not variants then
+        -- No variants provided but groups are declared — report error per group
+        badVal.source_name = manifest.path
+        badVal.line_no = 0
+        for _, group in ipairs(groups) do
+            local groupName = group[1]
+            local allowed = group[2]
+            badVal(groupName, "variant group '" .. groupName
+                .. "' requires exactly one of: " .. table.concat(allowed, ", ")
+                .. " -- but no variants were provided")
+        end
+        return false
+    end
+
+    local ok = true
+    -- Check variant names are unique across all groups
+    local seen = {}  -- variant name -> group name
+    for _, group in ipairs(groups) do
+        local groupName = group[1]
+        local allowed = group[2]
+        for _, v in ipairs(allowed) do
+            if seen[v] then
+                badVal.source_name = manifest.path
+                badVal.line_no = 0
+                badVal(v, "variant '" .. v .. "' appears in both group '"
+                    .. seen[v] .. "' and group '" .. groupName .. "'")
+                ok = false
+            else
+                seen[v] = groupName
+            end
+        end
+    end
+
+    -- For each group, check exactly one of its values is selected
+    for _, group in ipairs(groups) do
+        local groupName = group[1]
+        local allowed = group[2]
+        local selected = {}
+        for _, v in ipairs(allowed) do
+            if variants[v] then
+                selected[#selected + 1] = v
+            end
+        end
+        if #selected == 0 then
+            badVal.source_name = manifest.path
+            badVal.line_no = 0
+            badVal(groupName, "variant group '" .. groupName
+                .. "' requires exactly one of: " .. table.concat(allowed, ", "))
+            ok = false
+        elseif #selected > 1 then
+            badVal.source_name = manifest.path
+            badVal.line_no = 0
+            badVal(groupName, "variant group '" .. groupName
+                .. "' has multiple selected: " .. table.concat(selected, ", ")
+                .. " -- expected exactly one")
+            ok = false
+        end
+    end
+
+    return ok
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -588,6 +672,7 @@ local API = {
     isManifestFile = isManifestFile,
     loadManifestFile = loadManifestFile,
     resolveDependencies = resolveDependencies,
+    validateVariantGroups = validateVariantGroups,
     versionSatisfies = versionSatisfies,
     FILENAME = MANIFEST_FILENAME,
 }

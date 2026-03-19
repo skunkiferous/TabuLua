@@ -381,7 +381,7 @@ When a row is accessed with an exploded root name (e.g., `row.location`), `assem
 
 ## processFiles() Result
 
-The top-level `processFiles(directories, badVal)` function returns a result table (or `nil` on fatal error):
+The top-level `processFiles(directories, badVal, opt_excludeDirs, opt_variants)` function returns a result table (or `nil` on fatal error). The optional `opt_variants` parameter is an array of variant name strings (e.g., `{"en", "ios"}`) that controls conditional file inclusion:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -404,6 +404,7 @@ The top-level `processFiles(directories, badVal)` function returns a result tabl
 | `lcFn2JoinedTypeName` | `table` | Map of lowercase filename → joined type name |
 | `lcFn2RowValidators` | `table` | Map of lowercase filename → array of row validator specs |
 | `lcFn2FileValidators` | `table` | Map of lowercase filename → array of file validator specs |
+| `lcSkippedFiles` | `table` | Map of lowercase filename → `true` for files skipped by variant filtering |
 
 ### Validation Warning Records
 
@@ -428,8 +429,9 @@ The complete processing pipeline, in order:
 3. **Register custom types** from manifests (including type tags with cross-package member merging)
 4. **Load code libraries** from manifests into `loadEnv`
 5. **Resolve package dependencies** (topological sort)
-6. **Load file descriptors** (`Files.tsv`) in package dependency order
-7. **Process data files** in `loadOrder` within each package:
+6. **Validate variant groups** (if `opt_variants` provided and manifests declare `variant_groups`)
+7. **Load file descriptors** (`Files.tsv`) in package dependency order, applying variant filtering (rows with a non-empty `variant` value not in `opt_variants` are skipped and added to `lcSkippedFiles`)
+8. **Process data files** in `loadOrder` within each package (skipping variant-filtered files):
    a. Run COG processing on raw content
    b. Parse raw TSV into `raw_tsv` structure (preserving preamble lines)
    c. Build header (column definitions)
@@ -441,8 +443,8 @@ The complete processing pipeline, in order:
    i. For `custom_type_def` files (or subtypes thereof), register each data row as a custom type
    j. For `custom_type_def` child files, validate that child field types are subtypes of parent field types
    k. Register file column structure as a record type
-8. **Run validators** (row → file → package)
-9. **Return result** with all parsed data and metadata
+9. **Run validators** (row → file → package)
+10. **Return result** with all parsed data and metadata
 
 ### Read-Only Enforcement
 

@@ -241,6 +241,10 @@ end
 --- @param joinMeta table Join metadata from manifest_loader
 --- @return boolean True if the file should be exported
 local function shouldExport(lcfn, joinMeta)
+    -- Variant-skipped files are never exported
+    if joinMeta.lcSkippedFiles and joinMeta.lcSkippedFiles[lcfn] then
+        return false
+    end
     local explicitExport = joinMeta.lcFn2Export[lcfn]
     if explicitExport ~= nil then
         return explicitExport

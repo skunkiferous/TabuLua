@@ -552,4 +552,63 @@ describe("manifest_info", function()
         end)
     end)
 
+    describe("validateVariantGroups", function()
+        local function make_manifest(variant_groups)
+            return {
+                path = "test/Manifest.transposed.tsv",
+                variant_groups = variant_groups,
+            }
+        end
+
+        it("should pass when no variant_groups declared", function()
+            local m = make_manifest(nil)
+            local ok = manifest_info.validateVariantGroups(m, {en = true}, badVal)
+            assert.is_true(ok)
+        end)
+
+        it("should pass when exactly one from each group is selected", function()
+            local m = make_manifest({{"lang", {"en", "fr", "de"}}, {"platform", {"ios", "android"}}})
+            local ok = manifest_info.validateVariantGroups(m, {en = true, ios = true}, badVal)
+            assert.is_true(ok)
+        end)
+
+        it("should fail when no variants provided but groups declared", function()
+            local m = make_manifest({{"lang", {"en", "fr"}}})
+            local before = badVal.errors
+            local ok = manifest_info.validateVariantGroups(m, nil, badVal)
+            assert.is_false(ok)
+            assert.is_true(badVal.errors > before)
+        end)
+
+        it("should fail when no variant from a group is selected", function()
+            local m = make_manifest({{"lang", {"en", "fr"}}, {"platform", {"ios", "android"}}})
+            local before = badVal.errors
+            local ok = manifest_info.validateVariantGroups(m, {en = true}, badVal)
+            assert.is_false(ok)
+            assert.is_true(badVal.errors > before)
+        end)
+
+        it("should fail when multiple variants from same group are selected", function()
+            local m = make_manifest({{"lang", {"en", "fr"}}})
+            local before = badVal.errors
+            local ok = manifest_info.validateVariantGroups(m, {en = true, fr = true}, badVal)
+            assert.is_false(ok)
+            assert.is_true(badVal.errors > before)
+        end)
+
+        it("should fail when variant names overlap across groups", function()
+            local m = make_manifest({{"groupA", {"x", "y"}}, {"groupB", {"y", "z"}}})
+            local before = badVal.errors
+            local ok = manifest_info.validateVariantGroups(m, {x = true, z = true}, badVal)
+            assert.is_false(ok)
+            assert.is_true(badVal.errors > before)
+        end)
+
+        it("should allow extra variants not in any group", function()
+            local m = make_manifest({{"lang", {"en", "fr"}}})
+            local ok = manifest_info.validateVariantGroups(m, {en = true, debug = true}, badVal)
+            assert.is_true(ok)
+        end)
+    end)
+
 end)
