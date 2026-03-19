@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.17.0] - 2026-03-19
+
+### Added
+
 - **Variant-based conditional file inclusion.** `Files.tsv` now supports an optional
   `variant:name|nil` column. Rows with a non-empty variant value are only active
   when that variant is explicitly passed to `processFiles()`. This enables listing
@@ -52,8 +62,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   The `joinInto` column now requires the full relative path (e.g.,
   `Resource/Bulk/Substance/Liquid.tsv`) instead of a basename (`Liquid.tsv`).
   This eliminates ambiguity when multiple files share the same basename.
-
-### Removed
 
 ### Fixed
 
