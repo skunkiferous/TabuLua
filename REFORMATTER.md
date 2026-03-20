@@ -360,7 +360,7 @@ Given this `Files.tsv`:
 
 ### Variant Groups
 
-Packages can declare **variant groups** in `Manifest.transposed.tsv` to enforce that exactly one variant from a group is selected. See the `variant_groups` field in the [Data Format Specification](DATA_FORMAT_README.md#variant-groups).
+Packages can declare **variant groups** in `Manifest.transposed.tsv` to enforce that exactly one variant from a group is selected. Groups can optionally specify a **default** variant that is applied automatically when no variant from that group is explicitly provided. See the `variant_groups` field in the [Data Format Specification](DATA_FORMAT_README.md#variant-group-validation).
 
 ## Error Handling
 

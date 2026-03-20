@@ -89,7 +89,7 @@ local MANIFEST_SPEC = [[{
     # Each group is a tuple of (group_name, {allowed_values}).
     # When variants are passed to processFiles(), exactly one value from each
     # declared group must be present. Variant names must be unique across groups.
-    variant_groups:{{name,{name}}}|nil
+    variant_groups:{{name,{name},name|nil}}|nil
 }]]
 
 -- Our own badVal (uses module logger by default)
@@ -594,23 +594,35 @@ end
 --- @param variants table|nil Set of active variant names (keys=names, values=true), or nil to skip
 --- @param badVal table Error reporting object
 --- @return boolean True if validation passes, false if errors found
+--- @return table|nil Defaults to apply (variant name -> true), or nil if none
 local function validateVariantGroups(manifest, variants, badVal)
     local groups = manifest.variant_groups
     if not groups then
         return true
     end
+
+    -- Collect defaults and apply them when no variant from a group is explicitly provided
+    local defaults = nil  -- lazily created: {name = true, ...}
     if not variants then
-        -- No variants provided but groups are declared — report error per group
+        -- No variants provided: apply defaults where available, error otherwise
+        local ok = true
         badVal.source_name = manifest.path
         badVal.line_no = 0
         for _, group in ipairs(groups) do
             local groupName = group[1]
             local allowed = group[2]
-            badVal(groupName, "variant group '" .. groupName
-                .. "' requires exactly one of: " .. table.concat(allowed, ", ")
-                .. " -- but no variants were provided")
+            local default = group[3]
+            if default and default ~= '' then
+                if not defaults then defaults = {} end
+                defaults[default] = true
+            else
+                badVal(groupName, "variant group '" .. groupName
+                    .. "' requires exactly one of: " .. table.concat(allowed, ", ")
+                    .. " -- but no variants were provided")
+                ok = false
+            end
         end
-        return false
+        return ok, defaults
     end
 
     local ok = true
@@ -632,10 +644,12 @@ local function validateVariantGroups(manifest, variants, badVal)
         end
     end
 
-    -- For each group, check exactly one of its values is selected
+    -- For each group, check exactly one of its values is selected;
+    -- if none selected and a default exists, apply it
     for _, group in ipairs(groups) do
         local groupName = group[1]
         local allowed = group[2]
+        local default = group[3]
         local selected = {}
         for _, v in ipairs(allowed) do
             if variants[v] then
@@ -643,11 +657,17 @@ local function validateVariantGroups(manifest, variants, badVal)
             end
         end
         if #selected == 0 then
-            badVal.source_name = manifest.path
-            badVal.line_no = 0
-            badVal(groupName, "variant group '" .. groupName
-                .. "' requires exactly one of: " .. table.concat(allowed, ", "))
-            ok = false
+            if default and default ~= '' then
+                -- Apply default
+                if not defaults then defaults = {} end
+                defaults[default] = true
+            else
+                badVal.source_name = manifest.path
+                badVal.line_no = 0
+                badVal(groupName, "variant group '" .. groupName
+                    .. "' requires exactly one of: " .. table.concat(allowed, ", "))
+                ok = false
+            end
         elseif #selected > 1 then
             badVal.source_name = manifest.path
             badVal.line_no = 0
@@ -658,7 +678,7 @@ local function validateVariantGroups(manifest, variants, badVal)
         end
     end
 
-    return ok
+    return ok, defaults
 end
 
 -- Provides a tostring() function for the API

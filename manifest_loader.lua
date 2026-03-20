@@ -973,25 +973,32 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         return nil
     end
 
-    -- Validate variant groups declared in manifests
+    -- Validate variant groups declared in manifests; collect defaults
+    local variantsSet = nil
     if opt_variants then
-        local variantsSet = {}
+        variantsSet = {}
         for _, v in ipairs(opt_variants) do
             variantsSet[v] = true
         end
-        for _, pkg_id in ipairs(package_order) do
-            local manifest = packages[pkg_id]
-            if manifest and manifest.variant_groups then
-                validateVariantGroups(manifest, variantsSet, badVal)
+    end
+    for _, pkg_id in ipairs(package_order) do
+        local manifest = packages[pkg_id]
+        if manifest and manifest.variant_groups then
+            local _ok, defaults = validateVariantGroups(manifest, variantsSet, badVal)
+            if defaults then
+                if not variantsSet then variantsSet = {} end
+                for k in pairs(defaults) do
+                    variantsSet[k] = true
+                end
             end
         end
-    else
-        -- No variants provided: check if any package declares required variant groups
-        for _, pkg_id in ipairs(package_order) do
-            local manifest = packages[pkg_id]
-            if manifest and manifest.variant_groups then
-                validateVariantGroups(manifest, nil, badVal)
-            end
+    end
+    -- Convert back to array for processOrderedFiles
+    if variantsSet and not opt_variants then
+        -- Defaults were applied but no explicit variants were provided
+        opt_variants = {}
+        for k in pairs(variantsSet) do
+            opt_variants[#opt_variants + 1] = k
         end
     end
 

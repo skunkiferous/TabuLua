@@ -429,7 +429,7 @@ The complete processing pipeline, in order:
 3. **Register custom types** from manifests (including type tags with cross-package member merging)
 4. **Load code libraries** from manifests into `loadEnv`
 5. **Resolve package dependencies** (topological sort)
-6. **Validate variant groups** (if `opt_variants` provided and manifests declare `variant_groups`)
+6. **Validate variant groups** and apply defaults (if manifests declare `variant_groups`; groups with a default do not require an explicit `--variant` selection)
 7. **Load file descriptors** (`Files.tsv`) in package dependency order, applying variant filtering (rows with a non-empty `variant` value not in `opt_variants` are skipped and added to `lcSkippedFiles`)
 8. **Process data files** in `loadOrder` within each package (skipping variant-filtered files):
    a. Run COG processing on raw content

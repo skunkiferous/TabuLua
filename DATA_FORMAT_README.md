@@ -1130,25 +1130,28 @@ To enforce that exactly one variant from a set of related options is selected, d
 
 <!-- markdownlint-disable MD010 -->
 ```text
-variant_groups:{{name,{name}}}|nil	{"lang",{"en","fr","de"}},{"platform",{"ios","android"}}
+variant_groups:{{name,{name},name|nil}}|nil	{"lang",{"en","fr","de"},"en"},{"platform",{"ios","android"}}
 ```
 <!-- markdownlint-enable MD010 -->
 
 This declares two groups:
 
-- `lang`: exactly one of `en`, `fr`, or `de` must be selected
-- `platform`: exactly one of `ios` or `android` must be selected
+- `lang`: exactly one of `en`, `fr`, or `de` must be selected; defaults to `en` if none specified
+- `platform`: exactly one of `ios` or `android` must be selected (no default — error if missing)
+
+Each group tuple has three elements: `{groupName, {allowedValues}, default}`. The third element (default) is optional — when provided, it is automatically applied if no variant from that group is explicitly selected.
 
 **Validation rules:**
 
 - For each declared group, **exactly one** of its allowed values must be in the provided variants set
+- If no variant from a group is selected and the group has a **default**, the default is applied automatically
+- If no variant from a group is selected and there is **no default**, an error is reported
 - Variant names must be **globally unique** across all groups within a package
 - Variant values not belonging to any declared group are allowed (free-form variants)
-- If no variants are provided (`opt_variants` is nil), variant group validation is skipped entirely (backward compatible)
 
 **Error examples:**
 
-- No variant from a group: `variant group 'lang' requires exactly one of: en, fr, de -- but no variants were provided`
+- No variant from a group (no default): `variant group 'platform' requires exactly one of: ios, android`
 - Multiple from same group: `variant group 'lang' has multiple selected variants: en, fr -- expected exactly one`
 
 ## Package Manifest (Manifest.transposed.tsv)
@@ -1171,7 +1174,7 @@ Since the file has only a single data row and multiple values can be quite long,
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
-| `variant_groups` | `{{name,{name}}}\|nil` | Declares groups of mutually exclusive variant names (see [Variant Group Validation](#variant-group-validation)) |
+| `variant_groups` | `{{name,{name},name\|nil}}\|nil` | Declares groups of mutually exclusive variant names with optional default (see [Variant Group Validation](#variant-group-validation)) |
 
 ### Custom Manifest Fields
 

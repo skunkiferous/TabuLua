@@ -28,9 +28,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   not exported, and not validated for joins.
 - **Variant group validation in Manifest.** A new optional `variant_groups` field
   in `Manifest.transposed.tsv` declares groups of mutually exclusive variant names
-  (e.g., `{"lang",{"en","fr","de"}}`). When variants are provided, the system
-  validates that exactly one value from each declared group is selected. Variant
-  names must be unique across groups within a package. Validation is per-package.
+  with an optional default (e.g., `{"lang",{"en","fr","de"},"en"}`). When variants
+  are provided, the system validates that exactly one value from each declared group
+  is selected. If no variant from a group is selected and a default is declared, the
+  default is applied automatically. Variant names must be unique across groups within
+  a package. Validation is per-package.
 - New `global_reset` module: a central registry for resetting module-level mutable
   state (caches, registries, etc.) back to its original post-load condition. Modules
   call `register(fn)` during initialization; calling `reset()` invokes all registered
