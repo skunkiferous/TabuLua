@@ -158,11 +158,24 @@ addRow	Items.tsv	sword|Iron Sword|25
 | `setCells` | fileName | columnName | value | | |
 | `setCellsWhere` | fileName | columnName | value | whereCol | whereVal |
 | `transformCells` | fileName | columnName | expression | | |
+| `moveCellsMatching` | fileName | sourceCol | destCol | pattern | |
 
 - **`setCell`**: Set a single cell by primary key and column name
 - **`setCells`**: Set all cells in a column to the same value
 - **`setCellsWhere`**: Set cells in a column where another column matches a value
 - **`transformCells`**: Apply a Lua expression to each cell in a column (sandboxed)
+- **`moveCellsMatching`**: Move source-column values to a destination column on rows
+  where the source value matches a multi-pattern. Matched source cells are cleared
+  after the value is copied. Empty source cells are skipped, and the destination is
+  overwritten on a match. Useful when splitting an existing column into new columns
+  added by an earlier step. The pattern uses the project's multi-pattern syntax
+  (individual Lua patterns separated by `|`, with `%|` for a literal `|`), so
+  alternations like `clean|dry|rusty` are supported. Example — move any of a set of
+  condition words from `state` into the new `condition` column:
+
+  ```tsv
+  moveCellsMatching	Items.tsv	state	condition	clean|dry|rusty
+  ```
 
 #### Transform Expressions
 
@@ -314,6 +327,7 @@ data_set.new(rootDir, options)
 | `setCells(fileName, colName, val)` | Set all cells in a column |
 | `setCellsWhere(file, col, val, wCol, wVal)` | Conditional set |
 | `transformCells(fileName, colName, expr)` | Apply sandboxed expression |
+| `moveCellsMatching(file, srcCol, dstCol, pattern)` | Move source values to dest where source matches a Lua pattern (clears source on match) |
 
 ### Comment and Blank Line Operations
 

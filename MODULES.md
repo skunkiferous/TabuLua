@@ -23,6 +23,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
+| [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
 | [normalize_output](#normalize_output) | Normalizes reformatter output for bad input test comparison | *(none — standalone CLI script)* |
 | [number_identifiers](#number_identifiers) | Numeric/string identifier conversion | error_reporting, read_only |
@@ -48,6 +49,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [string_utils](#string_utils) | String manipulation utilities | read_only |
 | [table_parsing](#table_parsing) | Depth-based table parsing | read_only, error_reporting |
 | [table_utils](#table_utils) | Table manipulation utilities | *(none)* |
+| [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | named_logger, raw_tsv, read_only, string_utils, file_util |
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
 | [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | comparators, named_logger, predicates, read_only, sandbox, serialization, string_utils, table_utils, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
@@ -216,6 +218,15 @@ Migration script executor for batch modifications to TSV data files at the raw l
 Logging system with named loggers, multiple log levels (DEBUG, INFO, WARN, ERROR), and configurable output targets.
 
 **Dependencies:** global_reset *(also uses external `logging` library)*
+
+---
+
+### ollama_batch
+**File:** [ollama_batch.lua](ollama_batch.lua)
+
+Batch-processes TSV rows through a local Ollama LLM. Reads a config TSV file specifying input/output files, columns, prompt, model settings, and optional reference data and Lua transformation code. Sends rows to Ollama in batches as JSON arrays, parses JSON array responses, and merges generated columns back into the output. Progress is tracked in a TSV file for checkpoint/resume support. Supports `--resume`, `--status`, `--dry-run`, `--verbose`, `--log-level=LEVEL`, `--model=MODEL`, `--batch-size=N`, and `--timeout=N` options. Optional `prepare_input` and `process_output` Lua files provide input/output transformation hooks. Prompt templates support `{REFERENCE:filename}` placeholders for injecting reference data. CLI entry point: `lua54 ollama_batch.lua <config.tsv> <baseDir> [options]`.
+
+**Dependencies:** named_logger, raw_tsv, string_utils, read_only, file_util *(also uses external `dkjson` and `socket.http` libraries)*
 
 ---
 
@@ -438,6 +449,16 @@ Table manipulation utilities: copy, filter, keys, values, merge, and array opera
 
 ---
 
+### tsv_diff
+
+**File:** [tsv_diff.lua](tsv_diff.lua)
+
+TSV file comparison tool that compares two TSV files at the data level, understanding columnar structure. Supports order-based (positional) and primary-key-based comparison modes. Features include column mapping for renamed columns, whitespace trimming, case-insensitive comparison, numeric tolerance (epsilon), column filtering (`--only`/`--exclude`), context lines, and configurable output. Works at the raw level (no type parsing). CLI entry point: `lua54 tsv_diff.lua <file1.tsv> <file2.tsv> [options]`. See [TSV_DIFF.md](TSV_DIFF.md) for full documentation.
+
+**Dependencies:** named_logger, raw_tsv, read_only, string_utils, file_util
+
+---
+
 ### tsv_model
 **File:** [tsv_model.lua](tsv_model.lua)
 
@@ -519,6 +540,10 @@ exploded_columns
 data_set
     └── migration
 
+raw_tsv
+    └── tsv_diff
+    └── ollama_batch
+
 schema_validator (standalone)
 ```
 
@@ -529,10 +554,11 @@ These external libraries are required but not listed in module dependencies abov
 - **lpeg** - Pattern matching (used by parsers.lpeg_parser)
 - **lfs** (LuaFileSystem) - File system operations (used by file_util, named_logger, export_tester)
 - **logging** - Logging framework (used by named_logger)
-- **dkjson** - JSON encoding/decoding (used by serialization, deserialization, importer, schema_validator)
+- **dkjson** - JSON encoding/decoding (used by serialization, deserialization, importer, schema_validator, ollama_batch)
 - **MessagePack** - MessagePack serialization (used by serialization, deserialization)
 - **tableshape** - Table validation (used by predicates)
 - **sandbox** - Sandboxed Lua execution (used by lua_cog, manifest_info, serialization, tsv_model, table_parsing, validator_executor)
 - **ltcn** - Lua table constructor notation (used by table_parsing)
 - **semver** - Semantic versioning (used by parsers and most modules)
+- **LuaSocket** - HTTP client (used by ollama_batch for Ollama API calls)
 - **lsqlite3** - SQLite3 bindings (optional, used by importer for SQL import)

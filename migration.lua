@@ -248,6 +248,10 @@ COMMANDS.transformCells = function(ds, row)
     return ds:transformCells(row[2], row[3], row[4])
 end
 
+COMMANDS.moveCellsMatching = function(ds, row)
+    return ds:moveCellsMatching(row[2], row[3], row[4], row[5])
+end
+
 -- Comment/blank line commands
 COMMANDS.addComment = function(ds, row)
     local fileName = row[2]
@@ -412,7 +416,8 @@ Script commands:
   Column:   addColumn, removeColumn, renameColumn, moveColumn,
             setColumnType, copyColumn
   Row:      addRow, removeRow, copyRow
-  Cell:     setCell, setCells, setCellsWhere, transformCells
+  Cell:     setCell, setCells, setCellsWhere, transformCells,
+            moveCellsMatching
   Comment:  addComment, addBlankLine
   Files:    filesUpdatePath, filesUpdateSuperType,
             filesUpdateLoadOrder, filesUpdateTypeName

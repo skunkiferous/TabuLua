@@ -12,6 +12,7 @@ local file_util = require("file_util")
 local string_utils = require("string_utils")
 local read_only = require("read_only")
 local sandbox = require("sandbox")
+local regex_utils = require("regex_utils")
 
 local predicates = require("predicates")
 local lfs = require("lfs")
@@ -1342,6 +1343,51 @@ function DataSet:transformCells(fileName, columnName, expression)
         end
     end
     markDirty(entry)
+    return true
+end
+
+--- Move cell values from sourceColumn to destColumn for rows where the source
+--- value matches the given multi-pattern. Matched source cells are cleared
+--- (set to "") after the value is copied to the destination column. The
+--- pattern uses the project's multi-pattern syntax — individual Lua patterns
+--- separated by `|`, e.g. `clean|dry|rusty`. Use `%|` for a literal `|`.
+--- @param fileName string
+--- @param sourceColumn string Column to read from (cleared on match)
+--- @param destColumn string Column to write to (overwritten on match)
+--- @param pattern string Multi-pattern applied to source cell values
+--- @return boolean|nil true on success
+--- @return string|nil error message
+function DataSet:moveCellsMatching(fileName, sourceColumn, destColumn, pattern)
+    local entry, err = assertFileLoaded(self, fileName)
+    if not entry then return nil, err end
+    if pattern == nil or pattern == "" then
+        return nil, "moveCellsMatching requires a non-empty pattern"
+    end
+    local srcCol
+    srcCol, err = assertColumnExists(entry, sourceColumn)
+    if not srcCol then return nil, err end
+    local dstCol
+    dstCol, err = assertColumnExists(entry, destColumn)
+    if not dstCol then return nil, err end
+    if srcCol.index == dstCol.index then
+        return nil, "moveCellsMatching source and destination columns must differ"
+    end
+    local matcher, matchErr = regex_utils.multiMatcher(pattern)
+    if not matcher then
+        return nil, "invalid pattern: " .. tostring(matchErr)
+    end
+    local moved = false
+    for _, row in iterDataRows(entry) do
+        local val = row[srcCol.index]
+        if val and val ~= "" and matcher(val) then
+            row[dstCol.index] = val
+            row[srcCol.index] = ""
+            moved = true
+        end
+    end
+    if moved then
+        markDirty(entry)
+    end
     return true
 end
 

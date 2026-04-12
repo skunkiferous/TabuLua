@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- New `moveCellsMatching` migration command (and corresponding `DataSet:moveCellsMatching`
+  method) that moves cell values from a source column to a destination column on rows
+  where the source value matches a Lua pattern. Matched source cells are cleared after
+  the value is copied; empty cells are skipped. Useful for splitting an existing column
+  into new columns added by an earlier migration step.
+
+- New `tsv_diff` module and CLI tool for comparing two TSV files at the data level.
+  Supports order-based (positional) and primary-key-based comparison modes. Features
+  include column mapping (`--map=OLD/NEW`) for renamed columns, whitespace trimming
+  (`--trim`), case-insensitive comparison (`--ignore-case`), floating-point numeric
+  tolerance (`--epsilon=N`), column filtering (`--only`/`--exclude`), context lines
+  (`--context=N`), and output limiting (`--max-diffs=N`). Comments and blank lines are
+  ignored. Column order is not compared (except column 1 is always the primary key).
+  Only common columns are compared, so adding or removing a column does not cause every
+  row to appear different. Works at the raw level (no type parsing). CLI entry point:
+  `lua54 tsv_diff.lua <file1.tsv> <file2.tsv> [options]`. Exit codes: 0 = identical,
+  1 = differences found, 2 = error. See [TSV_DIFF.md](TSV_DIFF.md) for full documentation.
+
+- New `ollama_batch` module and CLI tool for batch-processing TSV rows through a
+  local Ollama LLM. Configured via a TSV key/value file specifying input/output files,
+  columns to send to the model, columns the model generates, system prompt (with
+  `{REFERENCE:file}` placeholder support), and optional Lua transformation hooks
+  (`prepare_input`, `process_output`). Sends rows in batches as JSON arrays, parses
+  JSON array responses, and merges generated columns into the output file. Progress is
+  tracked in a TSV file (human-readable) for checkpoint/resume. Supports `--resume`,
+  `--status`, `--dry-run`, `--model=MODEL`, `--batch-size=N`, `--timeout=N`, and
+  `--log-level=LEVEL` options. Reference TSV/TXT files can be loaded and passed to
+  both the prompt template and user code. CLI entry point:
+  `lua54 ollama_batch.lua <config.tsv> <baseDir> [options]`.
+
 ### Changed
 
 ### Removed

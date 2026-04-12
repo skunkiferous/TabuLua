@@ -349,6 +349,98 @@ describe("migration", function()
             assert.are.equal("20", ds:getCell("Test.tsv", "alpha", "value"))
             assert.are.equal("40", ds:getCell("Test.tsv", "beta", "value"))
         end)
+
+        it("should moveCellsMatching values whose source matches a pattern", function()
+            writeTestFile(temp_dir, "data/Test.tsv",
+                "name:string\told:string\tnew:string\n" ..
+                "alpha\tA-123\t\n" ..
+                "beta\tB-456\t\n" ..
+                "gamma\tA-789\t\n" ..
+                "delta\t\t\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\tp4:string\n" ..
+                "loadFile\tTest.tsv\n" ..
+                "moveCellsMatching\tTest.tsv\told\tnew\t^A%-\n" ..
+                "saveAll\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_true(ok, err)
+            local ds = data_set.new(path_join(temp_dir, "data"))
+            ds:loadFile("Test.tsv")
+            -- Matching rows: source cleared, dest set
+            assert.are.equal("", ds:getCell("Test.tsv", "alpha", "old"))
+            assert.are.equal("A-123", ds:getCell("Test.tsv", "alpha", "new"))
+            assert.are.equal("", ds:getCell("Test.tsv", "gamma", "old"))
+            assert.are.equal("A-789", ds:getCell("Test.tsv", "gamma", "new"))
+            -- Non-matching row: untouched
+            assert.are.equal("B-456", ds:getCell("Test.tsv", "beta", "old"))
+            assert.are.equal("", ds:getCell("Test.tsv", "beta", "new"))
+            -- Empty source row: untouched
+            assert.are.equal("", ds:getCell("Test.tsv", "delta", "old"))
+            assert.are.equal("", ds:getCell("Test.tsv", "delta", "new"))
+        end)
+
+        it("should moveCellsMatching with an alternation pattern", function()
+            writeTestFile(temp_dir, "data/Test.tsv",
+                "name:string\tstate:string\tcondition:string\n" ..
+                "alpha\tclean\t\n" ..
+                "beta\tbroken\t\n" ..
+                "gamma\tdry\t\n" ..
+                "delta\trusty\t\n" ..
+                "epsilon\tshiny\t\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\tp4:string\n" ..
+                "loadFile\tTest.tsv\n" ..
+                "moveCellsMatching\tTest.tsv\tstate\tcondition\tclean|dry|rusty\n" ..
+                "saveAll\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_true(ok, err)
+            local ds = data_set.new(path_join(temp_dir, "data"))
+            ds:loadFile("Test.tsv")
+            -- Matching rows: source cleared, dest set
+            assert.are.equal("", ds:getCell("Test.tsv", "alpha", "state"))
+            assert.are.equal("clean", ds:getCell("Test.tsv", "alpha", "condition"))
+            assert.are.equal("", ds:getCell("Test.tsv", "gamma", "state"))
+            assert.are.equal("dry", ds:getCell("Test.tsv", "gamma", "condition"))
+            assert.are.equal("", ds:getCell("Test.tsv", "delta", "state"))
+            assert.are.equal("rusty", ds:getCell("Test.tsv", "delta", "condition"))
+            -- Non-matching rows: untouched
+            assert.are.equal("broken", ds:getCell("Test.tsv", "beta", "state"))
+            assert.are.equal("", ds:getCell("Test.tsv", "beta", "condition"))
+            assert.are.equal("shiny", ds:getCell("Test.tsv", "epsilon", "state"))
+            assert.are.equal("", ds:getCell("Test.tsv", "epsilon", "condition"))
+        end)
+
+        it("should fail moveCellsMatching when source column is missing", function()
+            writeTestFile(temp_dir, "data/Test.tsv",
+                "name:string\tnew:string\nalpha\t\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\tp4:string\n" ..
+                "loadFile\tTest.tsv\n" ..
+                "moveCellsMatching\tTest.tsv\tmissing\tnew\t.+\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_nil(ok)
+            assert.matches("column not found: missing", err)
+        end)
+
+        it("should fail moveCellsMatching when source equals destination", function()
+            writeTestFile(temp_dir, "data/Test.tsv",
+                "name:string\tval:string\nalpha\tA-1\n")
+            writeTestFile(temp_dir, "script.tsv",
+                "command:string\tp1:string\tp2:string\tp3:string\tp4:string\n" ..
+                "loadFile\tTest.tsv\n" ..
+                "moveCellsMatching\tTest.tsv\tval\tval\t.+\n")
+            local ok, err = migration.run(
+                path_join(temp_dir, "script.tsv"),
+                path_join(temp_dir, "data"))
+            assert.is_nil(ok)
+            assert.matches("source and destination columns must differ", err)
+        end)
     end)
 
     ---------------------------------------------------------------------------
