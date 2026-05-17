@@ -9,7 +9,31 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Pre-Processors.** `Files.tsv` now supports an optional `preProcessors:{processor_spec}|nil`
+  column. Pre-processors are sandboxed Lua expressions that mutate parsed rows
+  **after** parsing and **before** any validator runs. They fill the gap between
+  per-row `=expr` (read one row only) and file validators (read whole file but
+  cannot write). The sandbox exposes the validator's read helpers plus
+  `setCell`, `clearCell`, `rowByKey`, and `dataIndex` for mutation. Within a
+  file, processors run in ascending `priority` order (default `100`); a later
+  processor sees earlier processors' writes. Quota is 50,000 ops/file. The
+  reformatter preserves the original raw cells on round-trip — processor
+  mutations stay in-memory only. Implemented as a new
+  [processor_executor](processor_executor.lua) module and wired through
+  `manifest_loader.processFiles`. New built-in type alias `processor_spec`
+  mirrors `validator_spec` and adds `priority`/`rerunAfterPatches` fields.
+  See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors)
+  for the user-facing description and the tutorial Quest.tsv for an
+  inverse-relation example.
+
 ### Changed
+
+- `manifest_loader.processFiles()` result field `validationPassed` now also
+  reflects pre-processor success: it is `true` iff every error-level
+  pre-processor **and** every error-level validator succeeded. (Previously
+  pre-processor errors incremented `badVal.errors` but were not folded into
+  `validationPassed`.) The companion `validationWarnings` array now also
+  includes pre-processor warnings.
 
 ### Removed
 

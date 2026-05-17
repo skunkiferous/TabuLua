@@ -818,7 +818,14 @@ function M.registerDerivedParsers()
     -- Structured form: {expr="self.x > 0 or 'x must be positive'", level="warn"}
     registration.registerAlias(ownBadVal, 'validator_spec',
         'expression|{expr:expression,level:error_level|nil}')
-    
+
+    -- Processor specification: either a simple expression string (defaults to error level)
+    -- or a structured record. Mirrors validator_spec, but adds processor-specific fields
+    -- so that pre-processors can opt into priority-based ordering and re-runs after
+    -- mod-override patches. See pre_processors documentation for full semantics.
+    registration.registerAlias(ownBadVal, 'processor_spec',
+        'expression|{expr:expression,level:error_level|nil,priority:number|nil,rerunAfterPatches:boolean|nil}')
+
     -- Helper type for creating "Files.tsv"
     registration.registerAlias(ownBadVal, 'super_type', 'type_spec|nil')
 

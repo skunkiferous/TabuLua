@@ -1,0 +1,4 @@
+package_id:package_id	test.processor.quota
+name:string	Test Processor Quota Exceeded
+version:version	1.0.0
+description:markdown	Processor exhausts the operation quota

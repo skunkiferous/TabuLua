@@ -21,7 +21,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -38,6 +38,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [parsers.type_parsing](#parserstype_parsing) | Core type parsing with inheritance support | parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.state, parsers.utils, serialization |
 | [parsers.utils](#parsersutils) | Utility functions for parsers module | parsers.state, serialization, table_parsing |
 | [predicates](#predicates) | Type checking predicate functions | read_only, string_utils, table_parsing, table_utils |
+| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | comparators, error_reporting, named_logger, parsers, predicates, read_only, sandbox, string_utils, table_utils, validator_executor, validator_helpers |
 | [raw_tsv](#raw_tsv) | Low-level TSV file parsing and writing | file_util, predicates, read_only, string_utils |
 | [read_only](#read_only) | Read-only table proxy wrappers | table_utils |
 | [reformatter](#reformatter) | TSV file reformatting and multi-format export | error_reporting, exporter, file_util, manifest_info, manifest_loader, named_logger, read_only, serialization |
@@ -348,6 +349,22 @@ Type checking predicate functions for validation (is_string, is_number, is_table
 
 ---
 
+### processor_executor
+
+**File:** [processor_executor.lua](processor_executor.lua)
+
+Sandboxed execution of file pre-processors that mutate parsed rows before any
+validator runs. Exposes the write helpers `setCell`, `clearCell`, `rowByKey`,
+and `dataIndex` to the sandbox, in addition to all read-side helpers inherited
+from `validator_helpers`. Pre-processor authors are required to be idempotent
+when their spec opts into the future mod-override re-run; the default is a
+single run per file. Updates only `cell.parsed`/`cell.evaluated` so the
+reformatter preserves the original on-disk text. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors) for the user-facing description.
+
+**Dependencies:** comparators, error_reporting, named_logger, parsers, predicates, read_only, sandbox, string_utils, table_utils, validator_executor, validator_helpers
+
+---
+
 ### raw_tsv
 **File:** [raw_tsv.lua](raw_tsv.lua)
 
@@ -524,6 +541,7 @@ serialization
             └── export_tester
     └── validator_helpers
         └── validator_executor
+            └── processor_executor
             └── manifest_loader
 
 file_util

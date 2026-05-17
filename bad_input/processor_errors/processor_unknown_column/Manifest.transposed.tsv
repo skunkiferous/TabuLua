@@ -1,0 +1,4 @@
+package_id:package_id	test.processor.unknown
+name:string	Test Processor Unknown Column
+version:version	1.0.0
+description:markdown	Processor references a column missing from the header

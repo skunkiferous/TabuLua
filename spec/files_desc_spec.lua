@@ -295,7 +295,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.same({}, log_messages)
@@ -332,7 +332,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.same({}, log_messages)
@@ -370,7 +370,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -405,7 +405,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -442,7 +442,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -483,7 +483,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -537,7 +537,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.is_not_nil(result)
@@ -588,7 +588,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       -- The validation should catch that TestDog and TestCat have 'weight' with different types
@@ -624,7 +624,7 @@ describe("files_desc", function()
       local result2 = files_desc.loadDescriptorFiles({file_path}, {}, {[file_path]="mod1"},
         {}, {}, {}, {}, {},
         {}, {}, {}, {},
-        {}, {}, {},
+        {}, {}, {}, {},
         {}, {}, badVal2)
 
       assert.is_not_nil(result2)
@@ -655,7 +655,7 @@ describe("files_desc", function()
       local result3 = files_desc.loadDescriptorFiles({file_path}, {}, {[file_path]="mod1"},
         {}, {}, {}, {}, {},
         {}, {}, {}, {},
-        {}, {}, {},
+        {}, {}, {}, {},
         {}, {}, badVal3)
 
       assert.is_not_nil(result3)
@@ -699,7 +699,7 @@ describe("files_desc", function()
       local result = files_desc.loadDescriptorFiles(desc_files_order, prios,
         desc_file2mod_id, post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal)
 
       assert.is_nil(result)
@@ -763,7 +763,7 @@ describe("files_desc", function()
 
       local raw_files = {}
       files_desc.loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
-        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, raw_files, {}, badVal)
+        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, raw_files, {}, badVal)
 
       -- Should have warnings about duplicate data.tsv and Data type
       assert.is_true(#warnings >= 1)
@@ -815,7 +815,7 @@ describe("files_desc", function()
 
       local raw_files = {}
       files_desc.loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
-        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, raw_files, {}, badVal)
+        {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, raw_files, {}, badVal)
 
       -- Should NOT have warnings about Files.tsv or Files type
       for _, w in ipairs(warnings) do
@@ -863,7 +863,7 @@ describe("files_desc", function()
       files_desc.loadDescriptorFiles({file_path}, prios,
         {[file_path] = "mod1"}, {}, {}, lcFn2Type, {}, {},
         lcFn2JoinInto, {}, {}, {},
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal2, nil, lcSkippedFiles)
 
       -- Both en and fr should be skipped (no variants provided)
@@ -898,7 +898,7 @@ describe("files_desc", function()
       files_desc.loadDescriptorFiles({file_path}, prios,
         {[file_path] = "mod1"}, {}, {}, lcFn2Type, {}, {},
         lcFn2JoinInto, {}, {}, {},
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal2, {en = true}, lcSkippedFiles)
 
       -- Only fr should be skipped
@@ -933,7 +933,7 @@ describe("files_desc", function()
       files_desc.loadDescriptorFiles({file_path}, prios,
         {[file_path] = "mod1"}, {}, {}, lcFn2Type, {}, {},
         {}, {}, {}, {},
-        {}, {}, {},
+        {}, {}, {}, {},
         raw_files, {}, badVal2, {en = true}, lcSkippedFiles)
 
       -- All three should be active

@@ -16,7 +16,7 @@ processFiles() result
   ├── raw_files         (map: file_path → raw content string)
   ├── joinMeta          (join and validator metadata)
   ├── file2dir          (map: file_path → parent directory)
-  ├── validationPassed  (boolean)
+  ├── validationPassed  (boolean — true iff all processors AND all validators succeeded)
   └── validationWarnings (array of warning records)
 ```
 
@@ -391,8 +391,8 @@ The top-level `processFiles(directories, badVal, opt_excludeDirs, opt_variants)`
 | `packages` | `table` | Map of package ID → manifest (read-only) |
 | `joinMeta` | `table` | Join and validator metadata (see below) |
 | `file2dir` | `table` | Map of absolute file path → parent directory path |
-| `validationPassed` | `boolean` | `true` if all error-level validators passed |
-| `validationWarnings` | `table` | Array of warning records |
+| `validationPassed` | `boolean` | `true` iff every error-level pre-processor AND every error-level validator succeeded |
+| `validationWarnings` | `table` | Array of warning records (includes both validator and pre-processor warnings) |
 
 ### joinMeta
 
@@ -404,6 +404,7 @@ The top-level `processFiles(directories, badVal, opt_excludeDirs, opt_variants)`
 | `lcFn2JoinedTypeName` | `table` | Map of lowercase filename → joined type name |
 | `lcFn2RowValidators` | `table` | Map of lowercase filename → array of row validator specs |
 | `lcFn2FileValidators` | `table` | Map of lowercase filename → array of file validator specs |
+| `lcFn2PreProcessors` | `table` | Map of lowercase filename → array of pre-processor specs |
 | `lcSkippedFiles` | `table` | Map of lowercase filename → `true` for files skipped by variant filtering |
 
 ### Validation Warning Records

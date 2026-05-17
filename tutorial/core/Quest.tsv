@@ -1,0 +1,10 @@
+### Pre-processor example: inverse-relation derivation
+### Authors fill in `prerequisites` only; `unlocks` is computed by the
+### preProcessor declared in Files.tsv as the inverse relation. On reformat,
+### the `unlocks` column is preserved as written (the processor-computed
+### values are not persisted — see DATA_FORMAT_README "Pre-Processors").
+name:identifier	prerequisites:{name}|nil	unlocks:{name}|nil	description:text
+intro			Tutorial quest — no prerequisites
+forest_quest	intro		Travel to the forest
+cave_quest	forest_quest		Explore the dark cave
+dragon_quest	"forest_quest","cave_quest"		Slay the dragon

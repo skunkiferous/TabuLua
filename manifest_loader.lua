@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 18, 0)
+local VERSION = semver(0, 19, 0)
 
 -- Module name
 local NAME = "manifest_loader"
@@ -57,6 +57,9 @@ local validator_executor = require("validator_executor")
 local runRowValidators = validator_executor.runRowValidators
 local runFileValidators = validator_executor.runFileValidators
 local runPackageValidators = validator_executor.runPackageValidators
+
+local processor_executor = require("processor_executor")
+local runFilePreProcessors = processor_executor.runFilePreProcessors
 
 -- CSV file extension
 local CSV = "csv"
@@ -603,6 +606,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- Validator maps
     local lcFn2RowValidators = {}
     local lcFn2FileValidators = {}
+    -- Pre-processor map
+    local lcFn2PreProcessors = {}
     local lcFn2LineNo = {}
     -- Variant filtering: convert array to set if needed, collect skipped files
     local variantsSet = nil
@@ -616,7 +621,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
         post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        lcFn2RowValidators, lcFn2FileValidators, lcFn2LineNo,
+        lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
         raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
@@ -686,6 +691,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         -- Validator metadata
         lcFn2RowValidators = lcFn2RowValidators,
         lcFn2FileValidators = lcFn2FileValidators,
+        -- Pre-processor metadata
+        lcFn2PreProcessors = lcFn2PreProcessors,
         -- Variant metadata
         lcSkippedFiles = lcSkippedFiles,
     }
@@ -854,6 +861,39 @@ local function computeFilenameKeyForValidation(file_name)
     return name:lower()
 end
 
+-- Runs every file's pre-processors after parsing but before validation.
+-- Pre-processors mutate parsed cells (typically to derive back-references or
+-- normalise data) and run in priority order within a file. Across files,
+-- iteration order matches the tsv_files map iteration order, which is
+-- non-deterministic but acceptable because processors are documented to be
+-- per-file (cross-file ordering is the cross-package processor's concern,
+-- deferred to a future feature).
+-- Returns true if all error-level processors completed without failure.
+local function runAllPreProcessors(tsv_files, joinMeta, loadEnv, badVal)
+    local lcFn2PreProcessors = joinMeta.lcFn2PreProcessors or {}
+    local allWarnings = {}
+    local allOk = true
+
+    for file_name, tsv_file in pairs(tsv_files) do
+        local lcfn = computeFilenameKeyForValidation(file_name)
+        local processors = lcFn2PreProcessors[lcfn]
+        if processors and #processors > 0 then
+            local dataRows = extractDataRows(tsv_file)
+            local header = tsv_file[1]
+            local ok, warnings = runFilePreProcessors(
+                processors, dataRows, header, file_name, badVal, loadEnv)
+            if not ok then
+                allOk = false
+            end
+            for _, w in ipairs(warnings) do
+                allWarnings[#allWarnings + 1] = w
+            end
+        end
+    end
+
+    return allOk, allWarnings
+end
+
 -- Runs all validators (row, file, package) after files are loaded
 -- Returns true if all error-level validators passed
 local function runAllValidators(tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
@@ -861,7 +901,7 @@ local function runAllValidators(tsv_files, joinMeta, packages, package_order, lo
     local lcFn2FileValidators = joinMeta.lcFn2FileValidators or {}
 
     local allWarnings = {}
-    local errorCount = badVal.errors
+    local allOk = true
 
     -- Process each file
     for file_name, tsv_file in pairs(tsv_files) do
@@ -885,11 +925,11 @@ local function runAllValidators(tsv_files, joinMeta, packages, package_order, lo
                 local rowIndex = i + 1
                 local success, warnings = runRowValidators(
                     rowValidators, row, rowIndex, file_name, badVal, loadEnv, rowCtx)
+                if not success then
+                    allOk = false
+                end
                 for _, w in ipairs(warnings) do
                     allWarnings[#allWarnings + 1] = w
-                end
-                if not success then
-                    -- Error already logged, continue to next row
                 end
             end
         end
@@ -898,11 +938,11 @@ local function runAllValidators(tsv_files, joinMeta, packages, package_order, lo
         if fileValidators and #fileValidators > 0 then
             local success, warnings = runFileValidators(
                 fileValidators, dataRows, file_name, badVal, loadEnv)
+            if not success then
+                allOk = false
+            end
             for _, w in ipairs(warnings) do
                 allWarnings[#allWarnings + 1] = w
-            end
-            if not success then
-                -- Error already logged
             end
         end
 
@@ -924,23 +964,20 @@ local function runAllValidators(tsv_files, joinMeta, packages, package_order, lo
 
             local success, warnings = runPackageValidators(
                 manifest.package_validators, packageFiles, package_id, badVal, loadEnv)
+            if not success then
+                allOk = false
+            end
             for _, w in ipairs(warnings) do
                 allWarnings[#allWarnings + 1] = w
             end
-            if not success then
-                -- Error already logged
-            end
         end
     end
-
-    -- Return true if no new errors were added
-    local passed = (badVal.errors == errorCount)
 
     if #allWarnings > 0 then
         logger:info(string.format("Validation completed with %d warning(s)", #allWarnings))
     end
 
-    return passed, allWarnings
+    return allOk, allWarnings
 end
 
 --- Processes all TSV/CSV files in the given directories.
@@ -1014,9 +1051,22 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     loadRemainingFiles(files, raw_files)
     mergeManifestFiles(tsv_files, manifest_tsv_files)
 
+    -- Run pre-processors (mutate parsed rows) before any validation. Processors
+    -- must see published contexts the same way validators do, so loadEnv is
+    -- threaded through unchanged.
+    local processorsOk, processorWarnings = runAllPreProcessors(
+        tsv_files, joinMeta, loadEnv, badVal)
+
     -- Run all validators (row, file, package) after files are loaded
-    local validationPassed, validationWarnings = runAllValidators(
+    local validatorsOk, validationWarnings = runAllValidators(
         tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+
+    -- Combine pre-processor warnings with validator warnings for callers
+    if processorWarnings and #processorWarnings > 0 then
+        for _, w in ipairs(processorWarnings) do
+            validationWarnings[#validationWarnings + 1] = w
+        end
+    end
 
     return {
         raw_files = raw_files,
@@ -1025,7 +1075,11 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         packages = packages,
         joinMeta = joinMeta,
         file2dir = file2dir,
-        validationPassed = validationPassed,
+        -- `validationPassed` covers BOTH pre-processors and validators: true iff
+        -- every error-level processor and every error-level validator succeeded.
+        -- (Pre-processors run before validators in the pipeline, but for callers
+        -- they are folded into the same pass/fail signal.)
+        validationPassed = processorsOk and validatorsOk,
         validationWarnings = validationWarnings,
     }
 end

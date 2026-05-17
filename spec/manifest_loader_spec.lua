@@ -1020,4 +1020,135 @@ description:markdown	Package with a migration script
     end)
 
   end)
+
+  describe("pre-processors", function()
+    -- Files.tsv with a preProcessors entry that doubles every score
+    local FILES_DESC_WITH_PROC = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	preProcessors:{processor_spec}|nil
+Item.tsv	Item		true			10	Items	"(function() for _, r in ipairs(rows) do setCell(r, 'score', r.score * 2) end; return true end)()"
+]]
+
+    local ITEMS_DATA = [[name:identifier	score:integer
+sword	5
+shield	10
+]]
+
+    it("should mutate parsed cells visible to subsequent processing", function()
+      local pkg_dir = path_join(temp_dir, "procpkg")
+      assert(lfs.mkdir(pkg_dir))
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC_WITH_PROC))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Item.tsv"), ITEMS_DATA))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.are.equal(0, badVal.errors,
+        "No errors expected.\nMessages: " .. table.concat(log_messages, "\n"))
+
+      local item_tsv
+      for file_name, tsv in pairs(result.tsv_files) do
+        if file_name:match("Item%.tsv$") then
+          item_tsv = tsv
+          break
+        end
+      end
+      assert.is_not_nil(item_tsv, "Item.tsv should be loaded")
+      -- Header is row 1; data rows are 2+.
+      -- Processor doubles 5 -> 10 and 10 -> 20.
+      assert.are.equal(10, item_tsv[2][2].parsed)
+      assert.are.equal(20, item_tsv[3][2].parsed)
+    end)
+
+    it("should preserve original raw cells on reformat (round-trip)", function()
+      local pkg_dir = path_join(temp_dir, "procpkg_rt")
+      assert(lfs.mkdir(pkg_dir))
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC_WITH_PROC))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Item.tsv"), ITEMS_DATA))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+
+      -- Reformatter would render `tostring(tsv)`, which uses cell.reformatted.
+      -- Since pre-processors deliberately do not touch cell.value/reformatted,
+      -- the rendered output must equal the original input verbatim.
+      for file_name, tsv in pairs(result.tsv_files) do
+        if file_name:match("Item%.tsv$") then
+          local rendered = tostring(tsv)
+          local original = result.raw_files[file_name]
+          -- Ignore trailing newline differences (matches reformatter behavior).
+          local rendered_norm = rendered:gsub("\n+$", "")
+          local original_norm = original:gsub("\n+$", "")
+          assert.are.equal(original_norm, rendered_norm,
+            "Reformat output should match the original raw content (processor mutations stay in-memory)")
+        end
+      end
+    end)
+
+    it("should set validationPassed=true on a clean run", function()
+      local pkg_dir = path_join(temp_dir, "procpkg_clean")
+      assert(lfs.mkdir(pkg_dir))
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC_WITH_PROC))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Item.tsv"), ITEMS_DATA))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.are.equal(0, badVal.errors)
+      assert.is_true(result.validationPassed,
+        "validationPassed should be true when no processor/validator errored")
+    end)
+  end)
+
+  describe("error propagation into validationPassed", function()
+    -- Pre-processor that always raises. validationPassed must reflect this
+    -- the same way a row-validator failure would, otherwise callers that
+    -- inspect the field will silently miss pre-processor failures.
+    local FILES_DESC_PROC_RAISES = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	preProcessors:{processor_spec}|nil
+Item.tsv	Item		true			10	Items	"error('boom')"
+]]
+
+    -- Row validator that always fails on every row.
+    local FILES_DESC_VALIDATOR_FAILS = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text	rowValidators:{validator_spec}|nil
+Item.tsv	Item		true			10	Items	"false or 'row always fails'"
+]]
+
+    local ITEMS_DATA_OK = [[name:identifier	score:integer
+sword	5
+]]
+
+    it("should set validationPassed=false when a pre-processor raises", function()
+      local pkg_dir = path_join(temp_dir, "procpkg_fail")
+      assert(lfs.mkdir(pkg_dir))
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC_PROC_RAISES))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Item.tsv"), ITEMS_DATA_OK))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.is_true(badVal.errors > 0,
+        "Pre-processor raise should increment badVal.errors")
+      assert.is_false(result.validationPassed,
+        "validationPassed should be false when a pre-processor errored")
+    end)
+
+    it("should set validationPassed=false when a row validator fails", function()
+      local pkg_dir = path_join(temp_dir, "valpkg_fail")
+      assert(lfs.mkdir(pkg_dir))
+
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC_VALIDATOR_FAILS))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Item.tsv"), ITEMS_DATA_OK))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.is_true(badVal.errors > 0,
+        "Row-validator failure should increment badVal.errors")
+      assert.is_false(result.validationPassed,
+        "validationPassed should be false when a row validator failed")
+    end)
+  end)
 end)

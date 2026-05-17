@@ -1,0 +1,4 @@
+package_id:package_id	test.processor.syntax
+name:string	Test Processor Syntax Error
+version:version	1.0.0
+description:markdown	Processor expression has invalid Lua syntax

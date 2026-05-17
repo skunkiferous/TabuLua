@@ -1028,6 +1028,7 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `joinedTypeName` | `type_spec\|nil` | The type name for the joined result |
 | `rowValidators` | `{validator_spec}\|nil` | Validators run on each row after parsing |
 | `fileValidators` | `{validator_spec}\|nil` | Validators run on the complete file |
+| `preProcessors` | `{processor_spec}\|nil` | Pre-processors run on parsed rows before validation (see [Pre-Processors](#pre-processors)) |
 | `variant` | `name\|nil` | Variant tag for conditional file inclusion (see [Variant-Based Conditional File Inclusion](#variant-based-conditional-file-inclusion)) |
 
 ### Publishing Data
@@ -1345,6 +1346,136 @@ health       integer                 0                 9999              Stats
 mana         integer                 0                 999               Stats
 ```
 
+## Pre-Processors
+
+Pre-processors are sandboxed expressions that **mutate** the parsed rows of a file
+**after** parsing but **before** any row, file, or package validator runs. They
+fill the gap between row-local `=expr` (can only read a single row) and file
+validators (can see the whole file but cannot write).
+
+Typical use cases:
+
+- **Bidirectional references** — Authors fill in a `prerequisites` column;
+  a processor derives the inverse `unlocks` column automatically.
+- **Normalisation** that depends on the whole file (e.g. levelling rows
+  against a shared baseline, sorting derived arrays).
+- **Derived back-references** in graph- or tree-shaped data.
+
+### Configuration
+
+Configure pre-processors in `Files.tsv` via the `preProcessors` column:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `preProcessors` | `{processor_spec}\|nil` | Processors that mutate parsed rows before validation |
+
+A `processor_spec` is either a simple expression string (defaults to error
+level, priority 100, no re-run after patches) or a structured record:
+
+```lua
+{expr=expression, level=error_level|nil, priority=number|nil, rerunAfterPatches=boolean|nil}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `expr` | (required) | Lua expression run in the processor sandbox |
+| `level` | `"error"` | `"error"` aborts on failure; `"warn"` collects a warning |
+| `priority` | `100` | Lower runs first within the file (same convention as `loadOrder`) |
+| `rerunAfterPatches` | `false` | Reserved for the future mod-override re-run phase |
+
+### Sandbox Environment
+
+A processor expression runs in the same sandbox as a file validator, with the
+same read-side helpers (`unique`, `lookup`, `groupBy`, `all`, `any`, …) and the
+same access to `rows`, `fileName`, `ctx`, published contexts, and code
+libraries. In addition, processors get these write-side helpers:
+
+| Helper | Purpose |
+|--------|---------|
+| `setCell(row, column, value)` | Set a parsed value on a row; re-serialises through the column's type so type errors surface immediately. |
+| `clearCell(row, column)` | Equivalent to `setCell(row, column, nil)` — only valid for nullable columns. |
+| `rowByKey(key)` | O(1) lookup into the current file by primary-key value; returns `nil` for unknown keys (no throw). |
+| `dataIndex(row)` | Returns the 1-based data-row position of a wrapped row (header row excluded). |
+
+Direct field assignment (`row.foo = "bar"`) is **not** supported — the sandbox
+forces use of `setCell` so values can be re-validated. Reading still works:
+`row.foo` returns the parsed value, exactly like in validators.
+
+Adding or removing rows is not supported in v1.
+
+### Ordering
+
+Within a file, processors are sorted by **ascending `priority`** (default `100`);
+ties break in the order written in the `preProcessors` cell. Authors who don't
+care about ordering can omit `priority` entirely — every processor gets `100`
+and they run in textual order. A later processor sees the effects of earlier
+ones.
+
+Across files, pre-processors run per file; the order across files matches the
+order in which files appear in the parsed dataset.
+
+### Defensive Contract
+
+Pre-processors run **before** any validator, so input data may be logically
+broken (broken refs, duplicate keys, cycles, …) — but it has already passed
+**type** parsing, so every cell's type is sound.
+
+1. **Never raise.** A processor that raises (or returns a non-empty string) is
+   reported as a failure at the configured level. Default level is `error`.
+2. **Be tolerant of missing data.** `rowByKey` returns `nil` for unknown keys;
+   processors must handle that themselves and let the validator flag the
+   inconsistency.
+3. **No order dependence across rows.** Processors run top-down across rows;
+   authors should not mix write-then-read across rows in a single processor
+   unless they explicitly walk the array twice.
+
+### Quota
+
+`PROCESSOR_QUOTA = 50,000` operations per file — higher than the file-validator
+quota (10,000) because mutation work is more expensive than pure checking.
+Configurable via the [processor_executor](processor_executor.lua) module API.
+
+### Round-Trip / Reformatter Behaviour
+
+By default, reformatting writes the **original** raw cells, **not** the
+processor-mutated values. The reformatter's job is to faithfully preserve
+author input; values "computed" by a processor are derived state, not
+source-of-truth, and round-tripping them would silently change the on-disk
+file every time it loads. This matches how `=expr` defaults are already
+preserved in the file.
+
+### Example: Inverse Relation
+
+`Quest.tsv` lists `prerequisites` per row; `unlocks` is left blank and derived
+by a processor:
+
+```tsv
+name:identifier	prerequisites:{name}|nil	unlocks:{name}|nil	description:text
+intro			tutorial_quest
+forest_quest	intro		Travel to the forest
+cave_quest	forest_quest		Explore the cave
+dragon_quest	"forest_quest","cave_quest"		Slay the dragon
+```
+
+Files.tsv entry (preProcessors cell):
+
+```
+"(function() for _, r in ipairs(rows) do for _, p in ipairs(r.prerequisites or {}) do local target = rowByKey(p); if target then local cur = target.unlocks or {}; table.insert(cur, r.name); setCell(target, 'unlocks', cur) end end end; return true end)()"
+```
+
+In memory after pre-processing, `intro.unlocks = {"forest_quest"}`,
+`forest_quest.unlocks = {"cave_quest","dragon_quest"}`, and so on. On disk,
+`unlocks` remains empty — only the author-written `prerequisites` is the
+source of truth. Best put that code in `Code Libraries`.
+
+### Error Reporting
+
+```
+[ERROR] Pre-processor failed in Quest.tsv: processor execution error: setCell: column 'no_such_col' does not exist in header
+[ERROR] Pre-processor failed in Items.tsv: processor execution error: Quota exceeded: 50000
+[WARN]  Pre-processor warning in Items.tsv: derived weights exceed expected range
+```
+
 ## Row, File, and Package Validators
 
 Beyond single-cell type validation, the system supports multi-level validation:
@@ -1505,6 +1636,7 @@ The following helper functions are available in file and package validator expre
 | Row validators | 1,000 operations per row |
 | File validators | 10,000 operations per file |
 | Package validators | 100,000 operations per package |
+| Pre-processors | 50,000 operations per file |
 
 Row validators run per-row, so complex validators will slow parsing. File and package validators run once, allowing more intensive checks.
 

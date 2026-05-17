@@ -362,6 +362,16 @@ Given this `Files.tsv`:
 
 Packages can declare **variant groups** in `Manifest.transposed.tsv` to enforce that exactly one variant from a group is selected. Groups can optionally specify a **default** variant that is applied automatically when no variant from that group is explicitly provided. See the `variant_groups` field in the [Data Format Specification](DATA_FORMAT_README.md#variant-group-validation).
 
+## Pre-Processors and Round-Trip
+
+Files may declare `preProcessors` in `Files.tsv` to mutate parsed rows after
+loading (typically to derive inverse relations or normalise data). Those
+mutations are intentionally **not** persisted on reformat: the reformatter
+writes the original raw cells, exactly as the author wrote them. Round-trip
+fidelity is preserved even when a processor has run. The processor's effects
+remain visible to validators and exporters in memory; they just don't appear
+on disk. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors).
+
 ## Error Handling
 
 - The reformatter logs warnings when file content changes during reformatting
