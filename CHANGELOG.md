@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.18.0] - 2026-05-17
+
+### Added
+
 - New `moveCellsMatching` migration command (and corresponding `DataSet:moveCellsMatching`
   method) that moves cell values from a source column to a destination column on rows
   where the source value matches a Lua pattern. Matched source cells are cleared after
@@ -38,12 +48,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   `--log-level=LEVEL` options. Reference TSV/TXT files can be loaded and passed to
   both the prompt template and user code. CLI entry point:
   `lua54 ollama_batch.lua <config.tsv> <baseDir> [options]`.
-
-### Changed
-
-### Removed
-
-### Fixed
 
 ## [0.17.0] - 2026-03-19
 
