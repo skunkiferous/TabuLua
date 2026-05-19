@@ -24,8 +24,10 @@ local function getVersion()
     return tostring(VERSION)
 end
 
--- Special key used to store the original table in the read-only proxy
-local ROP_t = {}
+-- Weak-keyed map from a read-only proxy to its underlying original table.
+-- Storing the mapping outside the proxy keeps the proxy itself empty, so
+-- `next(proxy)` returns nil and cannot leak the original table.
+local proxy_to_original = setmetatable({}, { __mode = "k" })
 
 --- Unwraps a read-only proxy to get the original table.
 --- If the value is not a read-only proxy, returns it unchanged.
@@ -34,8 +36,11 @@ local ROP_t = {}
 --- @param t any The value to unwrap
 --- @return any The unwrapped table if t is a read-only proxy, otherwise t unchanged
 local function unwrap(t)
-    if type(t) == "table" and t[ROP_t] then
-        return t[ROP_t]
+    if type(t) == "table" then
+        local original = proxy_to_original[t]
+        if original ~= nil then
+            return original
+        end
     end
     return t
 end
@@ -47,17 +52,17 @@ local readOnlyRef
 local readOnly_mt = {
     -- Child-tables are read-only too
     __index = function(p, k)
-        return readOnlyRef(p[ROP_t][k])
+        return readOnlyRef(proxy_to_original[p][k])
     end,
     -- The whole point is that we can't update a read-only table
     __newindex = function(_p, _k, _v)
         error("attempt to update a read-only table", 2)
     end,
     -- We need to make the values read-only before returning them
-    __pairs =  function (p) return wrappedPairs(p[ROP_t], readOnlyRef) end,
+    __pairs =  function (p) return wrappedPairs(proxy_to_original[p], readOnlyRef) end,
     -- We need to make the values read-only before returning them
-    __ipairs =  function (p) return wrappedIpairs(p[ROP_t], readOnlyRef) end,
-    __len =  function (p) return #p[ROP_t] end,
+    __ipairs =  function (p) return wrappedIpairs(proxy_to_original[p], readOnlyRef) end,
+    __len =  function (p) return #proxy_to_original[p] end,
     __metatable = "read-only table"
 }
 
@@ -115,10 +120,9 @@ end
 ---   - __type: Custom type string (assigned to __metatable, returned by getmetatable)
 --- @return any A read-only proxy if t is a table without metatable, otherwise t unchanged
 --- @side_effect Logs an error if t has a metatable (except 'badVal' and semver objects)
---- @warning This protection can be bypassed using next() - this is a Lua limitation
 local function readOnly(t, opt_index)
     -- Don't wrap already-read-only tables, or tables with a metatable
-    if type(t) == "table" and not t[ROP_t] then
+    if type(t) == "table" and proxy_to_original[t] == nil then
         local t_mt = getmetatable(t)
         if t_mt ~= nil then
             -- Ignore badVal and semver objects
@@ -129,8 +133,9 @@ local function readOnly(t, opt_index)
             return t
         end
         local proxy = {}
-        -- The user of the proxy does no have access to ROP_t, and so cannot get t
-        proxy[ROP_t] = t
+        -- The proxy itself stays empty; the mapping lives in a module-private
+        -- weak map, so next(proxy) cannot leak the original table.
+        proxy_to_original[proxy] = t
         -- We have a default meta-table, if t has no opt_index
         -- Tables with a non-empty opt_index have their own meta-table,
         -- and therefore are "more expensive" to create
@@ -149,7 +154,7 @@ local function readOnly(t, opt_index)
                     if v == nil then
                         -- If the key is not found in opt_index, it is checked in the
                         -- original table
-                        local tb = p[ROP_t]
+                        local tb = proxy_to_original[p]
                         v = tb[k]
                         -- And if the key is still not found, and opt_index defines
                         -- a __index, it is called

@@ -17,6 +17,7 @@ local logger = require( "named_logger").getLogger(NAME)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
+local unwrap = read_only.unwrap
 
 local file_util = require("file_util")
 local pathJoin = file_util.pathJoin
@@ -385,7 +386,7 @@ local function exportTSV(process_files, exportParams, serializer)
                 -- Build export column info based on exportExploded setting
                 -- Note: __exploded_map is accessible via __index on the read-only proxy
                 local exploded_map = header.__exploded_map or {}
-                local has_exploded = next(exploded_map) ~= nil
+                local has_exploded = next(unwrap(exploded_map)) ~= nil
 
                 -- Determine which columns to export and how
                 -- export_cols: array of {col_idx, is_root, root_name, structure, is_last}

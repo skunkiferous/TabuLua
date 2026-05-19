@@ -147,27 +147,38 @@ describe("read_only", function()
       assert.equals(5, #ro)
     end)
 
-    it("should be aware that next() bypasses metamethods", function()
+    it("should not leak the original table through next()", function()
       local t = {a = {x = 1}}
       local ro = read_only.readOnly(t)
 
-      -- But the wrapped access still works
+      -- Wrapped access still works
       assert.has_error(function()
         ro.a.x = 3
       end, "attempt to update a read-only table")
 
-      -- And accessing through pairs() still gives read-only values
+      -- Accessing through pairs() still gives read-only values
       for k, v in pairs(ro) do
         assert.has_error(function()
           v.x = 4
         end, "attempt to update a read-only table")
       end
 
-      -- next() bypasses metamethods and returns raw values
+      -- The proxy itself is empty: next() must not yield anything that
+      -- could be used to reach the original table.
       local next_key, next_value = next(ro)
+      assert.is_nil(next_key)
+      assert.is_nil(next_value)
+    end)
 
-      -- This modification will work because next() returned the unwrapped table
-      next_value.x = 2
+    it("should not expose the original table via a raw `for k,v in next, ro` loop", function()
+      local t = {a = 1, b = 2, c = {x = 10}}
+      local ro = read_only.readOnly(t)
+
+      local iterations = 0
+      for _ in next, ro do
+        iterations = iterations + 1
+      end
+      assert.equals(0, iterations)
     end)
 
     it("should return tables with existing metatables unchanged", function()

@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- **`read_only` no longer leaks the original table through `next()`.** Previously
+  each proxy stored its underlying table at a private `ROP_t` key inside the
+  proxy itself, so a caller holding a proxy could write `local _, t = next(ro)`
+  and obtain — and then mutate — the original. The proxy → original mapping
+  has been moved into a module-private weak-keyed map outside the proxy; the
+  proxy itself is now empty, so `next(proxy)` returns `nil` and the bypass is
+  closed. Public API (`readOnly`, `readOnlyTuple`, `unwrap`) is unchanged.
+  Two existing call sites that relied on `next()` returning the old sentinel
+  pair as a truthy emptiness check on a proxy were updated to unwrap first:
+  five `next(manifest.X)` checks in [manifest_info.lua](manifest_info.lua) and
+  one `next(header.__exploded_map)` in [exporter.lua](exporter.lua).
+
 ## [0.18.0] - 2026-05-17
 
 ### Added

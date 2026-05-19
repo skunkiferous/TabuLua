@@ -17,6 +17,7 @@ end
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
+local unwrap = read_only.unwrap
 local error_reporting = require("error_reporting")
 
 local parsers = require("parsers")
@@ -178,7 +179,7 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         end
     end
 
-    if manifest.dependencies and next(manifest.dependencies) then
+    if manifest.dependencies and next(unwrap(manifest.dependencies)) then
         local copy = {}
         for i, d in ipairs(manifest.dependencies) do
             local package_id = d[1]
@@ -195,22 +196,22 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
     else
         manifest.load_after = nil
     end
-    if manifest.custom_types and next(manifest.custom_types) then
+    if manifest.custom_types and next(unwrap(manifest.custom_types)) then
         manifest.custom_types = readOnly(manifest.custom_types)
     else
         manifest.custom_types = nil
     end
-    if manifest.code_libraries and next(manifest.code_libraries) then
+    if manifest.code_libraries and next(unwrap(manifest.code_libraries)) then
         manifest.code_libraries = readOnly(manifest.code_libraries)
     else
         manifest.code_libraries = nil
     end
-    if manifest.package_validators and next(manifest.package_validators) then
+    if manifest.package_validators and next(unwrap(manifest.package_validators)) then
         manifest.package_validators = readOnly(manifest.package_validators)
     else
         manifest.package_validators = nil
     end
-    if manifest.variant_groups and next(manifest.variant_groups) then
+    if manifest.variant_groups and next(unwrap(manifest.variant_groups)) then
         manifest.variant_groups = readOnly(manifest.variant_groups)
     else
         manifest.variant_groups = nil
