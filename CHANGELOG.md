@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`parsers.isNullable(type_spec)`.** New introspection helper that returns
+  `true` if values of `type_spec` may be `nil` (the literal `"nil"` type, or
+  a union — directly or via alias — that includes `nil`). Avoids the
+  foot-gun of substring-matching `|nil`, which misses bare `"nil"` and
+  named aliases like `super_type`.
+
 - **Pre-Processors.** `Files.tsv` now supports an optional `preProcessors:{processor_spec}|nil`
   column. Pre-processors are sandboxed Lua expressions that mutate parsed rows
   **after** parsing and **before** any validator runs. They fill the gap between

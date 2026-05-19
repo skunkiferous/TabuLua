@@ -519,4 +519,93 @@ describe("parsers - union types", function()
         assert.equals(false, parsers.createDefaultValue("boolean|number|string"))
     end)
   end)
+
+  describe("isNullable", function()
+    local log_messages
+    local badVal
+
+    before_each(function()
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+    end)
+
+    it("should return true for the literal nil type", function()
+      assert.is_true(parsers.isNullable("nil"))
+    end)
+
+    it("should return true for plain unions ending in nil", function()
+      assert.is_true(parsers.isNullable("string|nil"))
+      assert.is_true(parsers.isNullable("number|nil"))
+      assert.is_true(parsers.isNullable("{string}|nil"))
+    end)
+
+    it("should return true for multi-member unions ending in nil", function()
+      assert.is_true(parsers.isNullable("boolean|number|string|nil"))
+    end)
+
+    it("should return true for built-in alias super_type", function()
+      -- super_type is registered as type_spec|nil
+      assert.is_true(parsers.isNullable("super_type"))
+    end)
+
+    it("should return true for user-registered nullable alias", function()
+      assert(parsers.registerAlias(badVal, "OptionalNumberNul", "number|nil"))
+      assert.is_true(parsers.isNullable("OptionalNumberNul"))
+      assert.same({}, log_messages)
+    end)
+
+    it("should return true for chained nullable aliases", function()
+      assert(parsers.registerAlias(badVal, "ChainA", "string|nil"))
+      assert(parsers.registerAlias(badVal, "ChainB", "ChainA"))
+      assert.is_true(parsers.isNullable("ChainB"))
+      assert.same({}, log_messages)
+    end)
+
+    it("should return false for single non-nil types", function()
+      assert.is_false(parsers.isNullable("string"))
+      assert.is_false(parsers.isNullable("number"))
+      assert.is_false(parsers.isNullable("boolean"))
+      assert.is_false(parsers.isNullable("integer"))
+    end)
+
+    it("should return false for array, map, and tuple types", function()
+      assert.is_false(parsers.isNullable("{string}"))
+      assert.is_false(parsers.isNullable("{name:string}"))
+      assert.is_false(parsers.isNullable("{string,number}"))
+    end)
+
+    it("should return false for unions without nil", function()
+      assert.is_false(parsers.isNullable("number|string"))
+    end)
+
+    it("should return false for a non-nullable alias of a union", function()
+      assert(parsers.registerAlias(badVal, "NumberOrStringNul", "number|string"))
+      assert.is_false(parsers.isNullable("NumberOrStringNul"))
+      assert.same({}, log_messages)
+    end)
+
+    it("should return false for a union of unions (no flattening)", function()
+      assert(parsers.registerAlias(badVal, "OptionalNumberX", "number|nil"))
+      assert(parsers.registerAlias(badVal, "NumberOrStringX", "number|string"))
+      -- unionTypes returns {"OptionalNumberX", "NumberOrStringX"} -- neither
+      -- literal is "nil", so isNullable returns false. Nested-union nil-ness
+      -- is not flattened; that would need a separate, named function.
+      assert.is_false(parsers.isNullable("OptionalNumberX|NumberOrStringX"))
+      assert.same({}, log_messages)
+    end)
+
+    it("should return false for non-string inputs", function()
+      assert.is_false(parsers.isNullable(nil))
+      assert.is_false(parsers.isNullable(123))
+      assert.is_false(parsers.isNullable({}))
+      assert.is_false(parsers.isNullable(true))
+    end)
+
+    it("should return false for invalid type_specs", function()
+      assert.is_false(parsers.isNullable(""))
+      assert.is_false(parsers.isNullable("not_a_real_type"))
+      assert.is_false(parsers.isNullable("|nil"))
+      assert.is_false(parsers.isNullable("number||nil"))
+    end)
+  end)
 end)

@@ -344,6 +344,31 @@ function M.isBuiltInType(type_spec)
     return state.BUILT_IN[type_spec] or false
 end
 
+-- Returns true if a value of this type_spec can be nil.
+-- A type_spec is nil-able if it is the literal type "nil",
+-- or if it is a union (directly or via alias) that includes "nil".
+-- Returns false for non-string inputs and for invalid type_specs.
+function M.isNullable(type_spec)
+    if type(type_spec) ~= "string" then
+        return false
+    end
+    if type_spec == "nil" then
+        return true
+    end
+    -- unionTypes() resolves aliases via utils.resolve() before parsing,
+    -- so super_type, OptionalNumber, etc. are handled.
+    local members = M.unionTypes(type_spec)
+    if not members then
+        return false
+    end
+    for _, t in ipairs(members) do
+        if t == "nil" then
+            return true
+        end
+    end
+    return false
+end
+
 -- Returns true, if the child field type is "compatible" with the parent field type.
 local function typeSameOrExtends(child, parent)
     return (child == parent) or state.refs.extendsOrRestrict(child, parent)

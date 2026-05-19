@@ -24,6 +24,8 @@ local validator_helpers = require("validator_helpers")
 local validator_executor = require("validator_executor")
 local normalizeValidatorSpec = validator_executor.normalizeValidatorSpec
 
+local parsers = require("parsers")
+
 local logger = require("named_logger").getLogger(NAME)
 
 -- Quota for processor expressions; higher than file validator quota because
@@ -156,7 +158,7 @@ local function setCellImpl(wrappedRow, column, value)
 
     if value == nil then
         local ts = col.type_spec
-        if ts ~= "nil" and not ts:find("|nil", 1, true) then
+        if not parsers.isNullable(ts) then
             error("setCell: cannot clear column '" .. col.name
                 .. "' (type '" .. ts .. "' is not nullable)", 2)
         end

@@ -280,7 +280,7 @@ Factory functions for creating specialized parsers. Handles parser spec lookup a
 ### parsers.introspection
 **File:** [parsers/introspection.lua](parsers/introspection.lua)
 
-Type introspection utilities: `getTypeKind()`, `recordFieldNames()`, `recordFieldTypes()`, `tupleFieldTypes()`, `arrayElementType()`, `mapKVType()`, `unionTypes()`.
+Type introspection utilities: `getTypeKind()`, `recordFieldNames()`, `recordFieldTypes()`, `tupleFieldTypes()`, `arrayElementType()`, `mapKVType()`, `unionTypes()`, `isNullable()`.
 
 **Dependencies:** parsers.state, parsers.utils
 

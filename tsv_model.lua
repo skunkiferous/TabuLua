@@ -717,8 +717,7 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
                     local progress = false
                     for ci = 1,#header do
                         if not done_idx[ci] and ci > #row
-                            and not header[ci].type_spec:find("|nil", 1, true)
-                            and header[ci].type_spec ~= "nil" then
+                            and not parsers.isNullable(header[ci].type_spec) then
                             -- Row is shorter than header and column is not nullable
                             local missing_msg = "row has " .. #row .. " columns but header defines "
                                 .. #header .. " -- column '" .. header[ci].name .. "' is missing"
