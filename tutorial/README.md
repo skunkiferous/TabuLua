@@ -413,6 +413,58 @@ with the current fire items. No separate sync step is needed.
 
 ---
 
+#### Quest.tsv (Pre-Processors)
+
+Demonstrates a **pre-processor**: a sandboxed expression configured in `Files.tsv`
+that **mutates parsed rows** after parsing but before validation. The author fills
+in only the forward `prerequisites` relation; the inverse `unlocks` column is
+derived automatically.
+
+<!-- markdownlint-disable MD010 -->
+```tsv
+name:identifier	prerequisites:{name}|nil	unlocks:{name}|nil	description:text
+intro			Tutorial quest
+forest_quest	intro		Travel to the forest
+cave_quest	forest_quest		Explore the cave
+dragon_quest	"forest_quest","cave_quest"		Slay the dragon
+```
+<!-- markdownlint-enable MD010 -->
+
+
+The `Files.tsv` `preProcessors` cell for `Quest.tsv` runs this expression:
+
+```lua
+(function()
+  for _, r in ipairs(rows) do
+    for _, p in ipairs(r.prerequisites or {}) do
+      local target = rowByKey(p)
+      if target then
+        local cur = target.unlocks or {}
+        table.insert(cur, r.name)
+        setCell(target, 'unlocks', cur)
+      end
+    end
+  end
+  return true
+end)()
+```
+
+After processing, `intro.unlocks = {"forest_quest"}`, `forest_quest.unlocks = {"cave_quest","dragon_quest"}`, etc. Exported `Quest.lua`:
+
+```lua
+{"intro",        nil,                              {"forest_quest"},                "Tutorial quest"},
+{"forest_quest", {"intro"},                        {"cave_quest","dragon_quest"},   "Travel to the forest"},
+{"cave_quest",   {"forest_quest"},                 {"dragon_quest"},                "Explore the cave"},
+{"dragon_quest", {"forest_quest","cave_quest"},    nil,                             "Slay the dragon"}
+```
+
+**Round-trip:** the in-memory dataset reflects the mutations, but reformatting
+`Quest.tsv` preserves the original author-written content — `unlocks` stays
+empty on disk because processor output is derived state, not source-of-truth.
+See [DATA_FORMAT_README §Pre-Processors](../DATA_FORMAT_README.md#pre-processors).
+
+---
+
 #### libs/gameLib.lua (Code Library)
 
 A Lua module providing functions available in expressions and COG blocks:
