@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.19.0] - 2026-05-22
+
+### Added
+
 - **`parsers.isNullable(type_spec)`.** New introspection helper that returns
   `true` if values of `type_spec` may be `nil` (the literal `"nil"` type, or
   a union — directly or via alias — that includes `nil`). Avoids the
@@ -74,8 +84,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   relied on in-place mutation; the tutorial `Quest.tsv` inverse-relation
   processor has been rewritten to the `copy` + `setCell` form. See
   [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors).
-
-### Removed
 
 ### Fixed
 
