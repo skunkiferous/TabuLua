@@ -49,6 +49,53 @@ describe("table_utils", function()
     end)
   end)
 
+  describe("deepCopyUnwrapped", function()
+    local read_only = require("read_only")
+
+    it("returns non-table values unchanged", function()
+      assert.are.equal(5, table_utils.deepCopyUnwrapped(5))
+      assert.are.equal("x", table_utils.deepCopyUnwrapped("x"))
+      assert.is_nil(table_utils.deepCopyUnwrapped(nil))
+    end)
+
+    it("deep-copies a plain nested table into an independent tree", function()
+      local original = {a = {1, 2, 3}, b = {c = "x"}}
+      local copy = table_utils.deepCopyUnwrapped(original)
+      assert.are.same(original, copy)
+      assert.are_not.equal(original, copy)
+      assert.are_not.equal(original.a, copy.a)
+      assert.are_not.equal(original.b, copy.b)
+      copy.a[4] = 99
+      assert.is_nil(original.a[4])
+    end)
+
+    it("unwraps read-only proxies into a fully mutable tree", function()
+      local ro = read_only.readOnly({list = {10, 20}, name = "q"})
+      -- Sanity: the proxy itself rejects writes.
+      assert.has_error(function() ro.name = "z" end)
+      local copy = table_utils.deepCopyUnwrapped(ro)
+      assert.is_nil(getmetatable(copy))
+      assert.is_nil(getmetatable(copy.list))
+      -- The copy is freely mutable.
+      copy.list[3] = 30
+      copy.name = "z"
+      assert.are.equal(30, copy.list[3])
+      assert.are.equal("z", copy.name)
+    end)
+
+    it("preserves shared references and handles cycles", function()
+      local shared = {v = 1}
+      local original = {x = shared, y = shared}
+      local copy = table_utils.deepCopyUnwrapped(original)
+      assert.are.equal(copy.x, copy.y)
+
+      local cyclic = {}
+      cyclic.self = cyclic
+      local cyclicCopy = table_utils.deepCopyUnwrapped(cyclic)
+      assert.are.equal(cyclicCopy, cyclicCopy.self)
+    end)
+  end)
+
   describe("wrappedPairs and wrappedIpairs", function()
     it("should wrap pairs and ipairs with a manipulator function", function()
       local t = {1, 2, 3, a = "test"}

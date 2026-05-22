@@ -14,4 +14,4 @@ Recipe.tsv	Recipe		true			400	Crafting recipes with exploded maps, ratio type, a
 WorldConfig.transposed.tsv	WorldConfig		true			500	Singleton world configuration in transposed format								
 LevelScale.tsv	LevelScale		true			600	Level scaling tables generated via COG code blocks								
 FireItems.tsv	FireItems		true			700	View: Fire-element items (COG view of Item.tsv; demonstrates loadEnv.files)								
-Quest.tsv	Quest		true			800	Quest tree with prerequisites; preProcessor derives the inverse `unlocks` column								"(function() for _, r in ipairs(rows) do for _, p in ipairs(r.prerequisites or {}) do local target = rowByKey(p); if target then local cur = target.unlocks or {}; table.insert(cur, r.name); setCell(target, 'unlocks', cur) end end end; return true end)()"
+Quest.tsv	Quest		true			800	Quest tree with prerequisites; preProcessor derives the inverse `unlocks` column								"(function() for _, r in ipairs(rows) do for _, p in ipairs(r.prerequisites or {}) do local target = rowByKey(p); if target then local cur = copy(target.unlocks or {}); table.insert(cur, r.name); setCell(target, 'unlocks', cur) end end end; return true end)()"

@@ -8,7 +8,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
-| [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, predicates, named_logger |
+| [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
 | [deserialization](#deserialization) | Data deserialization (Lua, JSON, XML, MessagePack) | read_only |
 | [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization |
 | [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
@@ -20,8 +20,8 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [files_desc](#files_desc) | File descriptor discovery and load order management | file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model |
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
-| [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, table_utils, tsv_model, validator_executor |
+| [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -32,18 +32,19 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [parsers.generators](#parsersgenerators) | Factory functions for specialized parsers | error_reporting, parsers.state, parsers.utils, predicates, read_only, sparse_sequence, table_utils |
 | [parsers.introspection](#parsersintrospection) | Type querying and relationship analysis | parsers.state, parsers.utils |
 | [parsers.lpeg_parser](#parserslpeg_parser) | LPEG grammar for type specification parsing | parsers.state, parsers.utils |
-| [parsers.registration](#parsersregistration) | Type alias and custom parser registration | comparators, error_reporting, number_identifiers, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils, table_utils |
+| [parsers.registration](#parsersregistration) | Type alias and custom parser registration | error_reporting, number_identifiers, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, sandbox, sandbox_env, serialization, string_utils |
 | [parsers.schema_export](#parsersschema_export) | Exports type definitions as a schema model | parsers.lpeg_parser, parsers.state, table_utils |
 | [parsers.state](#parsersstate) | Shared state and registries for parser system | named_logger |
 | [parsers.type_parsing](#parserstype_parsing) | Core type parsing with inheritance support | parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.state, parsers.utils, serialization |
 | [parsers.utils](#parsersutils) | Utility functions for parsers module | parsers.state, serialization, table_parsing |
 | [predicates](#predicates) | Type checking predicate functions | read_only, string_utils, table_parsing, table_utils |
-| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | comparators, error_reporting, named_logger, parsers, predicates, read_only, sandbox, string_utils, table_utils, validator_executor, validator_helpers |
+| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers |
 | [raw_tsv](#raw_tsv) | Low-level TSV file parsing and writing | file_util, predicates, read_only, string_utils |
 | [read_only](#read_only) | Read-only table proxy wrappers | table_utils |
 | [reformatter](#reformatter) | TSV file reformatting and multi-format export | error_reporting, exporter, file_util, manifest_info, manifest_loader, named_logger, read_only, serialization |
 | [regex_utils](#regex_utils) | Lua pattern to PCRE translation | predicates, read_only, sparse_sequence |
 | [round_trip](#round_trip) | Round-trip serialization/deserialization testing | deserialization, read_only, serialization |
+| [sandbox_env](#sandbox_env) | Single owner of the sandbox "safe API surface" | comparators, predicates, read_only, string_utils, table_utils |
 | [schema_validator](#schema_validator) | Validates typed JSON and XML export formats | read_only |
 | [serialization](#serialization) | Data serialization (Lua, JSON, XML, SQL, MessagePack) | named_logger, predicates, read_only, sandbox, sparse_sequence |
 | [sparse_sequence](#sparse_sequence) | Sparse array implementation | read_only |
@@ -52,7 +53,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [table_utils](#table_utils) | Table manipulation utilities | *(none)* |
 | [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | named_logger, raw_tsv, read_only, string_utils, file_util |
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
-| [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | comparators, named_logger, predicates, read_only, sandbox, serialization, string_utils, table_utils, validator_helpers |
+| [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
 
 ---
@@ -82,7 +83,7 @@ Value comparison and equality functions for tables and primitive types. Provides
 
 Mutable in-memory representation of multiple TSV files for the migration tool. Supports loading, saving, creating, deleting, renaming, and copying files. Provides column operations (add, remove, rename, move, set type/default), row operations (add, remove, copy), cell operations (get, set, conditional set, sandboxed transform), and comment/blank line management. Includes `filesHelper()` for `Files.tsv` manipulation and `manifestHelper()` for `Manifest.transposed.tsv` access.
 
-**Dependencies:** raw_tsv, file_util, string_utils, read_only, sandbox, predicates, named_logger
+**Dependencies:** raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger
 
 ---
 
@@ -191,7 +192,7 @@ Cogwheel-style code generation and templating system. Processes `###[[[...###]]]
 
 Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations.
 
-**Dependencies:** comparators, error_reporting, file_util, lua_cog, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils, tsv_model
+**Dependencies:** error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model
 
 ---
 
@@ -200,7 +201,7 @@ Handles `Manifest.transposed.tsv` files for package metadata, versioning, type a
 
 Orchestrates package loading: discovers packages, resolves dependencies, registers types, loads data files in order, and runs all validators (row, file, package) after loading.
 
-**Dependencies:** error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, raw_tsv, read_only, table_utils, tsv_model, validator_executor
+**Dependencies:** error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor
 
 ---
 
@@ -300,7 +301,7 @@ LPEG-based grammar for lexing and parsing type specification strings. Includes `
 
 Type registration system: `registerAlias()`, `registerEnumParser()`, type restrictions (`restrictNumber()`, `restrictString()`, `restrictEnum()`, `restrictUnion()`), and default value management.
 
-**Dependencies:** comparators, error_reporting, number_identifiers, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, serialization, string_utils, table_utils
+**Dependencies:** error_reporting, number_identifiers, parsers.generators, parsers.lpeg_parser, parsers.state, parsers.utils, predicates, regex_utils, sandbox, sandbox_env, serialization, string_utils
 
 ---
 
@@ -361,7 +362,7 @@ when their spec opts into the future mod-override re-run; the default is a
 single run per file. Updates only `cell.parsed`/`cell.evaluated` so the
 reformatter preserves the original on-disk text. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors) for the user-facing description.
 
-**Dependencies:** comparators, error_reporting, named_logger, parsers, predicates, read_only, sandbox, string_utils, table_utils, validator_executor, validator_helpers
+**Dependencies:** error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers
 
 ---
 
@@ -408,6 +409,16 @@ Lua pattern to PCRE translation and pattern matching utilities.
 Round-trip serialization/deserialization testing utilities. Provides deep equality comparison (with NaN and cycle handling), format-tolerant comparison, and test functions for all serialization formats.
 
 **Dependencies:** deserialization, read_only, serialization
+
+---
+
+### sandbox_env
+
+**File:** [sandbox_env.lua](sandbox_env.lua)
+
+The single owner of the sandbox "safe API surface" — the curated set of Lua builtins, `math`, `string`/`table` subsets, and TabuLua helpers exposed to user code running inside the kikito sandbox. `new(extras)` builds a fresh environment for the five internal sandboxes (validators, processors, code libraries, custom-type `validate` expressions, `transformCells`); `cogGlobals()` builds the same set minus the helper block for cell expressions and COG scripts. Replaces five hand-rolled, drift-prone environment tables.
+
+**Dependencies:** comparators, predicates, read_only, string_utils, table_utils
 
 ---
 
@@ -491,7 +502,7 @@ TSV/CSV loading and parsing with type validation via parsers module. Supports ex
 
 Sandboxed execution engine for row, file, and package validators. Normalizes validator specs (string or `{expr, level}` records), creates sandboxed environments with helper functions and context variables, and interprets validator results. Enforces execution quotas (1000 row, 10000 file, 100000 package). Error-level validators stop on first failure; warn-level validators collect warnings and continue.
 
-**Dependencies:** comparators, named_logger, predicates, read_only, sandbox, serialization, string_utils, table_utils, validator_helpers
+**Dependencies:** named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers
 
 ---
 

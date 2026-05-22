@@ -32,6 +32,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   for the user-facing description and the tutorial Quest.tsv for an
   inverse-relation example.
 
+- **`sandbox_env` module.** The single owner of the sandbox "safe API
+  surface". `sandbox_env.new(extras)` builds a *fresh* environment table —
+  safe builtins, `math`, curated `string`/`table` subsets, the
+  `predicates`/`stringUtils`/`tableUtils`/`equals` helper block, plus any
+  per-call `extras`; `sandbox_env.cogGlobals()` builds the same set minus the
+  helper block, for cell expressions and COG scripts. This replaces five
+  hand-rolled, silently-drifted environment tables in `validator_executor`,
+  `processor_executor`, `manifest_info` (code libraries),
+  `parsers/registration` (custom-type `validate` expressions), and
+  `data_set.transformCells`, so the safe set is now defined exactly once.
+
+- **`table_utils.deepCopyUnwrapped(value)`.** Deep-copies a value into a
+  fully-mutable tree, unwrapping any read-only proxies it encounters along
+  the way (shared and cyclic references preserved). Backs the new processor
+  `copy` helper.
+
+- **Processor `copy` helper.** Pre-processor sandboxes now expose
+  `copy(value)`, returning a fresh, fully-mutable deep clone of a read-only
+  value so a changed collection can be built and installed via `setCell`.
+
 ### Changed
 
 - `manifest_loader.processFiles()` result field `validationPassed` now also
@@ -41,9 +61,35 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   `validationPassed`.) The companion `validationWarnings` array now also
   includes pre-processor warnings.
 
+- **Pre-processor cell reads are now read-only.** A processor reading
+  `row.col` receives the parsed value READ-ONLY, exactly like a validator —
+  `wrapRowForProcessor` no longer hands out the unwrapped, mutable parsed
+  table. In-place mutation of a collection-valued cell
+  (`table.insert(row.unlocks, x)`) now raises `attempt to update a read-only
+  table`. To change a collection, deep-copy it with the new `copy` helper,
+  mutate the copy, then install it via `setCell` — which re-parses and
+  type-validates the new value. This closes a hole where a processor could
+  change parsed data *outside* the single audited `setCell` write path,
+  skipping the column's type re-validation. **Breaking** for processors that
+  relied on in-place mutation; the tutorial `Quest.tsv` inverse-relation
+  processor has been rewritten to the `copy` + `setCell` form. See
+  [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors).
+
 ### Removed
 
 ### Fixed
+
+- **Cell expressions and COG scripts can no longer escape the sandbox.**
+  `manifest_loader`'s `loadEnv` chained, via `{__index = _G}`, all the way to
+  the real global table — exposing `require`, `debug`, `io`, the dangerous
+  `os.*` members, `rawget`/`rawset`, `set`/`getmetatable`, `load`, `dofile`,
+  and `collectgarbage` to **any** cell expression (`=…`) or COG block in an
+  ordinary `.tsv` file. `require` alone was a full escape (it reaches every
+  module, including `io`/`os`), and it also re-opened the documented
+  read-only `unwrap` bypass. `loadEnv` now falls through only to the curated
+  `sandbox_env.cogGlobals()` set, so those names resolve to `nil`. The curated
+  `table` subset includes `concat` (which the stock sandbox `BASE_ENV` omits)
+  so existing COG scripts keep working.
 
 - **`read_only` no longer leaks the original table through `next()`.** Previously
   each proxy stored its underlying table at a private `ROP_t` key inside the

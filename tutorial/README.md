@@ -439,15 +439,19 @@ The `Files.tsv` `preProcessors` cell for `Quest.tsv` runs this expression:
     for _, p in ipairs(r.prerequisites or {}) do
       local target = rowByKey(p)
       if target then
-        local cur = target.unlocks or {}
+        local cur = copy(target.unlocks or {})  -- mutable deep clone
         table.insert(cur, r.name)
-        setCell(target, 'unlocks', cur)
+        setCell(target, 'unlocks', cur)         -- single audited write
       end
     end
   end
   return true
 end)()
 ```
+
+`target.unlocks` is read-only (like every value a processor reads), so it is
+deep-copied with `copy` before being mutated; the changed list is then
+installed through `setCell`, which re-parses it against the column type.
 
 After processing, `intro.unlocks = {"forest_quest"}`, `forest_quest.unlocks = {"cave_quest","dragon_quest"}`, etc. Exported `Quest.lua`:
 

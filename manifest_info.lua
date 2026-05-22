@@ -8,7 +8,7 @@ local logger = require( "named_logger").getLogger(NAME)
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 18, 0)
+local VERSION = semver(0, 19, 0)
 
 -- Returns the module version
 local function getVersion()
@@ -25,6 +25,7 @@ local parsers = require("parsers")
 local lua_cog = require("lua_cog")
 
 local sandbox = require("sandbox")
+local sandbox_env = require("sandbox_env")
 
 local raw_tsv = require("raw_tsv")
 
@@ -33,12 +34,6 @@ local tsv_model = require("tsv_model")
 local file_util = require("file_util")
 local getParentPath = file_util.getParentPath
 local isSamePath = file_util.isSamePath
-
--- Safe modules to expose in sandbox
-local predicates = require("predicates")
-local string_utils = require("string_utils")
-local table_utils = require("table_utils")
-local comparators = require("comparators")
 
 -- File name representing a package manifest.
 local MANIFEST_FILENAME = "Manifest.transposed.tsv"
@@ -352,46 +347,10 @@ local function loadCodeLibrary(badVal, package_path, library_name, library_path)
         return nil
     end
 
-    -- Create sandboxed environment with safe globals
-    local lib_env = {
-        -- Lua built-ins
-        math = math,
-        string = string,
-        table = table,
-        pairs = pairs,
-        ipairs = ipairs,
-        type = type,
-        tostring = tostring,
-        tonumber = tonumber,
-        select = select,
-        unpack = unpack or table.unpack,
-        next = next,
-        pcall = pcall,
-        error = error,
-        assert = assert,
-
-        -- Safe API: All predicates (pure validation functions)
-        predicates = predicates,
-
-        -- Safe API: String utilities (pure functions)
-        stringUtils = {
-            trim = string_utils.trim,
-            split = string_utils.split,
-            parseVersion = string_utils.parseVersion,
-        },
-
-        -- Safe API: Table utilities (read-only inspection)
-        tableUtils = {
-            keys = table_utils.keys,
-            values = table_utils.values,
-            pairsCount = table_utils.pairsCount,
-            longestMatchingPrefix = table_utils.longestMatchingPrefix,
-            sortCaseInsensitive = table_utils.sortCaseInsensitive,
-        },
-
-        -- Safe API: Deep equality comparison
-        equals = comparators.equals,
-    }
+    -- Create sandboxed environment with the shared safe API surface
+    -- (safe builtins, math, curated string/table, predicates, stringUtils,
+    -- tableUtils, equals). Code libraries need nothing site-specific.
+    local lib_env = sandbox_env.new()
 
     -- Execute in sandbox with quota
     local opt = {quota = CODE_LIBRARY_MAX_OPERATIONS, env = lib_env}

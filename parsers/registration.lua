@@ -18,9 +18,8 @@ local string_utils = require("string_utils")
 local stringToIdentifier = string_utils.stringToIdentifier
 
 local regex_utils = require("regex_utils")
-local table_utils = require("table_utils")
-local comparators = require("comparators")
 local sandbox = require("sandbox")
+local sandbox_env = require("sandbox_env")
 local serialization = require("serialization")
 
 local error_reporting = require("error_reporting")
@@ -694,29 +693,7 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
 
     -- Validate that the expression compiles
     local code = "return (" .. exprString .. ")"
-    local compile_env = {
-        value = 0,  -- Dummy value for compilation check
-        math = math,
-        string = string,
-        table = table,
-        pairs = pairs,
-        ipairs = ipairs,
-        type = type,
-        tostring = tostring,
-        tonumber = tonumber,
-        predicates = predicates,
-        stringUtils = {
-            trim = string_utils.trim,
-            split = string_utils.split,
-            parseVersion = string_utils.parseVersion,
-        },
-        tableUtils = {
-            keys = table_utils.keys,
-            values = table_utils.values,
-            pairsCount = table_utils.pairsCount,
-        },
-        equals = comparators.equals,
-    }
+    local compile_env = sandbox_env.new({value = 0})  -- dummy value for the compile check
     local compile_opt = {quota = 100, env = compile_env}
     local compile_ok, compile_result = pcall(sandbox.protect, code, compile_opt)
     if not compile_ok then
@@ -730,29 +707,7 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
         if parsed == nil then return nil, reformatted end
 
         -- Create sandboxed environment with the parsed value
-        local expr_env = {
-            value = parsed,
-            math = math,
-            string = string,
-            table = table,
-            pairs = pairs,
-            ipairs = ipairs,
-            type = type,
-            tostring = tostring,
-            tonumber = tonumber,
-            predicates = predicates,
-            stringUtils = {
-                trim = string_utils.trim,
-                split = string_utils.split,
-                parseVersion = string_utils.parseVersion,
-            },
-            tableUtils = {
-                keys = table_utils.keys,
-                values = table_utils.values,
-                pairsCount = table_utils.pairsCount,
-            },
-            equals = comparators.equals,
-        }
+        local expr_env = sandbox_env.new({value = parsed})
         local opt = {quota = VALIDATE_EXPR_MAX_OPERATIONS, env = expr_env}
         local ok, protected_func = pcall(sandbox.protect, code, opt)
         if not ok then

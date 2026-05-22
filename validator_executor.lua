@@ -5,7 +5,7 @@ local NAME = "validator_executor"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 18, 0)
+local VERSION = semver(0, 19, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -14,13 +14,33 @@ local sandbox = require("sandbox")
 local serialization = require("serialization")
 local serializeInSandbox = serialization.serializeInSandbox
 
-local predicates = require("predicates")
-local string_utils = require("string_utils")
-local table_utils = require("table_utils")
-local comparators = require("comparators")
+local sandbox_env = require("sandbox_env")
 local validator_helpers = require("validator_helpers")
 
 local logger = require("named_logger").getLogger(NAME)
+
+-- The validator read-side helper block. Shared, never-mutated reference set
+-- merged into every validator sandbox env. The safe builtins, `math`, the
+-- curated `string`/`table` subsets and the TabuLua helper block all come from
+-- sandbox_env; only these validator-specific helpers are declared here.
+local VALIDATOR_HELPERS = {
+    unique = validator_helpers.unique,
+    sum = validator_helpers.sum,
+    min = validator_helpers.min,
+    max = validator_helpers.max,
+    avg = validator_helpers.avg,
+    count = validator_helpers.count,
+    all = validator_helpers.all,
+    any = validator_helpers.any,
+    none = validator_helpers.none,
+    filter = validator_helpers.filter,
+    find = validator_helpers.find,
+    lookup = validator_helpers.lookup,
+    groupBy = validator_helpers.groupBy,
+    -- Type introspection helpers
+    listMembersOfTag = validator_helpers.listMembersOfTag,
+    isMemberOfTag = validator_helpers.isMemberOfTag,
+}
 
 -- ============================================================
 -- Row Wrapping for Validators
@@ -96,60 +116,14 @@ local function normalizeValidatorSpec(spec)
 end
 
 --- Creates a sandboxed environment for validator execution.
+--- The safe builtins, `math`, the curated `string`/`table` subsets and the
+--- TabuLua helper block come from `sandbox_env`; this function adds only the
+--- validator read-side helpers and the per-run context variables.
 --- @param context table The context to expose as 'self' and other variables
 --- @param extraEnv table|nil Additional environment variables to include
 --- @return table The sandboxed environment
 local function createValidatorEnv(context, extraEnv)
-    local env = {
-        -- The context (self, row, rows, files, etc.)
-        self = context.self,
-
-        -- Lua built-ins
-        math = math,
-        string = string,
-        table = table,
-        pairs = pairs,
-        ipairs = ipairs,
-        type = type,
-        tostring = tostring,
-        tonumber = tonumber,
-        select = select,
-        unpack = unpack or table.unpack,
-        next = next,
-        pcall = pcall,
-
-        -- Safe utilities
-        predicates = predicates,
-        stringUtils = {
-            trim = string_utils.trim,
-            split = string_utils.split,
-            parseVersion = string_utils.parseVersion,
-        },
-        tableUtils = {
-            keys = table_utils.keys,
-            values = table_utils.values,
-            pairsCount = table_utils.pairsCount,
-        },
-        equals = comparators.equals,
-
-        -- Validator helper functions
-        unique = validator_helpers.unique,
-        sum = validator_helpers.sum,
-        min = validator_helpers.min,
-        max = validator_helpers.max,
-        avg = validator_helpers.avg,
-        count = validator_helpers.count,
-        all = validator_helpers.all,
-        any = validator_helpers.any,
-        none = validator_helpers.none,
-        filter = validator_helpers.filter,
-        find = validator_helpers.find,
-        lookup = validator_helpers.lookup,
-        groupBy = validator_helpers.groupBy,
-        -- Type introspection helpers
-        listMembersOfTag = validator_helpers.listMembersOfTag,
-        isMemberOfTag = validator_helpers.isMemberOfTag,
-    }
+    local env = sandbox_env.new(VALIDATOR_HELPERS)
 
     -- Add any extra context variables
     if extraEnv then

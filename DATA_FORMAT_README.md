@@ -1396,10 +1396,25 @@ libraries. In addition, processors get these write-side helpers:
 | `clearCell(row, column)` | Equivalent to `setCell(row, column, nil)` — only valid for nullable columns. |
 | `rowByKey(key)` | O(1) lookup into the current file by primary-key value; returns `nil` for unknown keys (no throw). |
 | `dataIndex(row)` | Returns the 1-based data-row position of a wrapped row (header row excluded). |
+| `copy(value)` | Returns a fresh, fully-mutable deep copy of a read-only value, so a changed collection can be built and installed via `setCell`. |
 
 Direct field assignment (`row.foo = "bar"`) is **not** supported — the sandbox
 forces use of `setCell` so values can be re-validated. Reading still works:
-`row.foo` returns the parsed value, exactly like in validators.
+`row.foo` returns the parsed value, exactly like in validators — and, exactly
+like in validators, that value is **read-only**. A collection-valued cell
+(`row.unlocks`, `row.tags`, …) therefore cannot be mutated in place; doing so
+raises `attempt to update a read-only table`. To change a collection, deep-copy
+it with `copy`, mutate the copy, and install the result through `setCell`:
+
+```lua
+local u = copy(row.unlocks)   -- fresh, fully-mutable deep clone
+table.insert(u, newItem)
+setCell(row, 'unlocks', u)    -- single audited, re-validated write
+```
+
+This guarantees that **every** data write goes through `setCell` — the one path
+that re-parses the value against the column's type and is the natural place for
+auditing or logging.
 
 Adding or removing rows is not supported in v1.
 
@@ -1460,7 +1475,7 @@ dragon_quest	"forest_quest","cave_quest"		Slay the dragon
 Files.tsv entry (preProcessors cell):
 
 ```
-"(function() for _, r in ipairs(rows) do for _, p in ipairs(r.prerequisites or {}) do local target = rowByKey(p); if target then local cur = target.unlocks or {}; table.insert(cur, r.name); setCell(target, 'unlocks', cur) end end end; return true end)()"
+"(function() for _, r in ipairs(rows) do for _, p in ipairs(r.prerequisites or {}) do local target = rowByKey(p); if target then local cur = copy(target.unlocks or {}); table.insert(cur, r.name); setCell(target, 'unlocks', cur) end end end; return true end)()"
 ```
 
 In memory after pre-processing, `intro.unlocks = {"forest_quest"}`,

@@ -4,7 +4,7 @@
 
 -- Module versioning
 local semver = require("semver")
-local VERSION = semver(0, 18, 0)
+local VERSION = semver(0, 19, 0)
 local NAME = "data_set"
 
 local raw_tsv = require("raw_tsv")
@@ -12,6 +12,7 @@ local file_util = require("file_util")
 local string_utils = require("string_utils")
 local read_only = require("read_only")
 local sandbox = require("sandbox")
+local sandbox_env = require("sandbox_env")
 local regex_utils = require("regex_utils")
 
 local predicates = require("predicates")
@@ -1306,19 +1307,13 @@ function DataSet:transformCells(fileName, columnName, expression)
         for _, c in ipairs(entry.columns) do
             rowCtx[c.name] = row[c.index] or ""
         end
-        local env = {
+        local env = sandbox_env.new({
             value = row[col.index] or "",
             row = rowCtx,
             rowIndex = dataRowIndex,
             key = row[1] or "",
             fileName = fileName,
-            tostring = tostring,
-            tonumber = tonumber,
-            type = type,
-            math = math,
-            string = string,
-            table = table,
-        }
+        })
         -- Provide read-only access to other cells/rows in the dataset
         env.getCell = function(fn, k, cn)
             return self:getCell(fn, k, cn)

@@ -473,6 +473,103 @@ describe("processor_executor", function()
     end)
 
     -- ============================================================
+    -- Read-only cell values and the copy() helper
+    -- ============================================================
+    describe("read-only cell values", function()
+        it("rejects in-place mutation of a table-valued cell", function()
+            local dataset = buildDataset({
+                {"name:identifier", "tags:{name}|nil"},
+                {"alice", '"a","b"'},
+            })
+            local rows = dataRowsOf(dataset)
+            local header = dataset[1]
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            -- table.insert into the parsed value must hit the read-only layer.
+            local ok = processor_executor.runFilePreProcessors(
+                {"(function() table.insert(rows[1].tags, 'c'); return true end)()"},
+                rows, header, "test.tsv", badVal)
+
+            assert.is_false(ok)
+            assert.is_true(badVal.errors >= 1)
+            -- The failure is specifically a read-only violation.
+            assert.is.truthy(table.concat(log_messages, " "):find("read.only"))
+            -- The underlying cell was not changed.
+            assert.are.equal(2, #dataset[2][2].parsed)
+        end)
+
+        it("supports the copy + setCell pattern, visible to later processors", function()
+            local dataset = buildDataset({
+                {"name:identifier", "tags:{name}|nil"},
+                {"alice", '"a","b"'},
+            })
+            local rows = dataRowsOf(dataset)
+            local header = dataset[1]
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            local ok = processor_executor.runFilePreProcessors(
+                {
+                    "(function() local t = copy(rows[1].tags); table.insert(t, 'c'); setCell(rows[1], 'tags', t); return true end)()",
+                    "(function() ctx.n = #rows[1].tags; return true end)()",
+                    "ctx.n == 3",
+                },
+                rows, header, "test.tsv", badVal)
+
+            assert.is_true(ok)
+            assert.are.equal(0, badVal.errors)
+            -- The new value passed through the parser and reached the cell.
+            assert.are.equal(3, #dataset[2][2].parsed)
+            assert.are.equal("c", dataset[2][2].parsed[3])
+        end)
+
+        it("copy() returns an independent clone (no setCell => cell unchanged)", function()
+            local dataset = buildDataset({
+                {"name:identifier", "tags:{name}|nil"},
+                {"alice", '"a","b"'},
+            })
+            local rows = dataRowsOf(dataset)
+            local header = dataset[1]
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            -- Mutating the copy without setCell must NOT touch the dataset.
+            local ok = processor_executor.runFilePreProcessors(
+                {"(function() local t = copy(rows[1].tags); table.insert(t, 'zzz'); return true end)()"},
+                rows, header, "test.tsv", badVal)
+
+            assert.is_true(ok)
+            assert.are.equal(0, badVal.errors)
+            assert.are.equal(2, #dataset[2][2].parsed)
+        end)
+
+        it("rejects an invalid copied value via setCell's parser", function()
+            local dataset = buildDataset({
+                {"name:identifier", "tags:{name}|nil"},
+                {"alice", '"a","b"'},
+            })
+            local rows = dataRowsOf(dataset)
+            local header = dataset[1]
+
+            local log_messages = {}
+            local badVal = mockBadVal(log_messages)
+
+            -- "not a name" is not a valid `name`; the parser must reject it.
+            processor_executor.runFilePreProcessors(
+                {"(function() local t = copy(rows[1].tags); table.insert(t, 'not a name'); setCell(rows[1], 'tags', t); return true end)()"},
+                rows, header, "test.tsv", badVal)
+
+            assert.is_true(badVal.errors >= 1)
+            -- The bad value never reached the cell.
+            assert.are.equal(2, #dataset[2][2].parsed)
+        end)
+    end)
+
+    -- ============================================================
     -- Module API
     -- ============================================================
     describe("module API", function()

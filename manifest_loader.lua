@@ -34,6 +34,7 @@ local tsv_model = require("tsv_model")
 local processTSV = tsv_model.processTSV
 
 local lua_cog = require("lua_cog")
+local sandbox_env = require("sandbox_env")
 
 local raw_tsv = require("raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
@@ -361,7 +362,8 @@ local function logFile(file_name, fileType, enumsSet, typesSet, customTypesSet, 
 end
 
 -- Sets up the load environment with expression evaluator and contexts
--- Note: loadEnv must already have {__index = _G} metatable set at creation time
+-- Note: loadEnv must already have its {__index = sandbox_env.cogGlobals()}
+-- metatable set at creation time (see processFiles).
 local function setupLoadEnvironment(loadEnv)
     local expr_eval = tsv_model.expressionEvaluatorGenerator(loadEnv)
     local contexts = {}
@@ -1001,8 +1003,12 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
 
     local raw_files = {}
     local manifest_tsv_files = {}
-    -- loadEnv needs access to _G for lua_cog code blocks to use standard functions
-    local loadEnv = setmetatable({}, {__index = _G})
+    -- loadEnv is the sandbox environment for cell expressions and COG scripts.
+    -- Its __index falls through ONLY to the curated safe-globals set from
+    -- sandbox_env -- never to the real _G -- so expressions and COG cannot
+    -- reach require, debug, io, os.*, raw{get,set}, {set,get}metatable, etc.
+    -- Code-library exports and `loadEnv.files` are added as direct keys below.
+    local loadEnv = setmetatable({}, {__index = sandbox_env.cogGlobals()})
     loadEnv.files = {}   -- populated with each parsed dataset; available in cog scripts
 
     local package_order, packages = resolvePackageDependencies(badVal, files, raw_files, manifest_tsv_files, loadEnv)

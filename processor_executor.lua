@@ -12,14 +12,13 @@ local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
 
 local sandbox = require("sandbox")
+local sandbox_env = require("sandbox_env")
 
 local error_reporting = require("error_reporting")
 local nullBadVal = error_reporting.nullBadVal
 
-local predicates = require("predicates")
-local string_utils = require("string_utils")
 local table_utils = require("table_utils")
-local comparators = require("comparators")
+local deepCopyUnwrapped = table_utils.deepCopyUnwrapped
 local validator_helpers = require("validator_helpers")
 local validator_executor = require("validator_executor")
 local normalizeValidatorSpec = validator_executor.normalizeValidatorSpec
@@ -27,6 +26,27 @@ local normalizeValidatorSpec = validator_executor.normalizeValidatorSpec
 local parsers = require("parsers")
 
 local logger = require("named_logger").getLogger(NAME)
+
+-- The processor read-side helper block (identical set to the validator
+-- sandbox). Shared, never-mutated reference table merged into every processor
+-- sandbox env alongside sandbox_env's safe builtins / utilities.
+local PROCESSOR_READ_HELPERS = {
+    unique = validator_helpers.unique,
+    sum = validator_helpers.sum,
+    min = validator_helpers.min,
+    max = validator_helpers.max,
+    avg = validator_helpers.avg,
+    count = validator_helpers.count,
+    all = validator_helpers.all,
+    any = validator_helpers.any,
+    none = validator_helpers.none,
+    filter = validator_helpers.filter,
+    find = validator_helpers.find,
+    lookup = validator_helpers.lookup,
+    groupBy = validator_helpers.groupBy,
+    listMembersOfTag = validator_helpers.listMembersOfTag,
+    isMemberOfTag = validator_helpers.isMemberOfTag,
+}
 
 -- Quota for processor expressions; higher than file validator quota because
 -- mutation work is more expensive than pure checking
@@ -75,11 +95,13 @@ end
 local row_context = setmetatable({}, {__mode = "k"})
 
 --- Wraps a single parsed row for processor access.
---- Reading `wrapped.col` returns the parsed value (like validators), with
---- table values UNWRAPPED so processors can mutate them in place (e.g.
---- `table.insert(target.unlocks, x)` followed by `setCell(target,'unlocks',...)`).
---- Direct assignment (`wrapped.col = v`) errors — `setCell` must be used so
---- the new value passes through the column's parser for type validation.
+--- Reading `wrapped.col` returns the parsed value READ-ONLY, exactly like a
+--- validator row — collection-valued cells cannot be mutated in place. The
+--- only way to change a cell is `setCell(row, column, value)`, which re-parses
+--- the value through the column's type and so keeps every data write both
+--- type-validated and traceable. To change a collection, deep-copy it with the
+--- `copy` helper, mutate the copy, then install it via `setCell`.
+--- Direct assignment (`wrapped.col = v`) errors for the same reason.
 --- @param row table Read-only row proxy from the parsed dataset
 --- @param header table The file header (for column lookup in setCell)
 --- @param fileName string Name of the file (for diagnostics)
@@ -89,7 +111,7 @@ local function wrapRowForProcessor(row, header, fileName)
         __index = function(_, k)
             local val = row[k]
             if type(val) == "table" and getmetatable(val) == "cell" then
-                return unwrap(val.parsed)
+                return val.parsed
             end
             return val
         end,
@@ -229,8 +251,11 @@ end
 -- ============================================================
 
 --- Creates the sandbox environment for a processor expression.
---- Reuses the validator's read-only helpers and adds the mutation helpers
---- `setCell`, `clearCell`, `rowByKey`, and `dataIndex`.
+--- The safe builtins, `math`, the curated `string`/`table` subsets and the
+--- TabuLua helper block come from `sandbox_env`; this function adds the
+--- validator read-side helpers, the mutation helpers `setCell`, `clearCell`,
+--- `rowByKey`, `dataIndex`, the `copy` deep-clone helper, and the per-run
+--- context (`rows`, `file`, `fileName`, `ctx`).
 --- @param wrappedRows table Array of processor-row proxies (passed as `rows`)
 --- @param fileName string Name of the file being processed
 --- @param ctx table Writable context shared across processor invocations in this run
@@ -238,68 +263,29 @@ end
 --- @return table The sandboxed environment
 local function createProcessorEnv(wrappedRows, fileName, ctx, extraEnv)
     local rowByKey = buildRowByKey(wrappedRows)
-    local env = {
-        -- Lua built-ins
-        math = math,
-        string = string,
-        table = table,
-        pairs = pairs,
-        ipairs = ipairs,
-        type = type,
-        tostring = tostring,
-        tonumber = tonumber,
-        select = select,
-        unpack = unpack or table.unpack,
-        next = next,
-        pcall = pcall,
+    local env = sandbox_env.new(PROCESSOR_READ_HELPERS)
 
-        -- Safe utilities (mirrors validator env)
-        predicates = predicates,
-        stringUtils = {
-            trim = string_utils.trim,
-            split = string_utils.split,
-            parseVersion = string_utils.parseVersion,
-        },
-        tableUtils = {
-            keys = table_utils.keys,
-            values = table_utils.values,
-            pairsCount = table_utils.pairsCount,
-        },
-        equals = comparators.equals,
+    -- Write-side helpers
+    env.setCell = function(row, column, value)
+        return setCellImpl(row, column, value)
+    end
+    env.clearCell = function(row, column)
+        return setCellImpl(row, column, nil)
+    end
+    env.rowByKey = rowByKey
+    env.dataIndex = dataIndexOf
+    -- Returns a fresh, fully-mutable deep copy of a (read-only) value, so a
+    -- processor can build a changed collection and install it via setCell --
+    -- the single audited, type-validated write path.
+    env.copy = function(v)
+        return deepCopyUnwrapped(v)
+    end
 
-        -- Read-side helpers from validator_helpers
-        unique = validator_helpers.unique,
-        sum = validator_helpers.sum,
-        min = validator_helpers.min,
-        max = validator_helpers.max,
-        avg = validator_helpers.avg,
-        count = validator_helpers.count,
-        all = validator_helpers.all,
-        any = validator_helpers.any,
-        none = validator_helpers.none,
-        filter = validator_helpers.filter,
-        find = validator_helpers.find,
-        lookup = validator_helpers.lookup,
-        groupBy = validator_helpers.groupBy,
-        listMembersOfTag = validator_helpers.listMembersOfTag,
-        isMemberOfTag = validator_helpers.isMemberOfTag,
-
-        -- Write-side helpers
-        setCell = function(row, column, value)
-            return setCellImpl(row, column, value)
-        end,
-        clearCell = function(row, column)
-            return setCellImpl(row, column, nil)
-        end,
-        rowByKey = rowByKey,
-        dataIndex = dataIndexOf,
-
-        -- Context (writable, shared across processors in this file run)
-        ctx = ctx,
-        rows = wrappedRows,
-        file = wrappedRows,
-        fileName = fileName,
-    }
+    -- Context (writable, shared across processors in this file run)
+    env.ctx = ctx
+    env.rows = wrappedRows
+    env.file = wrappedRows
+    env.fileName = fileName
 
     if extraEnv then
         for k, v in pairs(extraEnv) do

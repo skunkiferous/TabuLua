@@ -5,7 +5,7 @@ local NAME = "table_utils"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 18, 0)
+local VERSION = semver(0, 19, 0)
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
@@ -24,6 +24,45 @@ local function tableShallowCopy(t)
         result[k] = v
     end
     return result
+end
+
+--- Deep-copies a value into a fully MUTABLE tree, unwrapping any read-only
+--- proxies encountered along the way. Non-table values are returned unchanged
+--- (they are inherently immutable). Metatables are not copied; the result is
+--- plain mutable tables all the way down. Shared and cyclic references are
+--- preserved via an identity map.
+---
+--- This is the mutation-safe counterpart to handing user code a read-only
+--- value: a caller that needs to change a collection deep-copies it, mutates
+--- the copy freely, and installs the result through the one audited write
+--- path (e.g. the processor `setCell` helper).
+---
+--- `read_only` is required lazily inside the function: `read_only` requires
+--- `table_utils` at load time, so a top-level `require("read_only")` here
+--- would form a load-time cycle. By the time this function is ever called
+--- both modules are fully loaded and `require` is just a cache lookup.
+--- @param value any The value to copy (may be a read-only proxy, or contain them)
+--- @return any A deep, fully-mutable copy of value
+local function deepCopyUnwrapped(value)
+    local unwrap = require("read_only").unwrap
+    local seen = {}
+    local function copy(v)
+        v = unwrap(v)
+        if type(v) ~= "table" then
+            return v
+        end
+        local existing = seen[v]
+        if existing ~= nil then
+            return existing
+        end
+        local result = {}
+        seen[v] = result
+        for k, val in pairs(v) do
+            result[copy(k)] = copy(val)
+        end
+        return result
+    end
+    return copy(value)
 end
 
 --- Creates a pairs iterator that applies a manipulator function to each value.
@@ -232,6 +271,7 @@ end
 local API = {
     appendSeq=appendSeq,
     clearSeq=clearSeq,
+    deepCopyUnwrapped=deepCopyUnwrapped,
     filterSeq=filterSeq,
     getVersion=getVersion,
     inverseMapping=inverseMapping,
