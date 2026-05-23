@@ -336,10 +336,11 @@ operations:
    in a patch file to mean "add `combat`, remove `old_tag`". Compact but adds a new dialect
    the user has to learn — and conflicts with values that legitimately start with `+`/`-`.
 2. **Companion columns with verb prefixes.** `append_tags:{name}|nil`,
-   `remove_tags:{name}|nil`, `replace_tags:{name}|nil` (the `replace_` form sets the list
-   wholesale — equivalent to listing `tags` itself in an `update` row, but expressed
-   with the same prefix family for visual consistency). Three columns per patched list
-   column is verbose, but each one is a normal valid-identifier column.
+   `prepend_tags:{name}|nil`, `remove_tags:{name}|nil`, `replace_tags:{name}|nil`
+   (the `replace_` form sets the list wholesale — equivalent to listing `tags`
+   itself in an `update` row, but expressed with the same prefix family for visual
+   consistency). A few columns per patched list column is verbose, but each one is
+   a normal valid-identifier column.
 
    The verb-prefix form is **required** rather than aesthetic: TabuLua column names must
    be valid identifiers (letters / digits / underscores, starting with a letter or
@@ -353,6 +354,34 @@ type system; tier C (pre-processor) is available for the rare case where it's to
 
 For maps, mirror the same: `append_resistances`, `remove_resistances`,
 `replace_resistances`. The `remove_` form on a map is a list of keys to remove.
+`prepend_` does not apply to maps (map entries have no order).
+
+**Direction: first vs last.** For list columns, when the patch value matches the
+parent list in more than one position, the unsuffixed verb prefix targets the
+**first** match by default. A `_last_` variant targets the last match instead:
+
+- `remove_<col>` removes the first occurrence of each listed value; `remove_last_<col>`
+  removes the last occurrence.
+- `replace_oldvalue_<col>` / `replace_newvalue_<col>` replace the first match (encoded
+  below); `replace_last_oldvalue_<col>` / `replace_last_newvalue_<col>` replace the
+  last match.
+
+`_first_` is implied (no suffix) because most modder edits target a value that is
+present at most once in the parent's list, where "first" is the only match anyway.
+The `_last_` form is opt-in for the rarer case where the parent's list has duplicates
+and the mod wants the tail occurrence. Targeting any other specific occurrence
+(second-from-front, middle, etc.) remains tier-C territory; positional editing by
+index is intentionally not exposed (see the value-based-encoding rationale below).
+
+`append_<col>` and `prepend_<col>` are paired verbs rather than one verb with a
+direction suffix: append's linguistic meaning is "add to the end", so overloading
+`append_<col>` with `_first_` / `_last_` semantics would read backwards. Both
+verbs accept a list of values to insert; `append_<col>` puts them at the tail,
+`prepend_<col>` puts them at the head (in the order given — `prepend_tags={a,b}`
+on a parent list `{c,d}` produces `{a,b,c,d}`, not `{b,a,c,d}`).
+
+Map columns are unaffected by the first/last distinction or by `prepend_`: map
+keys are unique and unordered.
 
 **Prefix collision with parent columns.** If a parent file already has a column literally
 named `append_tags`, `remove_<x>`, or `replace_<x>`, that column wins for the patch
@@ -383,8 +412,10 @@ The encoding: a pair of companion columns per patched list column.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `replace_oldvalue_<col>` | `T\|nil` (T = list element type) | Value to find in the parent's list. |
+| `replace_oldvalue_<col>` | `T\|nil` (T = list element type) | Value to find in the parent's list (first occurrence). |
 | `replace_newvalue_<col>` | `T\|nil` | Value to write back at the found position. |
+| `replace_last_oldvalue_<col>` | `T\|nil` | Same as `replace_oldvalue_<col>` but targets the **last** matching occurrence. |
+| `replace_last_newvalue_<col>` | `T\|nil` | Paired write for `replace_last_oldvalue_<col>`. |
 
 ```tsv
 name:name   patchOp:patch_op   replace_oldvalue_drops:name|nil   replace_newvalue_drops:name|nil
@@ -396,8 +427,11 @@ Behavior and bad-input mitigations:
 - **`oldvalue` not in the list.** Error by default. Configurable to `warn` for
   compatibility-patch use cases that target multiple parent versions and tolerate
   the absence.
-- **`oldvalue` appears more than once.** Replace the **first** occurrence and warn.
-  Targeting a specific occurrence is the case for tier C.
+- **`oldvalue` appears more than once.** The unsuffixed pair (`replace_oldvalue_<col>`
+  / `replace_newvalue_<col>`) replaces the **first** occurrence; the `_last_` pair
+  (`replace_last_oldvalue_<col>` / `replace_last_newvalue_<col>`) replaces the
+  **last**. The engine warns on the ambiguous match either way. Targeting any other
+  specific occurrence is the case for tier C.
 - **`oldvalue == newvalue`.** No-op; warn (probably a typo or stale data).
 - **Both companion cells empty.** Treated as "no replacement requested" — same as
   not having the columns at all. (Consistent with the rule that empty cells in
@@ -764,17 +798,26 @@ Once the encoding is settled, the implementation work is:
 
 **Phase 4 — list/map deltas via verb-prefix companion columns.**
 
-- Patch executor recognises `append_<col>`, `remove_<col>`, `replace_<col>` companion
-  columns for list and map parent columns (§4.3). Names use underscore separators
-  because `+`/`-`/`=` aren't valid in TabuLua identifiers.
+- Patch executor recognises `append_<col>`, `prepend_<col>`, `remove_<col>`,
+  `replace_<col>` companion columns for list parent columns; maps recognise
+  `append_<col>`, `remove_<col>`, `replace_<col>` only (no `prepend_` — maps are
+  unordered). `append_` and `prepend_` accept a list of values to insert at the
+  tail or head respectively, in the order given. For list columns with duplicates,
+  the find-based ops accept a `_last_` variant — `remove_last_<col>` and the
+  `replace_last_oldvalue_<col>` / `replace_last_newvalue_<col>` pair (see below) —
+  where the unsuffixed form targets the first match and `_last_` targets the last.
+  Names use underscore separators because `+`/`-`/`=` aren't valid in TabuLua
+  identifiers.
 - **Prefix-collision precedence:** a patch column whose literal name matches a parent
   column name binds to that parent column; merge-prefix interpretation is the fall-back
   only when no direct match exists. Engine warns when both interpretations are possible
   so the modder can disambiguate.
 - For list **replace-in-place** (operation 8), recognise the paired
-  `replace_oldvalue_<col>` and `replace_newvalue_<col>` companion columns. Validate
-  both halves are present (error if only one); replace the first matching occurrence
-  and warn on multiple matches, no-op (old == new), or missing-value (§4.3).
+  `replace_oldvalue_<col>` / `replace_newvalue_<col>` companion columns (targets the
+  first match) and the `_last_` variant pair `replace_last_oldvalue_<col>` /
+  `replace_last_newvalue_<col>` (targets the last match). Validate both halves of a
+  pair are present (error if only one); warn on multiple matches, no-op (old == new),
+  or missing-value (§4.3).
 - Sub-record patching via dotted paths (`stats.attack:integer|nil`) reuses TabuLua's
   existing exploded-column handling — no new mechanism for the record subcase.
 - Tests covering each merge operation, the prefix-collision precedence rule, and the
