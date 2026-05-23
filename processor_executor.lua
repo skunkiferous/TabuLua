@@ -247,6 +247,97 @@ local function dataIndexOf(wrappedRow)
 end
 
 -- ============================================================
+-- Graph completion (auto-wired pre-processors)
+--
+-- These are invoked from the auto-wired pre-processor entries that
+-- graph_wiring attaches to graph-family files. They symmetrise the
+-- link fields:
+--   basic:    A.graphLinks ⊇ {B}  ⇒  B.graphLinks ⊇ {A}
+--   directed: A.graphChildren ⊇ {B}  ⇒  B.graphParents ⊇ {A}, and vice versa.
+-- Dangling references (link to a name not in the file) are skipped
+-- silently — the refs-exist validator (Phase A4) flags them separately.
+-- ============================================================
+
+-- Returns true if list contains value (linear scan; lists are typically
+-- small in graph data — single-digit neighbours).
+local function listContains(list, value)
+    if list == nil then return false end
+    for _, v in ipairs(list) do
+        if v == value then return true end
+    end
+    return false
+end
+
+-- Builds a name -> wrapped-row index from the underlying PK column.
+-- Reuses the same convention as buildRowByKey.
+local function ensureBackLink(targetRow, columnName, valueToAdd)
+    local existing = targetRow[columnName]
+    if listContains(existing, valueToAdd) then return end
+    local updated = deepCopyUnwrapped(existing) or {}
+    updated[#updated + 1] = valueToAdd
+    setCellImpl(targetRow, columnName, updated)
+end
+
+--- Completes a basic (undirected) graph: for every (r, n) link, ensures
+--- n has r back in its graphLinks. Self-loops (A ↔ A) are left untouched
+--- since they are already symmetric.
+local function completeBasicGraph(wrappedRows)
+    if not wrappedRows or #wrappedRows == 0 then return end
+    local rowByKey = buildRowByKey(wrappedRows)
+    for _, r in ipairs(wrappedRows) do
+        local links = r.graphLinks
+        if links then
+            local rName = r.name
+            for _, nbrName in ipairs(links) do
+                if nbrName ~= rName then
+                    local nbr = rowByKey(nbrName)
+                    if nbr then
+                        ensureBackLink(nbr, "graphLinks", rName)
+                    end
+                end
+            end
+        end
+    end
+end
+
+--- Completes a directed graph: for every parent→child edge, ensures the
+--- back-reference exists on both ends. Iterates children-first then
+--- parents-first so authors can declare an edge from either side.
+local function completeDirectedGraph(wrappedRows)
+    if not wrappedRows or #wrappedRows == 0 then return end
+    local rowByKey = buildRowByKey(wrappedRows)
+    -- Pass 1: graphChildren -> graphParents back-references.
+    for _, r in ipairs(wrappedRows) do
+        local children = r.graphChildren
+        if children then
+            local rName = r.name
+            for _, childName in ipairs(children) do
+                local child = rowByKey(childName)
+                if child then
+                    ensureBackLink(child, "graphParents", rName)
+                end
+            end
+        end
+    end
+    -- Pass 2: graphParents -> graphChildren back-references. We re-read
+    -- graphParents here so we pick up the additions from pass 1 (otherwise
+    -- a parent declared only via the child side wouldn't gain its child
+    -- back-reference).
+    for _, r in ipairs(wrappedRows) do
+        local parents = r.graphParents
+        if parents then
+            local rName = r.name
+            for _, parentName in ipairs(parents) do
+                local parent = rowByKey(parentName)
+                if parent then
+                    ensureBackLink(parent, "graphChildren", rName)
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================
 -- Sandboxed Execution
 -- ============================================================
 
@@ -279,6 +370,14 @@ local function createProcessorEnv(wrappedRows, fileName, ctx, extraEnv)
     -- the single audited, type-validated write path.
     env.copy = function(v)
         return deepCopyUnwrapped(v)
+    end
+    -- Graph-family completion entry points (auto-wired by graph_wiring;
+    -- also callable by user expressions if they need re-completion).
+    env.completeBasicGraph = function(rowsArg)
+        return completeBasicGraph(rowsArg or wrappedRows)
+    end
+    env.completeDirectedGraph = function(rowsArg)
+        return completeDirectedGraph(rowsArg or wrappedRows)
     end
 
     -- Context (writable, shared across processors in this file run)

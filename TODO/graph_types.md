@@ -377,7 +377,7 @@ Landed adjustments:
   is caught; ambiguous isolated rows fall through. Tightening this
   needs schema-aware row wrappers — out of scope for Phase A2.
 
-**Phase A3 — Auto-wired completion pre-processors**
+**Phase A3 — Auto-wired completion pre-processors** ✅ *Done.*
 
 - `manifest_loader.lua` (or a new `graph_wiring.lua` module if the
   auto-wiring grows non-trivial): when a file's typeName transitively
@@ -388,6 +388,26 @@ Landed adjustments:
   configured with `priority: 50` and `rerunAfterPatches: true`.
 - Tests: integration tests in `spec/manifest_loader_spec.lua` confirming
   back-references are populated after load for each of the three families.
+
+Landed adjustments:
+
+- Split into a new `graph_wiring.lua` module (detection + attachment) plus
+  two new sandbox-env helpers in `processor_executor.lua`
+  (`completeBasicGraph(rows)` and `completeDirectedGraph(rows)`). The
+  auto-wired entry is just the expression `completeBasicGraph(rows)` /
+  `completeDirectedGraph(rows)` — keeps the heavy lifting in module Lua,
+  not inline expression strings.
+- Auto-wiring keys off the literal `superType` string and walks the
+  `extends` map transitively, so a user type
+  (`Quest = {extends:graph_node, ...}`) is detected when downstream files
+  declare `superType=Quest`. Cycle-safe (bounded by maxDepth=32).
+- Idempotent: re-running the wiring pass on an already-wired
+  `lcFn2PreProcessors` is a no-op (matches on expression string).
+- Integration tests went into `spec/graph_wiring_integration_spec.lua`
+  rather than extending `spec/manifest_loader_spec.lua`, to keep the
+  graph-specific fixture cluster together. Plus unit tests in
+  `spec/graph_wiring_spec.lua` covering family detection and the wiring
+  rules without spinning up a full package load.
 
 **Phase A4 — Auto-wired validators**
 
