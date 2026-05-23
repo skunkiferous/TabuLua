@@ -687,11 +687,12 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col, typesSet, enumsSet, customTypesSet, extends,
     raw_files, loadEnv, badVal, lcSkippedFiles)
-    -- Auto-wire graph completion pre-processors for files whose type
-    -- transitively extends one of the built-in graph families. Done here
-    -- so the entries flow through joinMeta.lcFn2PreProcessors and run as
-    -- part of the normal pre-processor pass.
-    applyGraphAutoWiring(lcFn2PreProcessors, lcFn2Type, extends)
+    -- Auto-wire graph completion pre-processors AND validators for files
+    -- whose type transitively extends one of the built-in graph families.
+    -- Done here so the entries flow through joinMeta.lcFn2PreProcessors /
+    -- lcFn2FileValidators and run as part of the normal phases.
+    applyGraphAutoWiring(lcFn2PreProcessors, lcFn2FileValidators,
+        lcFn2Type, extends)
     -- Build join metadata for exporter
     local joinMeta = {
         lcFn2JoinInto = lcFn2JoinInto,

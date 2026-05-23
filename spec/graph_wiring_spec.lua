@@ -62,80 +62,142 @@ describe("graph_wiring", function()
   end)
 
   describe("applyAutoWiring", function()
-    it("attaches basic completion for basic_graph_node files", function()
-      local pre = {}
+    -- Convenience: collect all validator expression strings attached to a lcfn.
+    local function valExprs(fileValidators, lcfn)
+      local out = {}
+      for _, v in ipairs(fileValidators[lcfn] or {}) do
+        out[#out + 1] = (type(v) == "string") and v or v.expr
+      end
+      return out
+    end
+
+    it("attaches basic completion + refs validator for basic_graph_node files", function()
+      local pre, fv = {}, {}
       local lcFn2Type = {["skills.tsv"] = "Skill"}
       local extends = {Skill = "basic_graph_node"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.equals(1, #pre["skills.tsv"])
       assert.equals("completeBasicGraph(rows)", pre["skills.tsv"][1].expr)
       assert.equals(50, pre["skills.tsv"][1].priority)
       assert.is_true(pre["skills.tsv"][1].rerunAfterPatches)
+      assert.same({"graphRefsExist(rows, 'basic')"}, valExprs(fv, "skills.tsv"))
     end)
 
-    it("attaches directed completion for graph_node files", function()
-      local pre = {}
+    it("attaches directed completion + refs + acyclic for graph_node files", function()
+      local pre, fv = {}, {}
       local lcFn2Type = {["quests.tsv"] = "Quest"}
       local extends = {Quest = "graph_node"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.equals("completeDirectedGraph(rows)", pre["quests.tsv"][1].expr)
+      assert.same({
+        "graphRefsExist(rows, 'directed')",
+        "graphAcyclic(rows)",
+      }, valExprs(fv, "quests.tsv"))
     end)
 
-    it("attaches directed completion for tree_node files", function()
-      local pre = {}
+    it("attaches directed completion + refs + acyclic + tree-shape for tree_node", function()
+      local pre, fv = {}, {}
       local lcFn2Type = {["dialog.tsv"] = "DialogNode"}
       local extends = {DialogNode = "tree_node"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.equals("completeDirectedGraph(rows)", pre["dialog.tsv"][1].expr)
+      assert.same({
+        "graphRefsExist(rows, 'directed')",
+        "graphAcyclic(rows)",
+        "graphTreeShape(rows)",
+      }, valExprs(fv, "dialog.tsv"))
     end)
 
     it("leaves non-graph files alone", function()
-      local pre = {}
+      local pre, fv = {}, {}
       local lcFn2Type = {["plain.tsv"] = "PlainRecord"}
       local extends = {PlainRecord = "Type"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.is_nil(pre["plain.tsv"])
+      assert.is_nil(fv["plain.tsv"])
     end)
 
     it("prepends the auto-wired entry before user pre-processors", function()
       local userProc = "self.x = self.x or 0"
       local pre = {["quests.tsv"] = {userProc}}
+      local fv = {}
       local lcFn2Type = {["quests.tsv"] = "Quest"}
       local extends = {Quest = "graph_node"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.equals(2, #pre["quests.tsv"])
       -- Auto-wired entry must come first so it runs before user processors.
       assert.equals("completeDirectedGraph(rows)", pre["quests.tsv"][1].expr)
       assert.equals(userProc, pre["quests.tsv"][2])
     end)
 
-    it("is idempotent across repeated calls", function()
+    it("appends validators AFTER user validators", function()
+      local userVal = "self.x > 0 or 'x must be positive'"
       local pre = {}
+      local fv = {["quests.tsv"] = {userVal}}
       local lcFn2Type = {["quests.tsv"] = "Quest"}
       local extends = {Quest = "graph_node"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
+      -- User validator runs first; auto-wired structural checks come after.
+      assert.equals(userVal, fv["quests.tsv"][1])
+      assert.equals("graphRefsExist(rows, 'directed')", fv["quests.tsv"][2].expr)
+      assert.equals("graphAcyclic(rows)",               fv["quests.tsv"][3].expr)
+    end)
+
+    it("is idempotent across repeated calls", function()
+      local pre, fv = {}, {}
+      local lcFn2Type = {["quests.tsv"] = "Quest"}
+      local extends = {Quest = "graph_node"}
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.equals(1, #pre["quests.tsv"])
+      assert.equals(2, #fv["quests.tsv"])
     end)
 
     it("walks transitive extends to attach to derived types", function()
-      local pre = {}
+      local pre, fv = {}, {}
       local lcFn2Type = {["sub_quests.tsv"] = "SubQuest"}
       local extends = {SubQuest = "Quest", Quest = "graph_node"}
-      graph_wiring.applyAutoWiring(pre, lcFn2Type, extends)
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
       assert.equals("completeDirectedGraph(rows)", pre["sub_quests.tsv"][1].expr)
+      assert.same({
+        "graphRefsExist(rows, 'directed')",
+        "graphAcyclic(rows)",
+      }, valExprs(fv, "sub_quests.tsv"))
+    end)
+
+    it("distinguishes tree_node from graph_node via transitive extends", function()
+      -- Two derived types pointing at different family ancestors.
+      local pre, fv = {}, {}
+      local lcFn2Type = {
+        ["tree_kids.tsv"]  = "MyTree",
+        ["graph_kids.tsv"] = "MyDag",
+      }
+      local extends = {MyTree = "tree_node", MyDag = "graph_node"}
+      graph_wiring.applyAutoWiring(pre, fv, lcFn2Type, extends)
+      assert.same({
+        "graphRefsExist(rows, 'directed')",
+        "graphAcyclic(rows)",
+        "graphTreeShape(rows)",
+      }, valExprs(fv, "tree_kids.tsv"))
+      assert.same({
+        "graphRefsExist(rows, 'directed')",
+        "graphAcyclic(rows)",
+      }, valExprs(fv, "graph_kids.tsv"))
     end)
 
     it("errors on non-table arguments", function()
       assert.has_error(function()
-        graph_wiring.applyAutoWiring(nil, {}, {})
+        graph_wiring.applyAutoWiring(nil, {}, {}, {})
       end)
       assert.has_error(function()
-        graph_wiring.applyAutoWiring({}, "bad", {})
+        graph_wiring.applyAutoWiring({}, nil, {}, {})
       end)
       assert.has_error(function()
-        graph_wiring.applyAutoWiring({}, {}, "bad")
+        graph_wiring.applyAutoWiring({}, {}, "bad", {})
+      end)
+      assert.has_error(function()
+        graph_wiring.applyAutoWiring({}, {}, {}, "bad")
       end)
     end)
   end)

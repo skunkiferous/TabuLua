@@ -389,6 +389,105 @@ local function shortestPath(a, b, rows)
 end
 
 -- ============================================================
+-- Auto-wired validators
+--
+-- Each returns `true` on success, or a string error message on failure.
+-- They follow the validator-expression return convention so they can be
+-- dropped directly into a `validator_spec` expression:
+--   "graphRefsExist(rows, 'directed')"
+--   "graphAcyclic(rows)"
+--   "graphTreeShape(rows)"
+-- ============================================================
+
+local REFS_FIELDS = {
+    basic    = {"graphLinks"},
+    directed = {"graphChildren", "graphParents"},
+}
+
+--- Validates that every name appearing in a row's link fields refers to a
+--- row in the same file. `family` is "basic" or "directed".
+local function graphRefsExist(rows, family)
+    local fields = REFS_FIELDS[family]
+    if not fields then
+        return "graphRefsExist: invalid family '" .. tostring(family)
+            .. "' (expected 'basic' or 'directed')"
+    end
+    local names = {}
+    for _, r in ipairs(rows) do
+        if r.name ~= nil then names[r.name] = true end
+    end
+    for _, r in ipairs(rows) do
+        local rName = tostring(r.name)
+        for _, fld in ipairs(fields) do
+            local links = r[fld]
+            if links then
+                for _, refName in ipairs(links) do
+                    if not names[refName] then
+                        return string.format(
+                            "%s: row '%s' %s references unknown node '%s'",
+                            family, rName, fld, tostring(refName))
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
+--- Validates that the directed graph has no cycle along graphChildren.
+--- Self-loops (A in A.graphChildren) count as cycles for DAG/tree
+--- contexts (auto-wired only for the directed family).
+local function graphAcyclic(rows)
+    local cycle = findCycle(rows, "graphChildren")
+    if not cycle then return true end
+    local pathNames = {}
+    for _, r in ipairs(cycle) do
+        pathNames[#pathNames + 1] = tostring(r.name)
+    end
+    return "graph has a cycle via graphChildren: " .. table.concat(pathNames, " -> ")
+end
+
+--- Validates the tree-shape invariants for `tree_node` files (run AFTER
+--- the completion pre-processor, so graphParents is fully populated):
+---   * every node has at most one parent
+---   * there is exactly one root (a node with zero parents)
+local function graphTreeShape(rows)
+    local roots = {}
+    local firstMultiParent
+    for _, r in ipairs(rows) do
+        local parents = r.graphParents
+        local nParents = parents and #parents or 0
+        if nParents > 1 and not firstMultiParent then
+            local parentNames = {}
+            for _, p in ipairs(parents) do
+                parentNames[#parentNames + 1] = tostring(p)
+            end
+            firstMultiParent = string.format(
+                "tree node '%s' has %d parents (max 1): %s",
+                tostring(r.name), nParents, table.concat(parentNames, ", "))
+        end
+        if nParents == 0 then
+            roots[#roots + 1] = tostring(r.name)
+        end
+    end
+    if firstMultiParent then return firstMultiParent end
+    if #roots == 0 then
+        -- A tree with at least one node must have a root. Zero roots
+        -- means every node has a parent — i.e. there is a cycle. The
+        -- acyclic validator catches it more precisely; report a helpful
+        -- pointer here too.
+        return "tree has no root (every node has a parent — likely a cycle)"
+    end
+    if #roots > 1 then
+        table.sort(roots)
+        return string.format(
+            "tree has %d roots: %s (expected exactly one)",
+            #roots, table.concat(roots, ", "))
+    end
+    return true
+end
+
+-- ============================================================
 -- Module API
 -- ============================================================
 
@@ -417,6 +516,10 @@ local API = {
     ancestorsOf = ancestorsOf,
     descendantsOf = descendantsOf,
     shortestPath = shortestPath,
+    -- Auto-wired validators
+    graphRefsExist = graphRefsExist,
+    graphAcyclic = graphAcyclic,
+    graphTreeShape = graphTreeShape,
 }
 
 local function apiCall(_, operation, ...)

@@ -248,6 +248,148 @@ describe("graph_wiring integration", function()
         assertContainsAll(readCell(byName.Choice2, header, "graphParents"), {"Start"})
     end)
 
+    -- =====================================================================
+    -- Validator integration tests
+    -- =====================================================================
+
+    -- True if any captured error message contains `needle`. Used to assert
+    -- that the right kind of validator fired without pinning the exact
+    -- format of the surrounding diagnostic.
+    local function anyLogContains(needle)
+        for _, msg in ipairs(log_messages) do
+            if msg:find(needle, 1, true) then return true end
+        end
+        return false
+    end
+
+    it("fails refs-exist when a basic graph has a dangling link", function()
+        local pkg = path_join(temp_dir, "basic_dangling")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n"
+            .. "Skills.tsv\tSkill\tbasic_graph_node\tfalse\t\t\t1\tSkills graph\n"
+
+        -- B has a graphLink to "Ghost" which doesn't exist.
+        local SKILLS = "name:node_name\tgraphLinks:{node_name}|nil\n"
+            .. "A\t\"B\"\n"
+            .. "B\t\"Ghost\"\n"
+
+        writeAll(pkg, MANIFEST, FILES, {["Skills.tsv"] = SKILLS})
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "validation should fail on dangling reference")
+        assert.is_true(anyLogContains("Ghost"),
+            "diagnostic should name the missing node")
+    end)
+
+    it("fails acyclic when a graph_node file has a cycle", function()
+        local pkg = path_join(temp_dir, "directed_cycle")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\n"
+
+        -- A -> B -> A cycle (declared from the children side).
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\tB\t\n"
+            .. "B\tA\t\n"
+
+        writeAll(pkg, MANIFEST, FILES, {["Quests.tsv"] = QUESTS})
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "validation should fail on a cycle")
+        assert.is_true(anyLogContains("cycle"),
+            "diagnostic should mention 'cycle'")
+    end)
+
+    it("fails on a self-loop in a graph_node file", function()
+        local pkg = path_join(temp_dir, "self_loop")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\n"
+
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\tA\t\n"
+
+        writeAll(pkg, MANIFEST, FILES, {["Quests.tsv"] = QUESTS})
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "self-loops are cycles for DAG contexts")
+    end)
+
+    it("fails tree-shape when a tree_node file has two roots", function()
+        local pkg = path_join(temp_dir, "two_roots")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n"
+            .. "Dialog.tsv\tDialogNode\ttree_node\tfalse\t\t\t1\tDialog tree\n"
+
+        -- Two disconnected sub-trees → two roots.
+        local DIALOG = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "Root1\tChild1\t\n"
+            .. "Child1\t\t\n"
+            .. "Root2\tChild2\t\n"
+            .. "Child2\t\t\n"
+
+        writeAll(pkg, MANIFEST, FILES, {["Dialog.tsv"] = DIALOG})
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "tree with two roots should fail tree-shape validator")
+        assert.is_true(anyLogContains("roots"),
+            "diagnostic should mention 'roots'")
+    end)
+
+    it("fails tree-shape when a tree_node has a node with two parents", function()
+        local pkg = path_join(temp_dir, "two_parents")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n"
+            .. "Tree.tsv\tTreeNode\ttree_node\tfalse\t\t\t1\tDialog tree\n"
+
+        -- Two parents both claim C as their child. After completion, C
+        -- ends up with graphParents={A, B}, violating tree shape.
+        local TREE = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "Root\t\"A\",\"B\"\t\n"
+            .. "A\tC\t\n"
+            .. "B\tC\t\n"
+            .. "C\t\t\n"
+
+        writeAll(pkg, MANIFEST, FILES, {["Tree.tsv"] = TREE})
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "node with two parents should fail tree-shape validator")
+        assert.is_true(anyLogContains("parents"),
+            "diagnostic should mention 'parents'")
+    end)
+
+    it("a clean DAG with no graph errors loads successfully", function()
+        -- Sanity check: a valid graph_node file goes through completion
+        -- and all three validators without raising.
+        local pkg = path_join(temp_dir, "clean_dag")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\n"
+
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\t\"B\",\"C\"\t\n"
+            .. "B\tD\t\n"
+            .. "C\tD\t\n"
+            .. "D\t\t\n"
+
+        writeAll(pkg, MANIFEST, FILES, {["Quests.tsv"] = QUESTS})
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_true(result.validationPassed,
+            "valid DAG should pass all auto-wired validators")
+    end)
+
     it("leaves non-graph files untouched", function()
         local pkg = path_join(temp_dir, "plain")
         assert(lfs.mkdir(pkg))

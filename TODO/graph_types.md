@@ -409,7 +409,7 @@ Landed adjustments:
   `spec/graph_wiring_spec.lua` covering family detection and the wiring
   rules without spinning up a full package load.
 
-**Phase A4 — Auto-wired validators**
+**Phase A4 — Auto-wired validators** ✅ *Done.*
 
 - Same mechanism for `lcFn2FileValidators`: append refs-exist (all three),
   cycle-free (`graph_node` + `tree_node`), and tree-shape (`tree_node`)
@@ -419,6 +419,26 @@ Landed adjustments:
 - Tests: `spec/graph_validators_spec.lua` for each rule, plus
   `bad_input/graph_errors/` fixtures (missing ref, cycle, two roots in a
   tree, two-parents in a tree, link to self in DAG, etc.).
+
+Landed adjustments:
+
+- Validators (`graphRefsExist`, `graphAcyclic`, `graphTreeShape`) live in
+  `graph_helpers` alongside the other graph-data primitives, and are
+  injected into the validator sandbox env by `validator_executor`.
+- `graph_wiring.applyAutoWiring` gained a second map parameter
+  (`lcFn2FileValidators`). The `detectFamily` helper was generalised to
+  `detectRole` returning `{family, tree}` so the wiring can pick
+  tree-only validators.
+- Validators are *appended* (after user validators), so user-authored
+  validators run first and catch authoring-specific errors before the
+  structural checks fire. Pre-processors stay prepended.
+- Tests went into the existing graph specs rather than a new
+  `graph_validators_spec.lua`: per-validator unit tests live in
+  `spec/graph_helpers_spec.lua`, wiring-attachment tests in
+  `spec/graph_wiring_spec.lua`, and end-to-end error/success cases in
+  `spec/graph_wiring_integration_spec.lua`. `bad_input/graph_errors/`
+  fixtures are deferred — the integration tests cover the same cases
+  with sharper assertions.
 
 **Phase A5 — Edge files (`edgesFor`)**
 

@@ -31,25 +31,27 @@ end
 -- "Open Question 6"). The user-written string is the only source of truth.
 -- ============================================================
 
--- Map of graph-family superType name → family kind.
-local FAMILY_OF = {
-    basic_graph_node = "basic",
-    graph_node       = "directed",
-    tree_node        = "directed",
+-- Map of graph-family superType name → role descriptor.
+--   family: "basic" | "directed"
+--   tree:   true if this is the tree_node family (subset of directed)
+local ROLE_OF = {
+    basic_graph_node = {family = "basic"},
+    graph_node       = {family = "directed", tree = false},
+    tree_node        = {family = "directed", tree = true},
 }
 
---- Walks the `extends` chain starting at `typeName` looking for a known
---- graph family. Stops at the first match. Returns the family kind
---- ("basic" or "directed") or nil if no ancestor is a graph family.
---- Bounded by `maxDepth` (default 32) to defend against malformed cycles
---- in the extends map.
-local function detectFamily(typeName, extends, maxDepth)
+--- Walks the extends chain starting at `typeName` looking for a known
+--- graph family. Stops at the first match. Returns a role descriptor
+--- (table with `family` and optional `tree` fields) or nil if no
+--- ancestor is a graph family. Bounded by `maxDepth` (default 32) to
+--- defend against malformed cycles in the extends map.
+local function detectRole(typeName, extends, maxDepth)
     maxDepth = maxDepth or 32
     local seen = {}
     local current = typeName
     for _ = 1, maxDepth do
         if current == nil then return nil end
-        if FAMILY_OF[current] then return FAMILY_OF[current] end
+        if ROLE_OF[current] then return ROLE_OF[current] end
         if seen[current] then
             -- Cycle in extends — Files.tsv-level error, separately reported.
             return nil
@@ -58,6 +60,14 @@ local function detectFamily(typeName, extends, maxDepth)
         current = extends[current]
     end
     return nil
+end
+
+--- Convenience: returns just the family kind ("basic" or "directed") or
+--- nil. Kept for backwards compat with callers (and tests) that just
+--- want the family.
+local function detectFamily(typeName, extends, maxDepth)
+    local role = detectRole(typeName, extends, maxDepth)
+    return role and role.family or nil
 end
 
 -- Auto-wired completion processor entries. Both run early (priority 50,
@@ -82,6 +92,42 @@ local COMPLETION_FOR = {
     directed = DIRECTED_COMPLETION,
 }
 
+-- Auto-wired file validator entries. All level="error" so a violation
+-- stops the load. Refs-exist comes first because it catches the cheapest
+-- authoring mistake (a typo in a link name); the cycle / tree checks
+-- only make sense once references resolve.
+local REFS_BASIC = readOnly({
+    expr = "graphRefsExist(rows, 'basic')",
+    level = "error",
+})
+
+local REFS_DIRECTED = readOnly({
+    expr = "graphRefsExist(rows, 'directed')",
+    level = "error",
+})
+
+local ACYCLIC = readOnly({
+    expr = "graphAcyclic(rows)",
+    level = "error",
+})
+
+local TREE_SHAPE = readOnly({
+    expr = "graphTreeShape(rows)",
+    level = "error",
+})
+
+-- Per-role list of validator entries to attach.
+local VALIDATORS_FOR_ROLE = {
+    basic            = {REFS_BASIC},
+    directed_graph   = {REFS_DIRECTED, ACYCLIC},
+    directed_tree    = {REFS_DIRECTED, ACYCLIC, TREE_SHAPE},
+}
+
+local function roleKey(role)
+    if role.family == "basic" then return "basic" end
+    return role.tree and "directed_tree" or "directed_graph"
+end
+
 -- True if `processors` already contains an entry whose expression matches
 -- `expr`. Used to keep applyAutoWiring idempotent across re-runs of the
 -- manifest loader (which can happen in tests or future hot-reload paths).
@@ -97,38 +143,65 @@ local function alreadyContainsExpr(processors, expr)
     return false
 end
 
---- Auto-attaches the matching completion pre-processor to every file whose
---- type transitively extends `basic_graph_node` / `graph_node` / `tree_node`.
---- Mutates the lcFn2PreProcessors map in place, prepending the auto-wired
---- entry so it runs *before* any user-authored pre-processors on the same
---- file (priority sorting also enforces this, but we want a deterministic
---- ordering when priorities tie).
+-- Appends `entry` to `list[lcfn]` (or creates the list) unless an entry
+-- with the same expression already exists. Used for both pre-processors
+-- and validators to keep applyAutoWiring idempotent.
+local function appendUnique(map, lcfn, entry, prepend)
+    local existing = map[lcfn]
+    if existing == nil then
+        map[lcfn] = {entry}
+    elseif not alreadyContainsExpr(existing, entry.expr) then
+        if prepend then
+            table.insert(existing, 1, entry)
+        else
+            existing[#existing + 1] = entry
+        end
+    end
+end
+
+--- Auto-attaches completion pre-processors AND validators to every file
+--- whose type transitively extends `basic_graph_node` / `graph_node` /
+--- `tree_node`. Mutates both maps in place.
+---
+--- Attached per family:
+---   basic         → completeBasicGraph    + graphRefsExist
+---   graph_node    → completeDirectedGraph + graphRefsExist + graphAcyclic
+---   tree_node     → completeDirectedGraph + graphRefsExist + graphAcyclic
+---                                         + graphTreeShape
+---
+--- Validators are appended (not prepended): user validators run first,
+--- catching authoring-specific errors before the structural checks.
 ---
 --- Arguments:
----   lcFn2PreProcessors: map lcfn -> list of processor_spec entries.
----   lcFn2Type:          map lcfn -> typeName (from manifest loader).
----   extendsMap:         map typeName -> superType (from manifest loader).
-local function applyAutoWiring(lcFn2PreProcessors, lcFn2Type, extendsMap)
+---   lcFn2PreProcessors:  map lcfn -> list of processor_spec entries.
+---   lcFn2FileValidators: map lcfn -> list of validator_spec entries.
+---   lcFn2Type:           map lcfn -> typeName (from manifest loader).
+---   extendsMap:          map typeName -> superType (from manifest loader).
+local function applyAutoWiring(lcFn2PreProcessors, lcFn2FileValidators,
+                               lcFn2Type, extendsMap)
     if type(lcFn2PreProcessors) ~= "table"
+        or type(lcFn2FileValidators) ~= "table"
         or type(lcFn2Type) ~= "table"
         or type(extendsMap) ~= "table" then
         error("graph_wiring.applyAutoWiring: arguments must be tables", 2)
     end
     for lcfn, typeName in pairs(lcFn2Type) do
-        local family = detectFamily(typeName, extendsMap)
-        if family then
-            local entry = assert(COMPLETION_FOR[family],
+        local role = detectRole(typeName, extendsMap)
+        if role then
+            local family = role.family
+            -- Completion pre-processor (priority 50, prepended so it runs
+            -- before user pre-processors).
+            local completion = assert(COMPLETION_FOR[family],
                 "graph_wiring: no completion entry for family " .. tostring(family))
-            local existing = lcFn2PreProcessors[lcfn]
-            if existing == nil then
-                lcFn2PreProcessors[lcfn] = {entry}
-            elseif not alreadyContainsExpr(existing, entry.expr) then
-                -- Prepend: auto-wired completion runs before user processors.
-                table.insert(existing, 1, entry)
+            appendUnique(lcFn2PreProcessors, lcfn, completion, true)
+            -- Validator stack (appended so user validators run first).
+            local validators = VALIDATORS_FOR_ROLE[roleKey(role)]
+            for _, v in ipairs(validators) do
+                appendUnique(lcFn2FileValidators, lcfn, v, false)
             end
             logger:info(string.format(
-                "Auto-wired %s graph completion for %s (typeName=%s)",
-                family, lcfn, tostring(typeName)))
+                "Auto-wired %s graph wiring for %s (typeName=%s, tree=%s)",
+                family, lcfn, tostring(typeName), tostring(role.tree == true)))
         end
     end
 end
@@ -145,8 +218,9 @@ local API = {
     getVersion = getVersion,
     applyAutoWiring = applyAutoWiring,
     detectFamily = detectFamily,
+    detectRole = detectRole,
     -- Exposed for tests / debugging.
-    FAMILY_OF = FAMILY_OF,
+    ROLE_OF = ROLE_OF,
 }
 
 local function apiCall(_, operation, ...)

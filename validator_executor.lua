@@ -16,6 +16,7 @@ local serializeInSandbox = serialization.serializeInSandbox
 
 local sandbox_env = require("sandbox_env")
 local validator_helpers = require("validator_helpers")
+local graph_helpers = require("graph_helpers")
 
 local logger = require("named_logger").getLogger(NAME)
 
@@ -40,6 +41,11 @@ local VALIDATOR_HELPERS = {
     -- Type introspection helpers
     listMembersOfTag = validator_helpers.listMembersOfTag,
     isMemberOfTag = validator_helpers.isMemberOfTag,
+    -- Graph validators (auto-wired by graph_wiring; also callable from
+    -- user validator expressions if they want extra graph checks).
+    graphRefsExist = graph_helpers.graphRefsExist,
+    graphAcyclic = graph_helpers.graphAcyclic,
+    graphTreeShape = graph_helpers.graphTreeShape,
 }
 
 -- ============================================================

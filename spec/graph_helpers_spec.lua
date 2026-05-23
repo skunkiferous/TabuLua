@@ -288,6 +288,126 @@ describe("graph_helpers", function()
     end)
   end)
 
+  describe("graphRefsExist", function()
+    it("returns true on a clean basic graph", function()
+      assert.is_true(graph_helpers.graphRefsExist(basicRows(), "basic"))
+    end)
+
+    it("returns true on a clean directed graph", function()
+      assert.is_true(graph_helpers.graphRefsExist(dagRows(), "directed"))
+    end)
+
+    it("reports a dangling basic link", function()
+      local rows = {
+        {name = "A", graphLinks = {"B"}},
+        {name = "B", graphLinks = {"Missing"}},
+      }
+      local result = graph_helpers.graphRefsExist(rows, "basic")
+      assert.is_string(result)
+      assert.is_truthy(result:find("Missing", 1, true))
+      assert.is_truthy(result:find("graphLinks", 1, true))
+    end)
+
+    it("reports a dangling directed child", function()
+      local rows = {
+        {name = "A", graphChildren = {"Ghost"}, graphParents = {}},
+      }
+      local result = graph_helpers.graphRefsExist(rows, "directed")
+      assert.is_string(result)
+      assert.is_truthy(result:find("Ghost", 1, true))
+    end)
+
+    it("checks graphParents too for directed", function()
+      local rows = {
+        {name = "A", graphChildren = {}, graphParents = {"Phantom"}},
+      }
+      local result = graph_helpers.graphRefsExist(rows, "directed")
+      assert.is_string(result)
+      assert.is_truthy(result:find("Phantom", 1, true))
+      assert.is_truthy(result:find("graphParents", 1, true))
+    end)
+
+    it("errors on an invalid family", function()
+      local result = graph_helpers.graphRefsExist({}, "bogus")
+      assert.is_string(result)
+      assert.is_truthy(result:find("invalid family", 1, true))
+    end)
+  end)
+
+  describe("graphAcyclic", function()
+    it("returns true on a DAG", function()
+      assert.is_true(graph_helpers.graphAcyclic(dagRows()))
+    end)
+
+    it("reports a cycle", function()
+      local result = graph_helpers.graphAcyclic(cyclicRows())
+      assert.is_string(result)
+      assert.is_truthy(result:find("cycle", 1, true))
+      -- Path should mention each node in the cycle.
+      assert.is_truthy(result:find("A", 1, true))
+      assert.is_truthy(result:find("B", 1, true))
+      assert.is_truthy(result:find("C", 1, true))
+    end)
+
+    it("flags self-loops as cycles", function()
+      local rows = {{name = "A", graphChildren = {"A"}, graphParents = {"A"}}}
+      local result = graph_helpers.graphAcyclic(rows)
+      assert.is_string(result)
+    end)
+  end)
+
+  describe("graphTreeShape", function()
+    -- A valid tree:   Root --> A, B; A --> C
+    local function treeRows()
+      return {
+        {name = "Root", graphChildren = {"A", "B"}, graphParents = {}},
+        {name = "A",    graphChildren = {"C"},      graphParents = {"Root"}},
+        {name = "B",    graphChildren = {},         graphParents = {"Root"}},
+        {name = "C",    graphChildren = {},         graphParents = {"A"}},
+      }
+    end
+
+    it("returns true on a valid tree", function()
+      assert.is_true(graph_helpers.graphTreeShape(treeRows()))
+    end)
+
+    it("rejects a node with two parents", function()
+      local rows = treeRows()
+      rows[4].graphParents = {"A", "B"}  -- C now has two parents
+      local result = graph_helpers.graphTreeShape(rows)
+      assert.is_string(result)
+      assert.is_truthy(result:find("2 parents", 1, true))
+      assert.is_truthy(result:find("C", 1, true))
+    end)
+
+    it("rejects two roots (disconnected forest)", function()
+      local rows = {
+        {name = "R1", graphChildren = {"A"}, graphParents = {}},
+        {name = "A",  graphChildren = {},    graphParents = {"R1"}},
+        {name = "R2", graphChildren = {"B"}, graphParents = {}},
+        {name = "B",  graphChildren = {},    graphParents = {"R2"}},
+      }
+      local result = graph_helpers.graphTreeShape(rows)
+      assert.is_string(result)
+      assert.is_truthy(result:find("2 roots", 1, true))
+      assert.is_truthy(result:find("R1", 1, true))
+      assert.is_truthy(result:find("R2", 1, true))
+    end)
+
+    it("rejects a tree with no root (all nodes have parents)", function()
+      -- This is structurally only possible with a cycle; the acyclic
+      -- validator catches it more precisely, but tree-shape gives a
+      -- helpful pointer too.
+      local rows = {
+        {name = "A", graphChildren = {"B"}, graphParents = {"B"}},
+        {name = "B", graphChildren = {"A"}, graphParents = {"A"}},
+      }
+      local result = graph_helpers.graphTreeShape(rows)
+      assert.is_string(result)
+      assert.is_truthy(result:find("no root", 1, true))
+    end)
+  end)
+
   describe("shortestPath", function()
     it("returns {a} when a == b", function()
       local rows = dagRows()
