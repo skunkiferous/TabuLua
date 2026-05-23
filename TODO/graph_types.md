@@ -87,27 +87,29 @@ Type aliases follow the existing snake_case convention used by `type_spec`,
 ### The node types
 
 All three node types are registered in `parsers/builtin.lua` as built-in
-record-type aliases. `tree_node` is defined by **redeclaring `name`** —
-a regular user-writable inheritance form that produces a distinct named
-type with no new fields:
+record-type aliases:
 
 ```text
-basic_graph_node = {name:node_name, graphLinks:{node_name}|nil}
-graph_node       = {name:node_name, graphParents:{node_name}|nil, graphChildren:{node_name}|nil}
+basic_graph_node = {graphLinks:{node_name}|nil, name:node_name}
+graph_node       = {graphChildren:{node_name}|nil, graphParents:{node_name}|nil, name:node_name}
 tree_node        = {extends:graph_node, name:node_name}
 ```
 
-The `tree_node` form is allowed because re-declaring a field with the same
-type is explicitly compatible (see
-[parsers/type_parsing.lua:540-560](../parsers/type_parsing.lua#L540-L560)).
-This means a user can define their own equally-structured-but-distinct
-sub-type by the same trick (e.g. `{extends:tree_node, name:node_name}` to
-add their own validator family) — there is no built-in privilege here.
+`tree_node`'s `extends`-with-same-field form parses successfully (per
+[parsers/type_parsing.lua:540-560](../parsers/type_parsing.lua#L540-L560)
+same-type redeclaration is compatible), but the engine canonicalises it
+to **the same parser as `graph_node`**. The two aliases are
+interchangeable at the parser layer. **Family distinction lives entirely
+in `Files.tsv` via the literal `superType=` string**: auto-wiring inspects
+the user-written `superType` (`basic_graph_node` / `graph_node` /
+`tree_node`) and attaches the matching validator set on that basis, not
+by walking the type chain. This is the same lookup style already used by
+`enum` and `custom_type_def`.
 
-**Documentation note** required in `DATA_FORMAT_README.md`: the redeclaration
-form is mildly weird. We should call it out under "Field Redefinition in
-Child Record Types" — same-type redeclaration is legal and is the supported
-idiom for "create a structurally identical but distinct sub-type".
+Authors who want a structurally identical but truly distinct *parser*
+type (e.g. to gate a custom record validator) must add a real
+distinguishing field — same-type redeclaration alone won't do it. This is
+out of scope for v1; revisit if real demand appears.
 
 ### The `node_name` PK type
 
@@ -161,15 +163,33 @@ Edge cases the parser must handle:
 Edge types are built-in record-type aliases parallel to the node types:
 
 ```text
-basic_graph_edge = {name:undirected_edge_key}
-graph_edge       = {name:directed_edge_key}
+basic_graph_edge = {comment:comment|nil, name:undirected_edge_key}
+graph_edge       = {comment:comment|nil, name:directed_edge_key}
 tree_edge        = {extends:graph_edge, name:directed_edge_key}
 ```
 
 The `name` column **is** the compound edge key — single-column primary key,
-no schema change to TabuLua's PK model. Authors extending an edge type add
-their own columns (`weight:float|nil`, `kind:EdgeKind|nil`, etc.) using
-existing record-inheritance syntax.
+no schema change to TabuLua's PK model.
+
+The `comment` field is engine-owned and serves two purposes:
+
+1. **Forces record interpretation.** Per
+   [parsers/lpeg_parser.lua:96-106](../parsers/lpeg_parser.lua#L96-L106),
+   a `{key:val}` spec with a single pair parses as a *map* type, not a
+   single-field record. A second field is therefore required to land in
+   the record branch. `comment:comment|nil` is the cheapest such field
+   that also has user-facing value.
+2. **Free-text description column.** Edge files routinely want a place
+   to note "what this edge means" — `comment` gives every edge file one
+   out of the box without authors having to declare it themselves.
+
+Like `tree_node`, `tree_edge` aliases to the same canonical parser as
+`graph_edge`. The tree-vs-DAG distinction lives in `Files.tsv superType`,
+not at the parser layer.
+
+Authors extending an edge type add their own columns (`weight:float|nil`,
+`kind:EdgeKind|nil`, etc.) using existing record-inheritance syntax. The
+`comment` column flows through inheritance automatically.
 
 ### Edge files: attaching to a node file
 
@@ -199,15 +219,21 @@ QuestEdges.tsv      QuestEdge            graph_edge             Quests.tsv      
   needing extra per-edge data can extend the edge record type with more
   columns.
 
-### Helpers (`processor_helpers` module)
+### Helpers (`graph_helpers` module)
 
-The `processor_helpers` module — already planned in pre_processors.md — gets
-a graph-helper section:
+A new `graph_helpers` module groups every graph-shaped utility — the small
+accessors, the edge-key codec, the cycle-detection helper used by the
+validators, and the traversal helpers. Keeping them in a dedicated module
+(rather than folding them into a generic `processor_helpers`) keeps the
+graph surface area cohesive and avoids loading graph code on behalf of
+rows that have nothing to do with graphs.
+
+**Accessors and edge-key codec:**
 
 | Helper | Applies to | Returns |
 |---|---|---|
-| `isRoot(row)` | `graph_node`, `tree_node` | `true` iff `#graphParents == 0` |
-| `isLeaf(row)` | `graph_node`, `tree_node` | `true` iff `#graphChildren == 0` |
+| `isRoot(row)` | `graph_node`, `tree_node` | `true` iff `#graphParents == 0`. Errors on `basic_graph_node`. |
+| `isLeaf(row)` | `graph_node`, `tree_node` | `true` iff `#graphChildren == 0`. Errors on `basic_graph_node`. |
 | `parentsOf(row)` | `graph_node`, `tree_node` | `graphParents` as a list (never nil) |
 | `childrenOf(row)` | `graph_node`, `tree_node` | `graphChildren` as a list (never nil) |
 | `neighboursOf(row)` | `basic_graph_node` | `graphLinks` as a list (never nil) |
@@ -216,11 +242,39 @@ a graph-helper section:
 | `makeUndirectedEdgeKey(a, b)` | undirected | `"<lower>__<higher>"` (canonical) |
 | `edgeForLink(edgeRows, a, b)` | both edge kinds | the edge row whose endpoints are `{a,b}`, or `nil` |
 
-These are convenience wrappers — none does work that can't be expressed
-inline. Their value is making validator and processor expressions read
-declaratively.
+**Traversal:**
+
+| Helper | Applies to | Returns |
+|---|---|---|
+| `bfs(row, direction?)` | all three | Iterator yielding rows in BFS order starting at (and including) `row`. `direction` defaults to the natural direction — `graphLinks` for basic, `graphChildren` for directed. On directed families, pass `"parents"` to walk against the arrows. `"parents"` errors on `basic_graph_node`. |
+| `dfs(row, direction?)` | all three | Same contract as `bfs`, depth-first. |
+| `ancestorsOf(row)` | `graph_node`, `tree_node` | List of every node reachable by following `graphParents` from `row` (excluding `row` itself). Errors on `basic_graph_node`. |
+| `descendantsOf(row)` | `graph_node`, `tree_node` | List of every node reachable by following `graphChildren` from `row` (excluding `row` itself). Errors on `basic_graph_node`. |
+| `shortestPath(a, b)` | all three | List of rows forming an unweighted shortest path from `a` to `b` inclusive, or `nil` if disconnected. For directed families, follows `graphChildren`. |
+
+When a helper is applied to a family it doesn't support (e.g. `ancestorsOf`
+on a `basic_graph_node` row), the helper errors with a message naming both
+the helper and the row's type — matching the decision on `isRoot` in
+Open Question 3. Silent fallback would mask schema-mismatch bugs in
+processor and validator expressions.
+
+The accessors and edge-key codec are convenience wrappers — none does work
+that can't be expressed inline. Their value is making validator and
+processor expressions read declaratively. The traversal helpers do real
+work and consolidate it in one tested place; without them, every consumer
+would re-implement BFS/DFS over the engine's row/lookup model.
+
+All traversal helpers carry a visited-set guard so they remain safe to call
+on `basic_graph_node` data, which permits cycles by design.
 
 ### Auto-wiring via `superType` chain
+
+Family detection matches on the **literal `superType=` string** the author
+wrote in `Files.tsv` (one of `basic_graph_node` / `graph_node` /
+`tree_node`, possibly via an intermediate user alias that resolves
+transitively). It does **not** rely on parser-type identity, because
+`tree_node` and `graph_node` alias to the same canonical parser — they
+are indistinguishable at the parser layer.
 
 When a file declares `superType=<graph-node-family>` (directly or
 transitively), the engine auto-attaches:
@@ -254,9 +308,8 @@ plan but not v1 work.
 
 ### Cycle-detection helper
 
-`processor_helpers` (or a new `graph_helpers` if the API grows) exposes a
-shared cycle-detection helper used by both the cycle validator and the
-single-root tree validator:
+`graph_helpers` exposes a shared cycle-detection helper used by both the
+cycle validator and the single-root tree validator:
 
 ```text
 findCycle(rows, parentField) → nil | path-array
@@ -272,7 +325,7 @@ existing `lookup` helper internally.
 
 Each phase here is independently shippable.
 
-**Phase A1 — Type registration**
+**Phase A1 — Type registration** ✅ *Done.*
 
 - `parsers/builtin.lua`: register `node_name`, `undirected_edge_key`,
   `directed_edge_key`, `basic_graph_node`, `graph_node`, `tree_node`,
@@ -284,14 +337,29 @@ Each phase here is independently shippable.
 - Tests: `spec/parsers_graph_types_spec.lua` covering all parser paths
   including the edge cases enumerated above.
 
-**Phase A2 — Helpers**
+Landed adjustments (from Open Questions 6 & 7):
 
-- Add the graph helpers (`isRoot`, `isLeaf`, `parentsOf`, `childrenOf`,
-  `neighboursOf`, `splitEdgeKey`, `makeEdgeKey`, `makeUndirectedEdgeKey`,
-  `edgeForLink`, `findCycle`) to `processor_helpers`.
-- Helpers are pure-functional, no engine state.
-- Tests: extend `spec/processor_helpers_spec.lua` (or create it if the
-  pre-processors plan didn't already).
+- Edge types include `comment:comment|nil` (single-field `{key:val}`
+  parses as a map, so a second field is required).
+- `tree_node` / `tree_edge` alias to their parent parsers. Family
+  distinction is keyed off `Files.tsv superType` strings, not parser
+  identity.
+
+**Phase A2 — `graph_helpers` module**
+
+- Create the new `graph_helpers` module with the accessors, edge-key codec,
+  cycle-detection helper, and traversal helpers enumerated above:
+  `isRoot`, `isLeaf`, `parentsOf`, `childrenOf`, `neighboursOf`,
+  `splitEdgeKey`, `makeEdgeKey`, `makeUndirectedEdgeKey`, `edgeForLink`,
+  `findCycle`, `bfs`, `dfs`, `ancestorsOf`, `descendantsOf`, `shortestPath`.
+- Helpers are pure-functional, no engine state. Traversal helpers reuse the
+  row-lookup mechanism already used by validators, and carry a visited-set
+  guard so they stay safe on cyclic basic graphs.
+- Family-mismatch errors are raised at call time with a message naming both
+  the helper and the row's type.
+- Tests: `spec/graph_helpers_spec.lua`, covering every helper against
+  fixtures for each of the three families, including cycle-safety for
+  basic-graph traversal and the family-mismatch error paths.
 
 **Phase A3 — Auto-wired completion pre-processors**
 
@@ -340,8 +408,8 @@ in each "parent" skill, to buy the new skill.
 - `DATA_FORMAT_README.md`: new "Graph Types" section covering the three
   node types, the edge-key types, `node_name`, `edgesFor`, auto-wiring,
   and the same-type-redeclaration idiom used by `tree_node`.
-- `MODULES.md`: update `processor_helpers` description; if `graph_wiring`
-  is a new module, add a module-detail entry.
+- `MODULES.md`: add a module-detail entry for the new `graph_helpers`
+  module; if `graph_wiring` is a separate module, add an entry for that too.
 - `tutorial/README.md`: walkthrough of the chosen tutorial file.
 - `CHANGELOG.md`: `### Added` bullet under `[Unreleased]`.
 - `README.md`: "Features" bullet for graph support.
@@ -407,9 +475,11 @@ Layer A and by the mod-override implementation.
   lists from mods.** Mod-overrides Phase 4 covers list mutations
   (`append_<col>`, `remove_<col>`, `replace_<col>` with value-based
   matching). Positional editing within these lists is tier-C territory.
-- **Graph traversal helpers** (BFS, DFS, ancestor/descendant queries,
-  shortest path). Out of scope for the *type system* — these belong in a
-  separate `graph_query` library if/when a real consumer appears.
+- **Weighted-edge graph queries** (Dijkstra, A*, max-flow, etc.). The
+  built-in `shortestPath` is unweighted; consumers that need weighted
+  traversal can read `weight` (or any other column) off the attached edge
+  file and run their own algorithm. Folding this into `graph_helpers`
+  would require taking a dependency on the edge-file schema.
 - **Heterogeneous edge types within a single edge file.** All rows in an
   edge file share the file's record type. Mixing edge kinds requires
   union types on edge columns, no special engine support.
@@ -464,5 +534,22 @@ Layer A and by the mod-override implementation.
    computed". Document this prominently — it's the most likely source of
    user surprise.
    Response: Agreed. We leave as is, but warn authors about this.
+
+6. **`tree_node` / `tree_edge` parser identity.** *(Closed during Phase A1.)*
+   The plan originally claimed `{extends:X, name:Y}` with same-typed `Y`
+   produces a distinct sub-type. The engine canonicalises this to the
+   same parser as the parent, so `tree_node` ≡ `graph_node` and
+   `tree_edge` ≡ `graph_edge` at the parser layer. Decision: keep the
+   aliases as authored, but make auto-wiring key off the literal
+   `superType=` string in `Files.tsv`. See "Auto-wiring via `superType`
+   chain" above.
+
+7. **Single-field record syntax.** *(Closed during Phase A1.)* A `{key:val}`
+   spec with exactly one pair parses as a *map*, not a single-field
+   record (per
+   [parsers/lpeg_parser.lua:96-106](../parsers/lpeg_parser.lua#L96-L106)).
+   The edge types therefore include a `comment:comment|nil` column to
+   land in the record branch. Doubles as a free description column for
+   every edge file.
 
 These should be resolved during implementation, not as blockers.

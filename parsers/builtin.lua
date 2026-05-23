@@ -884,6 +884,121 @@ function M.registerDerivedParsers()
     end
     generators.extendsOrRestrictsType('quantity', 'tagged_number')
     generators.registerComparator('quantity', generators.getCompInternal('tagged_number'))
+
+    -- ============================================================
+    -- Graph types
+    --
+    -- See TODO/graph_types.md for the full design. Phase A1 lands the
+    -- parser-side types only; auto-wiring, validators, and edge-file
+    -- discovery come in later phases.
+    -- ============================================================
+
+    -- A node_name is a name (identifier-chain ASCII string) that does not
+    -- contain the substring "__". The "__" exclusion is what makes the
+    -- compound edge-key encoding "<a>__<b>" unambiguous.
+    registration.restrictWithValidator(ownBadVal, 'name', 'node_name',
+    function (str)
+        if str:find('__', 1, true) then
+            return "must not contain '__' (reserved as edge-key separator)"
+        end
+        return true
+    end)
+
+    -- Cached node_name parser used by the edge-key parsers below to
+    -- validate each half of "<a>__<b>".
+    local node_name_parser = parseType(nullBadVal, 'node_name')
+    assert(node_name_parser, "node_name parser not registered")
+
+    -- Splits an edge-key value of the form "<a>__<b>" into its two halves,
+    -- validating each as a node_name. Returns a, b on success; on failure,
+    -- logs to badVal and returns nil.
+    local function splitEdgeKeyHalves(badVal, edge_type, value)
+        local sep_start, sep_end = value:find('__', 1, true)
+        if not sep_start then
+            utils.log(badVal, edge_type, value,
+                "expected format: <node_name>__<node_name>")
+            return nil
+        end
+        if value:find('__', sep_end + 1, true) then
+            utils.log(badVal, edge_type, value,
+                "edge key has more than two halves")
+            return nil
+        end
+        local a = value:sub(1, sep_start - 1)
+        local b = value:sub(sep_end + 1)
+        if a == '' or b == '' then
+            utils.log(badVal, edge_type, value,
+                "edge key has empty half")
+            return nil
+        end
+        local parsed_a = generators.callParser(node_name_parser, badVal, a, 'tsv')
+        if parsed_a == nil then return nil end
+        local parsed_b = generators.callParser(node_name_parser, badVal, b, 'tsv')
+        if parsed_b == nil then return nil end
+        return parsed_a, parsed_b
+    end
+
+    -- An undirected edge key. Halves are sorted ascending lexicographically;
+    -- if reordering was needed, emits a warning (the data is correct, but
+    -- the file will be canonicalised on the next reformatter run).
+    -- Self-loops (A__A) are valid for undirected graphs.
+    registration.extendParser(ownBadVal, 'name', 'undirected_edge_key',
+    function (badVal, value, _reformatted, _context)
+        local a, b = splitEdgeKeyHalves(badVal, 'undirected_edge_key', value)
+        if not a then return nil, value end
+        if a > b then
+            a, b = b, a
+            local source = badVal.source_name or ""
+            local line = badVal.line_no or 0
+            local where = source ~= "" and
+                (" in " .. source .. " on line " .. line) or ""
+            local logger = badVal.logger or state.logger
+            logger:warn("undirected_edge_key '" .. value
+                .. "' reordered to canonical form '" .. a .. "__" .. b
+                .. "'" .. where)
+        end
+        local canonical = a .. "__" .. b
+        return canonical, canonical
+    end)
+
+    -- A directed edge key. Authored order is preserved (no reorder).
+    -- Self-loops (A__A) parse fine here; the cycle validator on the node
+    -- file flags them as cycles for DAG/tree contexts later.
+    registration.extendParser(ownBadVal, 'name', 'directed_edge_key',
+    function (badVal, value, _reformatted, _context)
+        local a, b = splitEdgeKeyHalves(badVal, 'directed_edge_key', value)
+        if not a then return nil, value end
+        local result = a .. "__" .. b
+        return result, result
+    end)
+
+    -- Graph node record types.
+    registration.registerAlias(ownBadVal, 'basic_graph_node',
+        '{graphLinks:{node_name}|nil,name:node_name}')
+    registration.registerAlias(ownBadVal, 'graph_node',
+        '{graphChildren:{node_name}|nil,graphParents:{node_name}|nil,name:node_name}')
+    -- tree_node aliases graph_node (same canonical form). It is the same
+    -- parser; tree-vs-DAG distinction is keyed off the user-written
+    -- `superType` value in Files.tsv at auto-wiring time, not parser
+    -- identity. The redeclared 'name' field is kept for documentation
+    -- value and to mirror tree_edge below.
+    registration.registerAlias(ownBadVal, 'tree_node',
+        '{extends:graph_node,name:node_name}')
+
+    -- Edge record types parallel to the node types. Authors extending an
+    -- edge type add their own columns (weight, kind, ...) using existing
+    -- record-inheritance syntax. The `comment` column is included so the
+    -- spec parses as a proper record (single-field {key:val} parses as a
+    -- map per parsers/lpeg_parser.lua) and gives authors a free-text
+    -- description column out of the box.
+    registration.registerAlias(ownBadVal, 'basic_graph_edge',
+        '{comment:comment|nil,name:undirected_edge_key}')
+    registration.registerAlias(ownBadVal, 'graph_edge',
+        '{comment:comment|nil,name:directed_edge_key}')
+    -- tree_edge aliases graph_edge (same canonical form). Family-level
+    -- distinction lives in Files.tsv superType, not in the parser identity.
+    registration.registerAlias(ownBadVal, 'tree_edge',
+        '{extends:graph_edge,name:directed_edge_key}')
 end
 
 return M
