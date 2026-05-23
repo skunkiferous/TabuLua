@@ -345,7 +345,7 @@ Landed adjustments (from Open Questions 6 & 7):
   distinction is keyed off `Files.tsv superType` strings, not parser
   identity.
 
-**Phase A2 — `graph_helpers` module**
+**Phase A2 — `graph_helpers` module** ✅ *Done.*
 
 - Create the new `graph_helpers` module with the accessors, edge-key codec,
   cycle-detection helper, and traversal helpers enumerated above:
@@ -360,6 +360,22 @@ Landed adjustments (from Open Questions 6 & 7):
 - Tests: `spec/graph_helpers_spec.lua`, covering every helper against
   fixtures for each of the three families, including cycle-safety for
   basic-graph traversal and the family-mismatch error paths.
+
+Landed adjustments:
+
+- Traversal helpers take `rows` explicitly: `bfs(row, rows, direction?)`,
+  `dfs(row, rows, direction?)`, `ancestorsOf(row, rows)`,
+  `descendantsOf(row, rows)`, `shortestPath(a, b, rows)`. The row wrappers
+  don't expose a back-reference to the file's rows, and adding one is
+  out of scope here; passing `rows` explicitly mirrors the existing
+  `lookup(rows, ...)` convention in `validator_helpers`.
+- Family-mismatch detection is **best-effort** rather than schema-aware:
+  helpers check for the *presence* of the wrong-family field
+  (e.g. `isRoot` errors when `row.graphLinks ~= nil`) but cannot detect
+  family on a row whose engine-owned fields are all nil. The common
+  misuse case (calling a directed helper on populated undirected data)
+  is caught; ambiguous isolated rows fall through. Tightening this
+  needs schema-aware row wrappers — out of scope for Phase A2.
 
 **Phase A3 — Auto-wired completion pre-processors**
 
