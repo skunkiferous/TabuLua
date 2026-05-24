@@ -92,6 +92,51 @@ The COG environment contains whatever is passed as the `env` parameter. When use
 
 **Operation quota:** 10,000 operations per code block.
 
+## Context: Pre-Processors
+
+Pre-processors run on each file after all cells are parsed but **before** any validator. Unlike validators, they can **mutate** the parsed rows (via `setCell`). Typical uses: deriving bidirectional references, normalising data across rows, filling in back-references for graph- or tree-shaped data.
+
+**Available variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `rows` / `file` | Array of all data rows. Each entry is a processor-row proxy with read-only field access |
+| `fileName` | Name of the file being processed |
+| `ctx` | Writable table for accumulating state across processors (see [Writable Context](#writable-context-ctx)) |
+| Published contexts | Data from earlier-loaded files |
+| Code libraries | By name |
+| Helper functions | Same read-side helpers as file validators (`unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy`, `listMembersOfTag`, `isMemberOfTag`) |
+| Write helpers | `setCell`, `clearCell`, `rowByKey`, `dataIndex`, `copy` (see below) |
+| Graph helpers | `completeBasicGraph(rows?)`, `completeDirectedGraph(rows?)` |
+
+**Write helpers:**
+
+| Helper | Purpose |
+|--------|---------|
+| `setCell(row, column, value)` | Set a parsed value on a row; re-validates through the column's type |
+| `clearCell(row, column)` | Equivalent to `setCell(row, column, nil)` — only valid for nullable columns |
+| `rowByKey(key)` | O(1) lookup into the current file by primary-key value; returns `nil` if missing |
+| `dataIndex(row)` | 1-based data-row position (excludes the header row) |
+| `copy(value)` | Deep clone of a read-only value, fully mutable |
+
+**Mutating collections:**
+
+Reading a row's column returns the parsed value as **read-only**, exactly like in validators. A collection-valued cell (`row.unlocks`, `row.tags`, ...) therefore cannot be modified in place. To change a collection: deep-copy it with `copy`, mutate the copy, install it via `setCell`:
+
+```text
+local u = copy(row.unlocks)
+table.insert(u, newItem)
+setCell(row, 'unlocks', u)
+```
+
+Direct assignment (`row.foo = "bar"`) is not supported — every write goes through `setCell` so values are re-parsed against the column's type.
+
+**Ordering:** Within a file, processors run in ascending `priority` (default `100`); ties break in declaration order. Later processors see the writes of earlier ones.
+
+**Return value:** Generally ignored, but `false` or a non-empty string is treated as a failure (same convention as validators). The spec's `level` field (`"error"` or `"warn"`) controls whether the failure aborts validation or just collects a warning.
+
+**Operation quota:** 50,000 operations per file (higher than validator quotas because mutation work is more expensive than pure checks).
+
 ## Context: Row Validators
 
 Row validators run on each row after all cells are parsed. Like cell expressions, `self.colName` returns the **parsed value** directly.
@@ -294,7 +339,8 @@ All expression contexts (cell expressions, validators, COG) share a common set o
 | **Lua libraries** | `math`, `string`, `table` |
 | **Lua functions** | `pairs`, `ipairs`, `type`, `tostring`, `tonumber`, `select`, `unpack`, `next`, `pcall` |
 | **TabuLua API** | `predicates` (all predicate functions), `stringUtils` (`trim`, `split`, `parseVersion`), `tableUtils` (`keys`, `values`, `pairsCount`, `longestMatchingPrefix`, `sortCaseInsensitive`), `equals` (deep comparison) |
-| **Validator helpers** | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy`, `listMembersOfTag`, `isMemberOfTag` (validators only) |
+| **Validator helpers** | `unique`, `sum`, `min`, `max`, `avg`, `count`, `all`, `any`, `none`, `filter`, `find`, `lookup`, `groupBy`, `listMembersOfTag`, `isMemberOfTag` (validators and pre-processors only) |
+| **Pre-processor helpers** | `setCell`, `clearCell`, `rowByKey`, `dataIndex`, `copy`, `completeBasicGraph`, `completeDirectedGraph` (pre-processors only) |
 | **Code libraries** | By declared name (e.g., `gameLib`, `utils`) |
 | **Published data** | By context name or globally |
 

@@ -404,12 +404,25 @@ The top-level `processFiles(directories, badVal, opt_excludeDirs, opt_variants)`
 | `lcFn2JoinedTypeName` | `table` | Map of lowercase filename → joined type name |
 | `lcFn2RowValidators` | `table` | Map of lowercase filename → array of row validator specs |
 | `lcFn2FileValidators` | `table` | Map of lowercase filename → array of file validator specs |
-| `lcFn2PreProcessors` | `table` | Map of lowercase filename → array of pre-processor specs |
+| `lcFn2PreProcessors` | `table` | Map of lowercase filename → array of pre-processor specs (see [Pre-Processor Specs](#pre-processor-specs)) |
 | `lcSkippedFiles` | `table` | Map of lowercase filename → `true` for files skipped by variant filtering |
+
+### Pre-Processor Specs
+
+Each entry in `lcFn2PreProcessors[fileName]` is a normalized record produced by `processor_executor.normalizeProcessorSpec`. The on-disk form may be either a raw expression string (which gets defaulted) or a structured table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `expr` | `string` | Lua expression run in the processor sandbox |
+| `level` | `string` | `"error"` (default) or `"warn"` — controls whether a failure aborts validation or just records a warning |
+| `priority` | `number` | Lower runs first within a file (default `100`); ties break in declaration order |
+| `rerunAfterPatches` | `boolean` | Reserved for the future mod-override re-run phase (default `false`) |
 
 ### Validation Warning Records
 
-Each warning in `validationWarnings` has:
+The `validationWarnings` array holds two distinct record shapes — one from validators and one from pre-processors. Consumers iterating the array should check for `validator` vs `processor` to distinguish them.
+
+**Validator warnings:**
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -418,6 +431,14 @@ Each warning in `validationWarnings` has:
 | `rowIndex` | `integer\|nil` | Row index (for row validators) |
 | `fileName` | `string\|nil` | File name (for file validators) |
 | `packageId` | `string\|nil` | Package ID (for package validators) |
+
+**Pre-processor warnings:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `processor` | `string` | The processor expression |
+| `message` | `string` | The warning message |
+| `fileName` | `string` | File name being processed |
 
 ---
 
@@ -444,8 +465,9 @@ The complete processing pipeline, in order:
    i. For `custom_type_def` files (or subtypes thereof), register each data row as a custom type
    j. For `custom_type_def` child files, validate that child field types are subtypes of parent field types
    k. Register file column structure as a record type
-9. **Run validators** (row → file → package)
-10. **Return result** with all parsed data and metadata
+9. **Run pre-processors** for each file (in `lcFn2PreProcessors` order, per-file in ascending `priority`). Processors mutate parsed cell values via `setCell`/`clearCell`; subsequent validators see the mutated state. Failures at `level="error"` count against `validationPassed`; `level="warn"` failures are appended to `validationWarnings` with the pre-processor warning record shape (see [Validation Warning Records](#validation-warning-records))
+10. **Run validators** (row → file → package)
+11. **Return result** with all parsed data and metadata
 
 ### Read-Only Enforcement
 
