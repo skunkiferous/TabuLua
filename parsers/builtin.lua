@@ -893,16 +893,37 @@ function M.registerDerivedParsers()
     -- discovery come in later phases.
     -- ============================================================
 
-    -- A node_name is a name (identifier-chain ASCII string) that does not
-    -- contain the substring "__". The "__" exclusion is what makes the
-    -- compound edge-key encoding "<a>__<b>" unambiguous.
-    registration.restrictWithValidator(ownBadVal, 'name', 'node_name',
+    -- A composable_name is a name (identifier-chain ASCII string) with
+    -- three additional restrictions, all aimed at keeping any compound
+    -- "<a>__<b>" encoding that uses `__` as a separator unambiguous:
+    --   * must not contain "__" (which is the separator)
+    --   * must not start with "_" (would let "x" + "_y" and "x_" + "y"
+    --     encode to the same key "x___y" and decode the wrong way)
+    --   * must not end with "_" (symmetric to the previous case)
+    -- Together these three rules guarantee that every "<a>__<b>" string
+    -- has exactly one "__" separator and splits cleanly on the first
+    -- match. Graph edge-key types are the first consumer, but the type
+    -- is also useful for any future compound-key context — hence the
+    -- general name and the `node_name` alias.
+    registration.restrictWithValidator(ownBadVal, 'name', 'composable_name',
     function (str)
         if str:find('__', 1, true) then
-            return "must not contain '__' (reserved as edge-key separator)"
+            return "must not contain '__' (reserved as compound-key separator)"
+        end
+        if str:sub(1, 1) == '_' then
+            return "must not start with '_' (reserved for compound-key encoding)"
+        end
+        if str:sub(-1, -1) == '_' then
+            return "must not end with '_' (reserved for compound-key encoding)"
         end
         return true
     end)
+
+    -- `node_name` is a backwards-compatible alias for use by the graph
+    -- node families. Existing built-in record types and any user types
+    -- that wrote `name:node_name` continue to resolve to the same
+    -- parser (and produce the same canonical form on schema export).
+    registration.registerAlias(ownBadVal, 'node_name', 'composable_name')
 
     -- Cached node_name parser used by the edge-key parsers below to
     -- validate each half of "<a>__<b>".

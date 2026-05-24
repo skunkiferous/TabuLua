@@ -1716,14 +1716,37 @@ author-defined `parents` / `children` fields on user-extended record types.
 
 ### The `node_name` Primary-Key Type
 
-`node_name` is a new built-in type alias: a `name` (identifier-chain ASCII
-string) that additionally **rejects the substring `__`**. The exclusion is
-what makes the compound edge-key encoding `<a>__<b>` unambiguous. Any
-`node_name` value can be split on the first `__` and the two halves are
-themselves guaranteed to be valid `node_name`s.
+`node_name` is a built-in alias of **`composable_name`** — a `name`
+(identifier-chain ASCII string) with three additional restrictions, all
+of which keep any compound `<a>__<b>` encoding using `__` as a separator
+unambiguous:
+
+- **must not contain `__`** — `__` is the separator itself, so a name
+  containing `__` would create extra separators inside one half.
+- **must not start with `_`** — otherwise a compound key from `"x"` to
+  `"_y"` would encode as `"x___y"` (3 underscores), the same string as a
+  compound key from `"x_"` to `"y"`. The decoder can't tell them apart
+  and silently picks one interpretation; for graph edges, PK uniqueness
+  then merges what should be two distinct edges into one.
+- **must not end with `_`** — symmetric to the previous case.
+
+Single underscores are still fine anywhere they're not at the start/end of
+the whole string: `a_b`, `foo._bar`, `foo_.bar` are all valid.
+
+Together these rules guarantee every compound-key string has exactly one
+`__` separator, splits cleanly on the first match, and round-trips
+losslessly. The graph edge-key types (`undirected_edge_key`,
+`directed_edge_key`) are the first consumer, but the underlying
+`composable_name` is useful in any future compound-key context — hence
+the general name. `node_name` remains as the readable alias for the
+graph-node use case; both names resolve to the same parser, and writing
+`name:node_name` in a record type is equivalent to `name:composable_name`.
 
 The PK column of every graph-node-family file MUST be `name:node_name`
-(directly or via an extension).
+(directly or via an extension). Error messages naming the type will
+say `Bad composable_name ...` — the canonical type name, same convention
+as for any other aliased type (e.g. errors for the `gold` alias say
+"Bad uint").
 
 ### Auto-Wired Completion Pre-Processor
 

@@ -40,29 +40,49 @@ describe("parsers - graph types", function()
       assert.is_not_nil(p, "node_name parser is nil")
       assert.same({"abc", "abc"}, {p(badVal, "abc")})
       assert.same({"a_b", "a_b"}, {p(badVal, "a_b")})
-      assert.same({"_abc", "_abc"}, {p(badVal, "_abc")})
       assert.same({"abc.def", "abc.def"}, {p(badVal, "abc.def")})
-      assert.same({"_a._b", "_a._b"}, {p(badVal, "_a._b")})
+      assert.same({"foo._bar", "foo._bar"}, {p(badVal, "foo._bar")})
+      assert.same({"foo_.bar", "foo_.bar"}, {p(badVal, "foo_.bar")})
       assert.same({}, log_messages)
     end)
 
     it("rejects names containing '__'", function()
+      -- Error messages mention the canonical type (`composable_name`),
+      -- not the alias (`node_name`) — same convention as other aliased
+      -- types in TabuLua (e.g. `gold` errors say "Bad uint").
       local log_messages = {}
       local badVal = mockBadVal(log_messages)
       local p = parsers.parseType(badVal, "node_name")
       assert.is_nil((p(badVal, "a__b")))
-      assert.is_nil((p(badVal, "__a")))
-      assert.is_nil((p(badVal, "a__")))
       assert.is_nil((p(badVal, "a.b__c")))
       assert.same({
-        "Bad node_name  in test on line 1: 'a__b'"
-          .. " (must not contain '__' (reserved as edge-key separator))",
-        "Bad node_name  in test on line 1: '__a'"
-          .. " (must not contain '__' (reserved as edge-key separator))",
-        "Bad node_name  in test on line 1: 'a__'"
-          .. " (must not contain '__' (reserved as edge-key separator))",
-        "Bad node_name  in test on line 1: 'a.b__c'"
-          .. " (must not contain '__' (reserved as edge-key separator))",
+        "Bad composable_name  in test on line 1: 'a__b'"
+          .. " (must not contain '__' (reserved as compound-key separator))",
+        "Bad composable_name  in test on line 1: 'a.b__c'"
+          .. " (must not contain '__' (reserved as compound-key separator))",
+      }, log_messages)
+    end)
+
+    it("rejects names starting or ending with '_'", function()
+      -- Leading / trailing '_' would create edge-key ambiguity: an edge
+      -- from "a_" to "b" would encode as "a___b", the same string as an
+      -- edge from "a" to "_b". Forbid both to keep encoding lossless.
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local p = parsers.parseType(badVal, "node_name")
+      assert.is_nil((p(badVal, "_abc")))
+      assert.is_nil((p(badVal, "abc_")))
+      assert.is_nil((p(badVal, "_a._b")))
+      assert.is_nil((p(badVal, "a.b_")))
+      assert.same({
+        "Bad composable_name  in test on line 1: '_abc'"
+          .. " (must not start with '_' (reserved for compound-key encoding))",
+        "Bad composable_name  in test on line 1: 'abc_'"
+          .. " (must not end with '_' (reserved for compound-key encoding))",
+        "Bad composable_name  in test on line 1: '_a._b'"
+          .. " (must not start with '_' (reserved for compound-key encoding))",
+        "Bad composable_name  in test on line 1: 'a.b_'"
+          .. " (must not end with '_' (reserved for compound-key encoding))",
       }, log_messages)
     end)
 
@@ -73,6 +93,24 @@ describe("parsers - graph types", function()
       assert.is_nil((p(badVal, "123abc")))
       assert.is_nil((p(badVal, "abc-def")))
       assert.is_nil((p(badVal, "")))
+    end)
+
+    it("`composable_name` and `node_name` resolve to the same parser", function()
+      -- node_name is documented as an alias of composable_name; both
+      -- names should reach the same parser and accept/reject the same
+      -- values.
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local p1 = parsers.parseType(badVal, "composable_name")
+      local p2 = parsers.parseType(badVal, "node_name")
+      assert.is_not_nil(p1, "composable_name parser is nil")
+      assert.is_not_nil(p2, "node_name parser is nil")
+      assert.equals(p1, p2,
+        "node_name should resolve to the composable_name parser")
+      -- Spot-check that the canonical name works directly.
+      assert.same({"abc", "abc"}, {p1(badVal, "abc")})
+      assert.is_nil((p1(badVal, "_abc")))
+      assert.is_nil((p1(badVal, "abc__def")))
     end)
   end)
 

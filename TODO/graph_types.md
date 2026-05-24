@@ -344,6 +344,15 @@ Landed adjustments (from Open Questions 6 & 7):
 - `tree_node` / `tree_edge` alias to their parent parsers. Family
   distinction is keyed off `Files.tsv superType` strings, not parser
   identity.
+- The PK-type restrictions were tightened in two follow-up passes after
+  initial review: `node_name` was extended to also forbid leading and
+  trailing `_` (closing a silent edge-key ambiguity where `"a_"`→`"b"`
+  and `"a"`→`"_b"` would encode to the same string `"a___b"`), and the
+  underlying type was then renamed to `composable_name` to reflect its
+  actual purpose (safe composition via `__`, not graph-specific naming).
+  `node_name` remains as a backwards-compatible alias of
+  `composable_name`; both names resolve to the same parser and produce
+  the same canonical form.
 
 **Phase A2 — `graph_helpers` module** ✅ *Done.*
 

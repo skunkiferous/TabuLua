@@ -29,11 +29,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   Family detection keys off the literal `superType=` string in
   `Files.tsv` and walks the `extends` chain transitively, so a user
   type `Quest extends graph_node` propagates the wiring to downstream
-  files that use `superType=Quest`. New built-in PK types `node_name`
-  (a `name` that forbids the `__` substring), `undirected_edge_key`
-  and `directed_edge_key` (compound `<a>__<b>` keys with both halves
-  validated as `node_name`s; undirected sorts canonically and warns
-  on reorder). Implemented as new
+  files that use `superType=Quest`. New built-in PK types
+  `composable_name` (a `name` that forbids the `__` substring and also
+  forbids leading or trailing `_` — all three rules keep any compound
+  `<a>__<b>` encoding lossless; `node_name` is a backwards-compatible
+  alias of `composable_name` used by the graph-node families),
+  `undirected_edge_key` and `directed_edge_key` (compound `<a>__<b>`
+  keys with both halves validated as `composable_name`s; undirected
+  sorts canonically and warns on reorder). Implemented as new
   [graph_helpers](graph_helpers.lua) and
   [graph_wiring](graph_wiring.lua) modules. See
   [DATA_FORMAT_README §Graph Types](DATA_FORMAT_README.md#graph-types)
