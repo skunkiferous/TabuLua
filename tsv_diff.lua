@@ -4,7 +4,7 @@
 
 -- Module versioning
 local semver = require("semver")
-local VERSION = semver(0, 19, 0)
+local VERSION = semver(0, 20, 0)
 local NAME = "tsv_diff"
 
 local named_logger = require("named_logger")

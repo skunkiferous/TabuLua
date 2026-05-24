@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.20.0] - 2026-05-24
+
+### Added
+
 - **Graph Types.** Three built-in record-type families for graph-shaped
   data: `basic_graph_node` (undirected, `graphLinks` field), `graph_node`
   (DAG, `graphParents`/`graphChildren`), and `tree_node` (DAG plus
@@ -80,10 +90,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   prerequisite). See
   [tutorial/README.md §SkillTree.tsv + SkillEdges.tsv](tutorial/README.md)
   for the walkthrough.
-
-### Changed
-
-### Removed
 
 ### Fixed
 
