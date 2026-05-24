@@ -16,6 +16,7 @@ TabuLua provides a robust way to define, validate, and manage structured data in
 - **Multi-Format Export** - Export to JSON, Lua tables, XML, SQL, and MessagePack
 - **Comprehensive Validation** - Custom types, row/file/package validators
 - **Pre-Processors** - Mutate parsed rows before validation (derive inverse relations, normalise data)
+- **Graph Types** - Built-in `basic_graph_node` / `graph_node` / `tree_node` families with auto-wired link completion, cycle detection, tree-shape checks, and optional `edgesFor` edge files for per-edge data
 - **Global Reset** - Reset all module-level mutable state (caches, registries) in one call
 
 ## Quick Example

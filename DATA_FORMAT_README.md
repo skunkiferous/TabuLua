@@ -1688,3 +1688,209 @@ Row validators run per-row, so complex validators will slow parsing. File and pa
   Validator: all items must reference valid category
   Error: Items reference non-existent categories
 ```
+
+## Graph Types
+
+Three built-in record-type families model graph-shaped data, in increasing
+strictness:
+
+| Type | Shape | Engine-owned fields | Cycles | Roots |
+| --- | --- | --- | --- | --- |
+| `basic_graph_node` | Undirected graph | `graphLinks:{node_name}\|nil` | allowed | n/a |
+| `graph_node` | Directed acyclic graph (DAG) | `graphParents:{node_name}\|nil`, `graphChildren:{node_name}\|nil` | forbidden | ≥1 |
+| `tree_node` | Tree | same as `graph_node` | forbidden | exactly 1 |
+
+Author files opt in by declaring `superType=<one of the three>` in `Files.tsv`
+— the same discovery mechanism `enum` and `custom_type_def` use. Once a file
+is marked as a graph family, the engine **auto-wires** a pre-processor that
+fills in the inverse link field, plus the structural validators appropriate
+for the family (refs-exist, cycle-free, tree shape).
+
+### Field Naming Convention
+
+Per the file's [naming conventions](#naming-conventions) section, field names
+use camelCase starting with a lower-case letter. The engine-owned graph
+fields all share the `graph` prefix — `graphLinks`, `graphParents`,
+`graphChildren` — to mark them as engine-managed and avoid colliding with
+author-defined `parents` / `children` fields on user-extended record types.
+
+### The `node_name` Primary-Key Type
+
+`node_name` is a new built-in type alias: a `name` (identifier-chain ASCII
+string) that additionally **rejects the substring `__`**. The exclusion is
+what makes the compound edge-key encoding `<a>__<b>` unambiguous. Any
+`node_name` value can be split on the first `__` and the two halves are
+themselves guaranteed to be valid `node_name`s.
+
+The PK column of every graph-node-family file MUST be `name:node_name`
+(directly or via an extension).
+
+### Auto-Wired Completion Pre-Processor
+
+For every file with a graph-family `superType`, the engine prepends a
+completion pre-processor (priority 50, `rerunAfterPatches=true`) that
+symmetrises the link fields **before** any validator runs:
+
+- `basic_graph_node`: if `A.graphLinks ⊇ {B}`, then `B.graphLinks` is
+  ensured to contain `A`.
+- `graph_node` / `tree_node`: if `A.graphChildren ⊇ {B}`, then
+  `B.graphParents` is ensured to contain `A`; and vice versa. Both passes
+  run, so authors can declare edges from either side.
+
+**Author contract:** declare each edge on **one** side only. The engine
+fills in the other side at load time. Per the
+[Pre-Processors §Round-Trip](#pre-processors) behaviour, the inferred
+back-references are **not** written back to disk on reformat — they are
+derived state, recomputed on every load. Mixing authored declarations on
+both sides is harmless (duplicates are ignored), but the derived additions
+won't survive a reformatter round-trip.
+
+### Auto-Wired Validators
+
+Stacked per family, all level `error`:
+
+| Validator | basic | graph_node | tree_node |
+| --- | --- | --- | --- |
+| Every name in a link field references a row in the file (`graphRefsExist`) | ✓ | ✓ | ✓ |
+| No cycle via `graphChildren` (`graphAcyclic`) | | ✓ | ✓ |
+| ≤1 parent per node, exactly one root post-completion (`graphTreeShape`) | | | ✓ |
+
+User-authored file validators run **before** the auto-wired ones, so
+authoring-specific errors surface before the structural checks fire.
+
+### Edge Files (`edgesFor`)
+
+Many graphs need per-edge data — weights, gating conditions, dialogue
+triggers — that doesn't fit on either endpoint. Rather than duplicating
+the data on both nodes (and writing a symmetry validator), authors can
+attach a dedicated **edge file** that holds one row per edge.
+
+The edge side has its own three-type family that parallels the node side:
+
+| Type | Pairs with | PK column |
+| --- | --- | --- |
+| `basic_graph_edge` | `basic_graph_node` | `name:undirected_edge_key` |
+| `graph_edge` | `graph_node` | `name:directed_edge_key` |
+| `tree_edge` | `tree_node` | `name:directed_edge_key` |
+
+Each edge record also carries a `comment:comment|nil` column inherited from
+the family root, giving every edge file a free-text description column out
+of the box.
+
+The PK of an edge row is the compound key `<a>__<b>`:
+
+- `undirected_edge_key` parses, validates each half as a `node_name`,
+  **sorts** ascending lexicographically (so `B__A` and `A__B` parse to the
+  same canonical `A__B`, and the engine's normal PK-uniqueness rule catches
+  duplicates with no new code path), and warns on reorder.
+- `directed_edge_key` parses and validates each half but preserves authored
+  order. Self-loops (`A__A`) are syntactically valid; the cycle validator
+  flags them for DAG/tree contexts.
+
+Authors **attach** an edge file to a node file by setting the `edgesFor`
+column in `Files.tsv`:
+
+```tsv
+fileName:filepath  typeName:type_spec  superType:super_type  ...  edgesFor:filepath|nil
+Quests.tsv         Quest               graph_node            ...
+QuestEdges.tsv     QuestEdge           graph_edge            ...  Quests.tsv
+```
+
+The engine then auto-runs four consistency checks against the attached
+node file, **after** completion has populated the back-references:
+
+1. The `edgesFor` target file must exist (matched by lower-cased filename).
+2. The edge file's family must match the node file's family
+   (basic ↔ basic, directed ↔ directed; both `graph_edge` and `tree_edge`
+   count as directed).
+3. Every edge row's endpoints must reference rows that exist in the node
+   file.
+4. Every edge row's `(a, b)` must correspond to a declared link in the
+   node file — i.e. `b ∈ a.graphChildren` for directed, or
+   `b ∈ a.graphLinks` for basic. An edge without a matching link in the
+   node file is an error; a link **without** an edge row is fine
+   (unannotated links are common).
+
+A node file may have **zero or one** edge file. Multiple edge files for
+the same node file is an error — authors who need extra per-edge columns
+should extend the edge record type with more columns rather than adding a
+second edge file.
+
+### Transitively Extending a Graph Family
+
+User-defined types that extend a graph family inherit the auto-wiring.
+Family detection walks the `Files.tsv` superType / extends chain
+transitively:
+
+```tsv
+# core/Files.tsv
+Quest.tsv          Quest          graph_node    ...
+
+# expansion/Files.tsv (extends across packages)
+EpicQuest.tsv      EpicQuest      Quest         ...
+```
+
+`EpicQuest.tsv` gets the same completion pre-processor and validators as a
+direct `graph_node` file. The chain walk is bounded (default depth 32) and
+safe against cycles in the extends map.
+
+`tree_node` and `tree_edge` are plain aliases of `graph_node` and
+`graph_edge` respectively — at the parser level they're indistinguishable
+from their parent. The engine tells trees apart from DAGs by the **literal
+`superType=` string** the author wrote in `Files.tsv`, not by parser
+identity. This means user-defined `MyTree extends tree_node` is recognised
+as a tree-family file (gets the tree-shape validator) while
+`MyDag extends graph_node` is not.
+
+### Calling Graph Helpers from Validator and Processor Expressions
+
+The validator sandbox exposes the three structural validators
+(`graphRefsExist`, `graphAcyclic`, `graphTreeShape`) so user expressions
+can call them too — useful when an extended type wants to re-run a
+structural check after additional mutation, or to apply the check
+on-demand from a `package_validator`.
+
+The processor sandbox additionally exposes the two completion helpers
+(`completeBasicGraph(rows)`, `completeDirectedGraph(rows)`), so a custom
+pre-processor that mutates link data can call completion again to
+re-symmetrise.
+
+### Example: Skill Tree with Edges
+
+A skill prerequisite DAG with per-edge data. See
+[tutorial/README.md §SkillTree.tsv + SkillEdges.tsv](tutorial/README.md)
+for the full walkthrough.
+
+`Files.tsv` (excerpt):
+
+```tsv
+fileName:filepath  typeName:type_spec  superType:super_type  ...  edgesFor:filepath|nil
+SkillTree.tsv      SkillTree           graph_node            ...
+SkillEdges.tsv     SkillEdge           graph_edge            ...  SkillTree.tsv
+```
+
+`SkillTree.tsv`:
+
+```tsv
+name:node_name  graphParents:{node_name}|nil  graphChildren:{node_name}|nil  maxLevel:ubyte  description:text
+perception                                                                    5             Notice subtle details
+stealth                                                                       5             Move unseen
+tracking        "perception","stealth"                                        3             Follow a quarry
+```
+
+After load, `perception.graphChildren = {"tracking"}` and
+`stealth.graphChildren = {"tracking"}` are filled in by the completion
+pre-processor (`graphChildren` cells stay empty on disk on reformat).
+
+`SkillEdges.tsv`:
+
+```tsv
+name:directed_edge_key   requiredLevel:ubyte  comment:comment|nil
+perception__tracking     3                    Notice subtle tracks
+stealth__tracking        2                    Move quietly while following
+```
+
+A row like `perception__missing` (where `missing` isn't a row in
+`SkillTree.tsv`) would fail the auto-wired endpoint-exists check;
+`stealth__perception` (no such link in `SkillTree.tsv`) would fail the
+edge-must-match-link check.

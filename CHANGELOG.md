@@ -9,11 +9,92 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Graph Types.** Three built-in record-type families for graph-shaped
+  data: `basic_graph_node` (undirected, `graphLinks` field), `graph_node`
+  (DAG, `graphParents`/`graphChildren`), and `tree_node` (DAG plus
+  single-parent / single-root invariants). Authors opt in by declaring
+  `superType=<one of the three>` in `Files.tsv` (same discovery
+  mechanism as `enum` and `custom_type_def`). The engine auto-wires
+  every graph file with:
+  - a **completion pre-processor** that symmetrises the link fields
+    (author writes `graphParents`; engine fills in `graphChildren`),
+    running at priority 50 with `rerunAfterPatches=true`;
+  - **refs-exist validation** (every name in a link field must reference
+    a row in the file);
+  - **acyclic validation** for `graph_node` and `tree_node` (cycle path
+    returned for diagnostics);
+  - **tree-shape validation** for `tree_node` (≤1 parent per node,
+    exactly one root post-completion).
+
+  Family detection keys off the literal `superType=` string in
+  `Files.tsv` and walks the `extends` chain transitively, so a user
+  type `Quest extends graph_node` propagates the wiring to downstream
+  files that use `superType=Quest`. New built-in PK types `node_name`
+  (a `name` that forbids the `__` substring), `undirected_edge_key`
+  and `directed_edge_key` (compound `<a>__<b>` keys with both halves
+  validated as `node_name`s; undirected sorts canonically and warns
+  on reorder). Implemented as new
+  [graph_helpers](graph_helpers.lua) and
+  [graph_wiring](graph_wiring.lua) modules. See
+  [DATA_FORMAT_README §Graph Types](DATA_FORMAT_README.md#graph-types)
+  for the user-facing description and the tutorial `SkillTree.tsv` /
+  `SkillEdges.tsv` for an end-to-end example.
+
+- **Edge files (`edgesFor`).** Optional per-row column in `Files.tsv`
+  that points an edge file at its node file. Edge files carry per-edge
+  data (weights, gating conditions, descriptions) without forcing
+  authors to duplicate the data on both endpoints. Three parallel
+  built-in record types — `basic_graph_edge`, `graph_edge`,
+  `tree_edge` — give the edge side the same family discovery as the
+  node side. The engine enforces: at most one edge file per node
+  file; family match (basic↔basic, directed↔directed); every endpoint
+  exists as a row in the node file; every edge corresponds to a
+  declared link (checked after completion). The `comment:comment|nil`
+  column is included in the edge types both to force the spec to parse
+  as a record (single-field `{key:val}` would parse as a map) and to
+  give every edge file a free description column.
+
+- **`graph_helpers` module.** Shared graph-data primitives — accessors
+  (`isRoot`, `isLeaf`, `parentsOf`, `childrenOf`, `neighboursOf`),
+  edge-key codec (`splitEdgeKey`, `makeEdgeKey`,
+  `makeUndirectedEdgeKey`, `edgeForLink`), cycle detection
+  (`findCycle`), traversal (`bfs`, `dfs`, `ancestorsOf`,
+  `descendantsOf`, `shortestPath` — all cycle-safe via a visited-set
+  guard), and the three structural validators (`graphRefsExist`,
+  `graphAcyclic`, `graphTreeShape`). The validators are injected into
+  the validator sandbox env so user expressions can call them too.
+
+- **`graph_wiring` module.** Detects graph-family files via Files.tsv
+  superType and auto-attaches the completion pre-processor and
+  structural validators. Also runs the post-load edge↔node
+  consistency check for `edgesFor`-attached edge files.
+
+- **Tutorial: `SkillTree.tsv` + `SkillEdges.tsv`.** New
+  `tutorial/expansion/` files demonstrating the `graph_node` and
+  `graph_edge` families. A small skill DAG with multi-parent skills
+  (`tracking` from perception+stealth; `huntersMark` from
+  perception+dexterity) and edge data (`requiredLevel` per
+  prerequisite). See
+  [tutorial/README.md §SkillTree.tsv + SkillEdges.tsv](tutorial/README.md)
+  for the walkthrough.
+
 ### Changed
 
 ### Removed
 
 ### Fixed
+
+- **Schema export of `{extends:X, field:type}` aliases.** Earlier drafts
+  of `tree_node` and `tree_edge` used the redeclaration form
+  `{extends:graph_node, name:node_name}`. The alias resolved to the same
+  canonical parser as the parent (no behavioural difference), but
+  `parsers.schema_export` serialised the spec as `{extends,X,field:type}`
+  — a mixed comma/colon form that the type parser can't round-trip,
+  breaking JSON / SQL / Lua exports of any package containing a graph
+  file. `tree_node` and `tree_edge` are now plain aliases of
+  `graph_node` / `graph_edge`; family distinction lives entirely in the
+  `Files.tsv superType` string, where the engine was already keying off
+  it for auto-wiring.
 
 ## [0.19.0] - 2026-05-22
 

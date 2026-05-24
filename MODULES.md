@@ -18,10 +18,12 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
 | [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model |
+| [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
+| [graph_wiring](#graph_wiring) | Auto-wires completion pre-processors and structural validators on graph-family files; runs the edge↔node consistency check | graph_helpers, named_logger, read_only |
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -53,7 +55,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [table_utils](#table_utils) | Table manipulation utilities | *(none)* |
 | [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | named_logger, raw_tsv, read_only, string_utils, file_util |
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
-| [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers |
+| [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
 
 ---
@@ -169,6 +171,34 @@ Discovers and processes file descriptors from `Files.tsv`, managing file load or
 
 ---
 
+### graph_helpers
+**File:** [graph_helpers.lua](graph_helpers.lua)
+
+Graph-data primitives shared by validator expressions, processor expressions, and the auto-wiring layer. Three groups of helpers:
+
+- **Accessors** (`isRoot`, `isLeaf`, `parentsOf`, `childrenOf`, `neighboursOf`) operate on the engine-owned link fields of a single row. Family-mismatch checks are best-effort (`isRoot` errors if the row exposes `graphLinks`, etc.) since wrapped rows don't carry schema metadata.
+- **Edge-key codec** (`splitEdgeKey`, `makeEdgeKey`, `makeUndirectedEdgeKey`, `edgeForLink`) for parsing and constructing the `<a>__<b>` compound keys used by `basic_graph_edge` / `graph_edge` / `tree_edge` files.
+- **Traversal & validation** (`bfs`, `dfs`, `ancestorsOf`, `descendantsOf`, `shortestPath`, `findCycle`, `graphRefsExist`, `graphAcyclic`, `graphTreeShape`). Traversal helpers take an explicit `rows` argument (the row wrapper doesn't expose a back-reference) and carry a visited-set guard. The three `graph*` validators return `true` on success or an error-message string, matching the validator-expression contract.
+
+`graphRefsExist`, `graphAcyclic`, and `graphTreeShape` are injected into the validator sandbox env by [validator_executor](#validator_executor) so the auto-wired validator expressions can call them.
+
+**Dependencies:** read_only
+
+---
+
+### graph_wiring
+**File:** [graph_wiring.lua](graph_wiring.lua)
+
+Detects graph-family files in a manifest and auto-attaches their completion pre-processors and structural validators. Family detection walks the `Files.tsv` superType / extends chain transitively, matching on the literal superType strings (`basic_graph_node`, `graph_node`, `tree_node`); `tree_node` aliases to the same parser as `graph_node`, so chain-walking the user-written name is the only way to tell tree files apart from generic DAG files.
+
+`applyAutoWiring(lcFn2PreProcessors, lcFn2FileValidators, lcFn2Type, extendsMap)` mutates the two maps in place — prepending the completion pre-processor (so it runs before user processors) and appending the structural validators (`graphRefsExist`, `graphAcyclic`, `graphTreeShape` as appropriate per family). Idempotent across repeated calls.
+
+`validateEdgeFiles(...)` is the post-load consistency check for `edgesFor`-attached edge files: target exists, family matches, ≤1 edge file per node file, every endpoint is a row in the node file, every edge corresponds to a declared link (checked after pre-processor completion). It runs after the validator phase in [manifest_loader](#manifest_loader).
+
+**Dependencies:** graph_helpers, named_logger, read_only
+
+---
+
 ### importer
 **File:** [importer.lua](importer.lua)
 
@@ -201,7 +231,7 @@ Handles `Manifest.transposed.tsv` files for package metadata, versioning, type a
 
 Orchestrates package loading: discovers packages, resolves dependencies, registers types, loads data files in order, and runs all validators (row, file, package) after loading.
 
-**Dependencies:** error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor
+**Dependencies:** error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor
 
 ---
 
@@ -502,7 +532,7 @@ TSV/CSV loading and parsing with type validation via parsers module. Supports ex
 
 Sandboxed execution engine for row, file, and package validators. Normalizes validator specs (string or `{expr, level}` records), creates sandboxed environments with helper functions and context variables, and interprets validator results. Enforces execution quotas (1000 row, 10000 file, 100000 package). Error-level validators stop on first failure; warn-level validators collect warnings and continue.
 
-**Dependencies:** named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers
+**Dependencies:** graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers
 
 ---
 

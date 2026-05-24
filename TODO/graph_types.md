@@ -508,7 +508,7 @@ Landed adjustments:
   pre-processor populated `graphChildren` from authored `graphParents`
   (e.g. `perception` ends up with `{"aim","tracking","huntersMark"}`).
 
-**Phase A7 — Documentation**
+**Phase A7 — Documentation** ✅ *Done.*
 
 - `DATA_FORMAT_README.md`: new "Graph Types" section covering the three
   node types, the edge-key types, `node_name`, `edgesFor`, auto-wiring,
@@ -518,6 +518,26 @@ Landed adjustments:
 - `tutorial/README.md`: walkthrough of the chosen tutorial file.
 - `CHANGELOG.md`: `### Added` bullet under `[Unreleased]`.
 - `README.md`: "Features" bullet for graph support.
+
+Landed adjustments:
+
+- `DATA_FORMAT_README.md`: dropped the "same-type-redeclaration idiom"
+  documentation note — the redeclaration didn't actually produce a
+  distinct sub-type in the engine (Open Question 6) and broke schema
+  export (see Phase A6 fix). Instead, the new section explains that
+  `tree_node` and `tree_edge` are plain aliases of their parents and that
+  family distinction lives in the `Files.tsv superType` string.
+- `MODULES.md`: added detail entries for both new modules
+  (`graph_helpers` and `graph_wiring`) plus updated the `manifest_loader`
+  and `validator_executor` dependency listings.
+- `CHANGELOG.md`: three `### Added` bullets (Graph Types, Edge files,
+  the two new modules + tutorial example) plus one `### Fixed` bullet
+  documenting the schema-export round-trip bug from Phase A6.
+- `README.md`: one new "Features" bullet for Graph Types.
+- `tutorial/README.md`: completed earlier as part of Phase A6 — added a
+  walkthrough section for `SkillTree.tsv` + `SkillEdges.tsv`, picked up
+  `BossEncounter.tsv` in the directory listing, and added 7 new rows to
+  the Feature Reference table.
 
 ### Layer B — cross-package graph extension (depends on mod-overrides)
 
