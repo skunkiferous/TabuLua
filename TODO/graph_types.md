@@ -440,7 +440,7 @@ Landed adjustments:
   fixtures are deferred — the integration tests cover the same cases
   with sharper assertions.
 
-**Phase A5 — Edge files (`edgesFor`)**
+**Phase A5 — Edge files (`edgesFor`)** ✅ *Done.*
 
 - New `Files.tsv` column `edgesFor:filepath|nil`, parsed in
   `files_desc.lua` analogously to `joinInto`.
@@ -450,6 +450,28 @@ Landed adjustments:
 - Family-match enforcement (basic↔basic, directed↔directed).
 - Tests: integration tests covering the success path, the orphan-edge
   error, and the family-mismatch error.
+
+Landed adjustments:
+
+- `lcFn2EdgesFor` map plumbed through `files_desc.lua` → `manifest_loader`
+  → `joinMeta`. The new `loadDescriptorFiles` parameter is appended at
+  the end of the positional argument list (additive) so existing callers
+  in `spec/files_desc_spec.lua` continue to work unchanged.
+- `joinMeta` now also carries `lcFn2Type` and `extends`, so post-load
+  passes (the edge validator, and any future cross-file engine logic)
+  can resolve type lineage without re-deriving it.
+- The validator is a plain Lua function (`graph_wiring.validateEdgeFiles`)
+  rather than a sandboxed expression: it needs the `lcFn2EdgesFor` map
+  and the cross-file row data, both of which would be awkward to inject
+  into the sandbox env. Engine-managed and engine-invoked.
+- Edge family detection (`detectEdgeFamily`) mirrors `detectFamily` for
+  the edge side and also walks the `extends` chain transitively, so a
+  user type `QuestEdge extends graph_edge` is recognised.
+- Integration tests live in `spec/graph_wiring_integration_spec.lua`
+  covering success path, dangling endpoint, orphan edge (no matching
+  link), family mismatch, multi-edge-file collision, and
+  pointing-at-a-missing-file. Unit tests for `detectEdgeFamily` are in
+  `spec/graph_wiring_spec.lua`.
 
 **Phase A6 — Tutorial example**
 

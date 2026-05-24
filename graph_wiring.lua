@@ -12,6 +12,9 @@ local readOnly = read_only.readOnly
 
 local logger = require("named_logger").getLogger(NAME)
 
+local graph_helpers = require("graph_helpers")
+local splitEdgeKey = graph_helpers.splitEdgeKey
+
 --- Returns the module version as a string.
 --- @return string
 local function getVersion()
@@ -38,6 +41,15 @@ local ROLE_OF = {
     basic_graph_node = {family = "basic"},
     graph_node       = {family = "directed", tree = false},
     tree_node        = {family = "directed", tree = true},
+}
+
+-- Map of edge-family superType name → family kind. Mirrors ROLE_OF for
+-- the edge side: `basic_graph_edge` pairs with `basic_graph_node`,
+-- `graph_edge` and `tree_edge` both pair with the directed families.
+local EDGE_FAMILY_OF = {
+    basic_graph_edge = "basic",
+    graph_edge       = "directed",
+    tree_edge        = "directed",
 }
 
 --- Walks the extends chain starting at `typeName` looking for a known
@@ -68,6 +80,23 @@ end
 local function detectFamily(typeName, extends, maxDepth)
     local role = detectRole(typeName, extends, maxDepth)
     return role and role.family or nil
+end
+
+--- Walks the extends chain to find the edge family ("basic" or "directed")
+--- of an edge file's typeName. Same shape as detectFamily but for the
+--- edge side of the relationship.
+local function detectEdgeFamily(typeName, extends, maxDepth)
+    maxDepth = maxDepth or 32
+    local seen = {}
+    local current = typeName
+    for _ = 1, maxDepth do
+        if current == nil then return nil end
+        if EDGE_FAMILY_OF[current] then return EDGE_FAMILY_OF[current] end
+        if seen[current] then return nil end
+        seen[current] = true
+        current = extends[current]
+    end
+    return nil
 end
 
 -- Auto-wired completion processor entries. Both run early (priority 50,
@@ -207,6 +236,196 @@ local function applyAutoWiring(lcFn2PreProcessors, lcFn2FileValidators,
 end
 
 -- ============================================================
+-- Edge-file consistency validator (Phase A5)
+--
+-- Run after pre-processors so node link fields are fully completed.
+-- Checks:
+--   * `edgesFor` target file exists.
+--   * No two edge files target the same node file.
+--   * Edge file's edge-family matches the node file's node-family
+--     (basic ↔ basic, directed ↔ directed).
+--   * Every edge row's endpoints exist as rows in the node file.
+--   * Every edge row's endpoints match a declared link in the node file
+--     (graphLinks for basic, graphChildren for directed).
+--
+-- Errors are reported via `badVal`. Returns true iff no errors.
+-- ============================================================
+
+-- Returns the parsed value of a row's cell by column name.
+-- Falls back to evaluated/value if `parsed` is absent (older cells).
+local function cellValue(row, header, colName)
+    local col = header[colName]
+    if not col then return nil end
+    local cell = row[col.idx]
+    if not cell then return nil end
+    if cell.parsed ~= nil then return cell.parsed end
+    return cell.evaluated
+end
+
+-- Builds name → row index for a tsv_file (skipping the header).
+local function indexByName(tsv_file)
+    local header = tsv_file[1]
+    local out = {}
+    for i = 2, #tsv_file do
+        local row = tsv_file[i]
+        if type(row) == "table" then
+            local n = cellValue(row, header, "name")
+            if n ~= nil then out[n] = row end
+        end
+    end
+    return out, header
+end
+
+-- True if `list` contains `value`. Handles nil lists.
+local function listContains(list, value)
+    if list == nil then return false end
+    for _, v in ipairs(list) do
+        if v == value then return true end
+    end
+    return false
+end
+
+--- Validates the edge↔node consistency described in TODO/graph_types.md
+--- Phase A5. Returns true on success, false on any error (errors are
+--- accumulated via badVal).
+local function validateEdgeFiles(tsv_files, lcFn2EdgesFor, lcFn2Type,
+                                 extendsMap, badVal)
+    if type(tsv_files) ~= "table"
+        or type(lcFn2EdgesFor) ~= "table"
+        or type(lcFn2Type) ~= "table"
+        or type(extendsMap) ~= "table" then
+        error("graph_wiring.validateEdgeFiles: arguments must be tables", 2)
+    end
+    if next(lcFn2EdgesFor) == nil then
+        return true  -- no edge files declared
+    end
+
+    -- Build a reverse index from lcfn -> full file_name (the tsv_files key).
+    -- tsv_files is keyed by full path; we matched edge declarations by
+    -- lowercased filename earlier, so we need this to fetch the data.
+    local lcfnToFileName = {}
+    for file_name in pairs(tsv_files) do
+        local lcfn = file_name:match("[/\\]([^/\\]+)$") or file_name
+        lcfnToFileName[lcfn:lower()] = file_name
+    end
+
+    -- Detect collisions: at most one edge file per node file.
+    local nodeToEdge = {}
+    local ok = true
+    for edgeLcfn, nodeLcfn in pairs(lcFn2EdgesFor) do
+        local existing = nodeToEdge[nodeLcfn]
+        if existing then
+            badVal.source_name = lcfnToFileName[edgeLcfn] or edgeLcfn
+            badVal(edgeLcfn, "node file '" .. nodeLcfn
+                .. "' already has an edge file: '" .. existing
+                .. "'. A node file may have at most one edge file.")
+            ok = false
+        else
+            nodeToEdge[nodeLcfn] = edgeLcfn
+        end
+    end
+
+    -- Per-edge-file checks.
+    for edgeLcfn, nodeLcfn in pairs(lcFn2EdgesFor) do
+        local edgeFileName = lcfnToFileName[edgeLcfn]
+        local nodeFileName = lcfnToFileName[nodeLcfn]
+        if not edgeFileName then
+            -- Edge file declared in Files.tsv but not present on disk;
+            -- the "file listed in Files.tsv does not exist on disk" error
+            -- is already reported separately.
+            ok = false
+        elseif not nodeFileName then
+            badVal.source_name = edgeFileName
+            badVal(edgeLcfn, "edgesFor target '" .. nodeLcfn
+                .. "' does not exist (must match an entry in fileName)")
+            ok = false
+        else
+            local edgeRole = detectEdgeFamily(lcFn2Type[edgeLcfn], extendsMap)
+            local nodeRole = detectFamily(lcFn2Type[nodeLcfn], extendsMap)
+            if not edgeRole then
+                badVal.source_name = edgeFileName
+                badVal(edgeLcfn, "file declares 'edgesFor' but its typeName '"
+                    .. tostring(lcFn2Type[edgeLcfn])
+                    .. "' does not extend any edge family"
+                    .. " (basic_graph_edge / graph_edge / tree_edge)")
+                ok = false
+            elseif not nodeRole then
+                badVal.source_name = edgeFileName
+                badVal(edgeLcfn, "edgesFor target '" .. nodeLcfn
+                    .. "' has typeName '" .. tostring(lcFn2Type[nodeLcfn])
+                    .. "' which does not extend any node family"
+                    .. " (basic_graph_node / graph_node / tree_node)")
+                ok = false
+            elseif edgeRole ~= nodeRole then
+                badVal.source_name = edgeFileName
+                badVal(edgeLcfn, "edge family mismatch: edge file is '"
+                    .. edgeRole .. "' but node file is '" .. nodeRole
+                    .. "' (basic edges only pair with basic node files,"
+                    .. " directed edges with directed node files)")
+                ok = false
+            else
+                -- Endpoint and link-consistency checks. Walk every edge
+                -- row, parse its name into (a, b), and check both halves
+                -- against the node file.
+                local nodeIdx, nodeHeader = indexByName(tsv_files[nodeFileName])
+                local edgeTsv = tsv_files[edgeFileName]
+                local edgeHeader = edgeTsv[1]
+                local linkField = (nodeRole == "basic")
+                    and "graphLinks" or "graphChildren"
+                badVal.source_name = edgeFileName
+                for i = 2, #edgeTsv do
+                    local row = edgeTsv[i]
+                    if type(row) == "table" then
+                        local key = cellValue(row, edgeHeader, "name")
+                        if type(key) == "string" then
+                            local a, b = splitEdgeKey(key)
+                            if not a or not b then
+                                -- Malformed key — the edge-key parser
+                                -- already rejected it; nothing extra to say.
+                            else
+                                local rowA = nodeIdx[a]
+                                local rowB = nodeIdx[b]
+                                if not rowA then
+                                    badVal(key, "edge endpoint '" .. a
+                                        .. "' is not a row in '"
+                                        .. nodeLcfn .. "'")
+                                    ok = false
+                                end
+                                if not rowB then
+                                    badVal(key, "edge endpoint '" .. b
+                                        .. "' is not a row in '"
+                                        .. nodeLcfn .. "'")
+                                    ok = false
+                                end
+                                if rowA and rowB then
+                                    -- Edge must correspond to a declared
+                                    -- link in the node file. Post-
+                                    -- completion the symmetry guarantee
+                                    -- means we only need to check one
+                                    -- side of the link.
+                                    local aLinks = cellValue(rowA, nodeHeader, linkField)
+                                    if not listContains(aLinks, b) then
+                                        badVal(key,
+                                            "edge has no matching link in '"
+                                            .. nodeLcfn .. "': '" .. a
+                                            .. "." .. linkField
+                                            .. "' does not contain '" .. b
+                                            .. "'")
+                                        ok = false
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return ok
+end
+
+-- ============================================================
 -- Module API
 -- ============================================================
 
@@ -219,8 +438,11 @@ local API = {
     applyAutoWiring = applyAutoWiring,
     detectFamily = detectFamily,
     detectRole = detectRole,
+    detectEdgeFamily = detectEdgeFamily,
+    validateEdgeFiles = validateEdgeFiles,
     -- Exposed for tests / debugging.
     ROLE_OF = ROLE_OF,
+    EDGE_FAMILY_OF = EDGE_FAMILY_OF,
 }
 
 local function apiCall(_, operation, ...)

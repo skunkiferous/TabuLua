@@ -61,6 +61,9 @@ local JOIN_INTO_COL = "joinInto:filepath|nil"
 local JOIN_COLUMN_COL = "joinColumn:name|nil"
 local EXPORT_COL = "export:boolean|nil"
 local JOINED_TYPE_NAME_COL = "joinedTypeName:type_spec|nil"
+-- Graph edge-file column (Phase A5 of TODO/graph_types.md): points an
+-- edge file at its node file (basename match, same convention as joinInto).
+local EDGES_FOR_COL = "edgesFor:filepath|nil"
 -- Variant column
 local VARIANT_COL = "variant:name|nil"
 -- Validator columns
@@ -184,6 +187,7 @@ local function parseFilesDescHeader(file_name, file, log)
     local rowValidatorsIdx = -1
     local fileValidatorsIdx = -1
     local preProcessorsIdx = -1
+    local edgesForIdx = -1
     for idx, col in ipairs(header) do
         local colStr = tostring(col)
         if colStr == FILE_NAME_COL then
@@ -216,6 +220,8 @@ local function parseFilesDescHeader(file_name, file, log)
             fileValidatorsIdx = idx
         elseif colStr == PRE_PROCESSORS_COL then
             preProcessorsIdx = idx
+        elseif colStr == EDGES_FOR_COL then
+            edgesForIdx = idx
         elseif colStr== DESCRIPTION_COL then
             -- For the user only; ignore ...
         else
@@ -229,10 +235,11 @@ local function parseFilesDescHeader(file_name, file, log)
     warnMissingColumn(file_name, publishContextIdx, "publishContext", log)
     warnMissingColumn(file_name, publishColumnIdx, "publishColumn", log)
     warnMissingColumn(file_name, loadOrderIdx, "loadOrder", log)
-    -- Note: join columns, variant column, validator columns, and pre-processor column are optional, so we don't warn if missing
+    -- Note: join columns, variant column, validator columns, pre-processor
+    -- column and edgesFor column are optional, so we don't warn if missing
     return fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
         publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx
+        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx, edgesForIdx
 end
 
 -- Check the file name matches the type name
@@ -342,6 +349,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcFn2RowValidators = opts.lcFn2RowValidators
     local lcFn2FileValidators = opts.lcFn2FileValidators
     local lcFn2PreProcessors = opts.lcFn2PreProcessors
+    local lcFn2EdgesFor = opts.lcFn2EdgesFor
     local lcFn2LineNo = opts.lcFn2LineNo
     local fn2Idx = opts.fn2Idx
     local log = opts.log
@@ -350,11 +358,11 @@ local function processFilesDesc(file_name, file, max_prio, opts)
 
     local fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx, publishColumnIdx,
         loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx =
+        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx, edgesForIdx =
         parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = {fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
         publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx}
+        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx, edgesForIdx}
     if fileNameIdx ~= -1 and loadOrderIdx ~= -1 then
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
@@ -439,6 +447,12 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                     local preProcessors = row[preProcessorsIdx] and row[preProcessorsIdx].parsed
                     if preProcessors and type(preProcessors) == "table" and #preProcessors > 0 then
                         lcFn2PreProcessors[lcfn] = preProcessors
+                    end
+                end
+                if edgesForIdx ~= -1 then
+                    local edgesFor = row[edgesForIdx] and row[edgesForIdx].parsed
+                    if edgesFor and edgesFor ~= '' then
+                        lcFn2EdgesFor[lcfn] = edgesFor:lower()
                     end
                 end
                 ::continue::
@@ -621,12 +635,14 @@ local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     end
 end
 
--- Load all descriptor files, in the order of priority
+-- Load all descriptor files, in the order of priority.
+-- `lcFn2EdgesFor` is optional (appended last) so existing callers that
+-- don't care about graph edge files still work.
 local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
     lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
-    raw_files, loadEnv, badVal, variants, lcSkippedFiles)
+    raw_files, loadEnv, badVal, variants, lcSkippedFiles, lcFn2EdgesFor)
     local desc_files = {}
     local max_prio = -math.huge
     local cur_mod = nil
@@ -654,6 +670,7 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2RowValidators = lcFn2RowValidators,
         lcFn2FileValidators = lcFn2FileValidators,
         lcFn2PreProcessors = lcFn2PreProcessors,
+        lcFn2EdgesFor = lcFn2EdgesFor or {},  -- optional; old callers may omit
         lcFn2LineNo = lcFn2LineNo,
         fn2Idx = fn2Idx,
         log = log,

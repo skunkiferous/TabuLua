@@ -64,6 +64,7 @@ local runFilePreProcessors = processor_executor.runFilePreProcessors
 
 local graph_wiring = require("graph_wiring")
 local applyGraphAutoWiring = graph_wiring.applyAutoWiring
+local validateGraphEdgeFiles = graph_wiring.validateEdgeFiles
 
 -- CSV file extension
 local CSV = "csv"
@@ -613,6 +614,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2FileValidators = {}
     -- Pre-processor map
     local lcFn2PreProcessors = {}
+    -- Graph edge-file map: lcfn of edge file -> lcfn of its target node file
+    local lcFn2EdgesFor = {}
     local lcFn2LineNo = {}
     -- Variant filtering: convert array to set if needed, collect skipped files
     local variantsSet = nil
@@ -627,7 +630,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
-        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles)
+        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles, lcFn2EdgesFor)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
         return
@@ -704,6 +707,13 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         lcFn2FileValidators = lcFn2FileValidators,
         -- Pre-processor metadata
         lcFn2PreProcessors = lcFn2PreProcessors,
+        -- Graph edge-file metadata (Phase A5)
+        lcFn2EdgesFor = lcFn2EdgesFor,
+        -- Type metadata: lcfn -> typeName, and typeName -> superType chain.
+        -- Exposed for the graph edge-file consistency validator and any
+        -- future post-load passes that need the type lineage.
+        lcFn2Type = lcFn2Type,
+        extends = extends,
         -- Variant metadata
         lcSkippedFiles = lcSkippedFiles,
     }
@@ -1076,6 +1086,17 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     local validatorsOk, validationWarnings = runAllValidators(
         tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
 
+    -- Run the graph edge-file consistency validator (Phase A5 of
+    -- TODO/graph_types.md). It runs after file validators so the cheaper
+    -- per-file structural checks (refs-exist, cycle, tree-shape) get to
+    -- report first; running after pre-processors means link fields are
+    -- fully completed and edges-vs-links comparison is accurate.
+    local edgeValidatorsOk = validateGraphEdgeFiles(tsv_files,
+        joinMeta.lcFn2EdgesFor or {},
+        joinMeta.lcFn2Type or {},
+        joinMeta.extends or {},
+        badVal)
+
     -- Combine pre-processor warnings with validator warnings for callers
     if processorWarnings and #processorWarnings > 0 then
         for _, w in ipairs(processorWarnings) do
@@ -1094,7 +1115,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         -- every error-level processor and every error-level validator succeeded.
         -- (Pre-processors run before validators in the pipeline, but for callers
         -- they are folded into the same pass/fail signal.)
-        validationPassed = processorsOk and validatorsOk,
+        validationPassed = processorsOk and validatorsOk and edgeValidatorsOk,
         validationWarnings = validationWarnings,
     }
 end

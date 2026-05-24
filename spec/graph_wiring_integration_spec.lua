@@ -390,6 +390,198 @@ describe("graph_wiring integration", function()
             "valid DAG should pass all auto-wired validators")
     end)
 
+    -- =====================================================================
+    -- Edge-file tests (Phase A5)
+    -- =====================================================================
+
+    it("loads a basic graph with a matching edge file", function()
+        local pkg = path_join(temp_dir, "basic_with_edges")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "Skills.tsv\tSkill\tbasic_graph_node\tfalse\t\t\t1\tSkills graph\t\n"
+            .. "SkillEdges.tsv\tSkillEdge\tbasic_graph_edge\tfalse\t\t\t2\tSkill edges\tSkills.tsv\n"
+
+        local SKILLS = "name:node_name\tgraphLinks:{node_name}|nil\n"
+            .. "A\t\"B\",\"C\"\n"
+            .. "B\t\n"
+            .. "C\t\n"
+
+        -- Edges in canonical order: A__B and A__C.
+        local EDGES = "comment:comment|nil\tname:undirected_edge_key\n"
+            .. "\tA__B\n"
+            .. "\tA__C\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["Skills.tsv"] = SKILLS,
+            ["SkillEdges.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_true(result.validationPassed,
+            "valid basic graph + matching edge file should load cleanly")
+    end)
+
+    it("loads a directed graph with a matching edge file", function()
+        local pkg = path_join(temp_dir, "directed_with_edges")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\t\n"
+            .. "QuestEdges.tsv\tQuestEdge\tgraph_edge\tfalse\t\t\t2\tQuest edges\tQuests.tsv\n"
+
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\t\"B\",\"C\"\t\n"
+            .. "B\t\t\n"
+            .. "C\t\t\n"
+
+        local EDGES = "comment:comment|nil\tname:directed_edge_key\n"
+            .. "\tA__B\n"
+            .. "\tA__C\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["Quests.tsv"] = QUESTS,
+            ["QuestEdges.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_true(result.validationPassed,
+            "valid directed graph + matching edge file should load cleanly")
+    end)
+
+    it("rejects an edge whose endpoint is not in the node file", function()
+        local pkg = path_join(temp_dir, "dangling_endpoint")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\t\n"
+            .. "QuestEdges.tsv\tQuestEdge\tgraph_edge\tfalse\t\t\t2\tQuest edges\tQuests.tsv\n"
+
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\tB\t\n"
+            .. "B\t\t\n"
+
+        -- A__Phantom — Phantom isn't a row in Quests.tsv.
+        local EDGES = "comment:comment|nil\tname:directed_edge_key\n"
+            .. "\tA__B\n"
+            .. "\tA__Phantom\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["Quests.tsv"] = QUESTS,
+            ["QuestEdges.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "edge with dangling endpoint should fail")
+        assert.is_true(anyLogContains("Phantom"),
+            "diagnostic should name the dangling endpoint")
+    end)
+
+    it("rejects an edge that has no matching link in the node file", function()
+        local pkg = path_join(temp_dir, "orphan_edge")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\t\n"
+            .. "QuestEdges.tsv\tQuestEdge\tgraph_edge\tfalse\t\t\t2\tQuest edges\tQuests.tsv\n"
+
+        -- A → B, but the edge file declares A→C.
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\tB\t\n"
+            .. "B\t\t\n"
+            .. "C\t\t\n"
+
+        local EDGES = "comment:comment|nil\tname:directed_edge_key\n"
+            .. "\tA__C\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["Quests.tsv"] = QUESTS,
+            ["QuestEdges.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "edge without a matching link should fail")
+        assert.is_true(anyLogContains("no matching link"),
+            "diagnostic should mention the missing link")
+    end)
+
+    it("rejects family mismatch (basic edge + directed node)", function()
+        local pkg = path_join(temp_dir, "family_mismatch")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\t\n"
+            .. "QuestEdges.tsv\tQuestEdge\tbasic_graph_edge\tfalse\t\t\t2\tQuest edges\tQuests.tsv\n"
+
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\tB\t\n"
+            .. "B\t\t\n"
+
+        local EDGES = "comment:comment|nil\tname:undirected_edge_key\n"
+            .. "\tA__B\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["Quests.tsv"] = QUESTS,
+            ["QuestEdges.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "basic edge file paired with directed node file should fail")
+        assert.is_true(anyLogContains("family mismatch"),
+            "diagnostic should call out the family mismatch")
+    end)
+
+    it("rejects multiple edge files for the same node file", function()
+        local pkg = path_join(temp_dir, "duplicate_edge_files")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "Quests.tsv\tQuest\tgraph_node\tfalse\t\t\t1\tQuests DAG\t\n"
+            .. "QuestEdgesA.tsv\tQuestEdgeA\tgraph_edge\tfalse\t\t\t2\tQuest edges\tQuests.tsv\n"
+            .. "QuestEdgesB.tsv\tQuestEdgeB\tgraph_edge\tfalse\t\t\t3\tQuest edges\tQuests.tsv\n"
+
+        local QUESTS = "name:node_name\tgraphChildren:{node_name}|nil\tgraphParents:{node_name}|nil\n"
+            .. "A\tB\t\n"
+            .. "B\t\t\n"
+
+        local EDGES = "comment:comment|nil\tname:directed_edge_key\n"
+            .. "\tA__B\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["Quests.tsv"] = QUESTS,
+            ["QuestEdgesA.tsv"] = EDGES,
+            ["QuestEdgesB.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "two edge files for the same node file should fail")
+        assert.is_true(anyLogContains("already has an edge file"),
+            "diagnostic should name the collision")
+    end)
+
+    it("rejects edgesFor pointing at a non-existent file", function()
+        local pkg = path_join(temp_dir, "missing_node_file")
+        assert(lfs.mkdir(pkg))
+
+        local FILES = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\tedgesFor:filepath|nil\n"
+            .. "QuestEdges.tsv\tQuestEdge\tgraph_edge\tfalse\t\t\t2\tQuest edges\tNonExistent.tsv\n"
+
+        local EDGES = "comment:comment|nil\tname:directed_edge_key\n"
+            .. "\tA__B\n"
+
+        writeAll(pkg, MANIFEST, FILES, {
+            ["QuestEdges.tsv"] = EDGES,
+        })
+
+        local result = manifest_loader.processFiles({pkg}, badVal)
+        assert.is_false(result.validationPassed,
+            "edgesFor pointing at a missing file should fail")
+    end)
+
     it("leaves non-graph files untouched", function()
         local pkg = path_join(temp_dir, "plain")
         assert(lfs.mkdir(pkg))

@@ -61,6 +61,28 @@ describe("graph_wiring", function()
     end)
   end)
 
+  describe("detectEdgeFamily", function()
+    it("recognises the three direct edge family names", function()
+      assert.equals("basic",    graph_wiring.detectEdgeFamily("basic_graph_edge", {}))
+      assert.equals("directed", graph_wiring.detectEdgeFamily("graph_edge",       {}))
+      assert.equals("directed", graph_wiring.detectEdgeFamily("tree_edge",        {}))
+    end)
+
+    it("returns nil for unknown / nil typeNames", function()
+      assert.is_nil(graph_wiring.detectEdgeFamily("not_an_edge_type", {}))
+      assert.is_nil(graph_wiring.detectEdgeFamily(nil, {}))
+    end)
+
+    it("walks the extends chain transitively", function()
+      local extends = {QuestEdge = "graph_edge"}
+      assert.equals("directed", graph_wiring.detectEdgeFamily("QuestEdge", extends))
+    end)
+
+    it("is safe against cycles in extends", function()
+      assert.is_nil(graph_wiring.detectEdgeFamily("A", {A = "B", B = "A"}))
+    end)
+  end)
+
   describe("applyAutoWiring", function()
     -- Convenience: collect all validator expression strings attached to a lcfn.
     local function valExprs(fileValidators, lcfn)
