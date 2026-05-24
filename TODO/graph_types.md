@@ -473,13 +473,40 @@ Landed adjustments:
   pointing-at-a-missing-file. Unit tests for `detectEdgeFamily` are in
   `spec/graph_wiring_spec.lua`.
 
-**Phase A6 — Tutorial example**
+**Phase A6 — Tutorial example** ✅ *Done.*
 
 The tutorial currently lacks any graph data. A fresh `SkillTree.tsv` as a `graph_node` file in
 `tutorial/expansion/`. Have more advanced skills depend on multiple basic skills. For example,
 some "tracking" skill might depend on first getting a improved perception AND
 an improved stealth skill. And the links can have data too, like how many levels you require
 in each "parent" skill, to buy the new skill.
+
+Landed adjustments:
+
+- Two files added: `tutorial/expansion/SkillTree.tsv` (typeName `SkillTree`,
+  `superType=graph_node`) and `tutorial/expansion/SkillEdges.tsv`
+  (typeName `SkillEdge`, `superType=graph_edge`, `edgesFor=SkillTree.tsv`).
+  Three root skills (perception, stealth, dexterity), two one-parent
+  skills (aim, sneakAttack), and two multi-parent skills (tracking from
+  perception+stealth; huntersMark from perception+dexterity). Edges
+  carry `requiredLevel:ubyte` — how many levels in the parent skill you
+  need before training the child.
+- `tutorial/expansion/Files.tsv` gained the `edgesFor:filepath|nil`
+  column to support the edge-file pointer.
+- **Bug fix uncovered during this phase**: the previous registration of
+  `tree_node` and `tree_edge` used the redeclaration form
+  `{extends:graph_node, name:node_name}`. They still aliased to the same
+  parser as the parent, but `parsers.schema_export` serialised the alias
+  spec as `{extends,X,field:type}` — a mixed comma/colon form that the
+  type parser can't round-trip, breaking JSON / SQL / Lua exports.
+  Simplified them to plain aliases (`registerAlias('tree_node',
+  'graph_node')` / `'tree_edge'`/`'graph_edge'`) since the redeclaration
+  was always semantically a no-op. All exports now round-trip cleanly.
+- Verified: the four export formats from `pre_commit_check.cmd` (JSON,
+  SQL+MPK, Lua, TSV reformat) all run without errors on the augmented
+  tutorial. `exported/lua-lua/SkillTree.lua` shows the completion
+  pre-processor populated `graphChildren` from authored `graphParents`
+  (e.g. `perception` ends up with `{"aim","tracking","huntersMark"}`).
 
 **Phase A7 — Documentation**
 

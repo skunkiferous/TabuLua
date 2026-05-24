@@ -1,0 +1,20 @@
+name:directed_edge_key	requiredLevel:ubyte	comment:comment|nil
+# ^ SkillEdges is a graph_edge file attached to SkillTree.tsv (see Files.tsv
+# ^ edgesFor column). It carries per-edge metadata that wouldn't fit on the
+# ^ node — here, how many levels you need in the *parent* skill before you
+# ^ can train the *child* skill. The PK column is `directed_edge_key`,
+# ^ encoded as "<parent>__<child>".
+# ^
+# ^ The engine enforces three things on this file (Phase A5):
+# ^   - every endpoint exists as a row in SkillTree.tsv
+# ^   - the (parent, child) pair matches a declared link in SkillTree
+# ^     (i.e. the child lists the parent in graphParents)
+# ^   - the edge family must match the node family (graph_edge ↔ graph_node)
+# ^
+# ^ The `comment` column is engine-owned (inherited from graph_edge).
+perception__aim	2	Basic ranged training
+stealth__sneakAttack	2	Foundation for surprise strikes
+perception__tracking	3	Notice subtle tracks and disturbances
+stealth__tracking	2	Move quietly while following a quarry
+perception__huntersMark	4	Detect the faintest traces of prey
+dexterity__huntersMark	3	Keep pace with a fleeing target

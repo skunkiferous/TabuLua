@@ -977,13 +977,14 @@ function M.registerDerivedParsers()
         '{graphLinks:{node_name}|nil,name:node_name}')
     registration.registerAlias(ownBadVal, 'graph_node',
         '{graphChildren:{node_name}|nil,graphParents:{node_name}|nil,name:node_name}')
-    -- tree_node aliases graph_node (same canonical form). It is the same
-    -- parser; tree-vs-DAG distinction is keyed off the user-written
-    -- `superType` value in Files.tsv at auto-wiring time, not parser
-    -- identity. The redeclared 'name' field is kept for documentation
-    -- value and to mirror tree_edge below.
-    registration.registerAlias(ownBadVal, 'tree_node',
-        '{extends:graph_node,name:node_name}')
+    -- tree_node is a plain alias of graph_node. Same parser, same canonical
+    -- form; the tree-vs-DAG distinction is keyed off the user-written
+    -- `superType` string in Files.tsv at auto-wiring time, not parser
+    -- identity. An earlier attempt used the redeclaration form
+    -- `{extends:graph_node, name:node_name}`, which still aliased to the
+    -- same parser but produced an `{extends,X,field:type}` spec string
+    -- that the schema exporter can't round-trip.
+    registration.registerAlias(ownBadVal, 'tree_node', 'graph_node')
 
     -- Edge record types parallel to the node types. Authors extending an
     -- edge type add their own columns (weight, kind, ...) using existing
@@ -995,10 +996,10 @@ function M.registerDerivedParsers()
         '{comment:comment|nil,name:undirected_edge_key}')
     registration.registerAlias(ownBadVal, 'graph_edge',
         '{comment:comment|nil,name:directed_edge_key}')
-    -- tree_edge aliases graph_edge (same canonical form). Family-level
-    -- distinction lives in Files.tsv superType, not in the parser identity.
-    registration.registerAlias(ownBadVal, 'tree_edge',
-        '{extends:graph_edge,name:directed_edge_key}')
+    -- tree_edge is a plain alias of graph_edge (same reasoning as tree_node
+    -- above). Family-level distinction lives in Files.tsv superType, not
+    -- in the parser identity.
+    registration.registerAlias(ownBadVal, 'tree_edge', 'graph_edge')
 end
 
 return M

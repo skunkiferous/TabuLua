@@ -1,0 +1,20 @@
+name:node_name	graphParents:{node_name}|nil	graphChildren:{node_name}|nil	maxLevel:ubyte	description:text
+# ^ SkillTree demonstrates the graph_node family from Phase A1-A5 of graph_types.md.
+# ^   superType=graph_node => the engine auto-wires:
+# ^     - completion pre-processor (symmetrises graphParents/graphChildren)
+# ^     - refs-exist validator (every name in graphParents/graphChildren must be a row in this file)
+# ^     - acyclic validator (no cycles via graphChildren — this is a DAG, not a cycle graph)
+# ^   See files.tsv for the edge file (SkillEdges.tsv) that carries per-edge data
+# ^   like required parent levels — that's the graph_edge family from the same plan.
+# ^ Author contract: declare prerequisites on the *graphParents* side only;
+# ^ the engine fills in graphChildren automatically. (Per Open Question 5, the
+# ^ derived back-references are NOT written back to the file on reformat.)
+# ^ Multi-parent skills (tracking, huntersMark) demonstrate why a DAG — not a
+# ^ tree — is the right shape here: a skill can have several prerequisites.
+perception			5	Notice subtle details, tracks, and hidden things
+stealth			5	Move unseen and unheard
+dexterity			5	Quick reflexes and precise movements
+aim	perception		5	Steady aim with ranged weapons
+sneakAttack	stealth		5	Strike from concealment for bonus damage
+tracking	"perception","stealth"		3	Follow a quarry through the wilderness
+huntersMark	"perception","dexterity"		3	Mark a target so it can never escape your senses

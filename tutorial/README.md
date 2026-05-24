@@ -37,8 +37,11 @@ tutorial/
     ExpansionTypes.tsv               # Custom types with column redefinition and omission (v0.11.0)
     BossType.tsv                     # Enum: boss encounter types
     Boss.tsv                         # Bosses: type inheritance + column redefinition
+    BossEncounter.tsv                # Multiple inheritance: BaseStats + Localizable
     ExpansionItem.tsv                # Cross-package type references
     ExpansionSpell.tsv               # Expansion library expressions
+    SkillTree.tsv                    # graph_node: DAG with multi-parent skills
+    SkillEdges.tsv                   # graph_edge: per-edge data attached via edgesFor
     libs/
       bossLib.lua                    # Expansion code library
 ```
@@ -625,6 +628,112 @@ cooldowns, all expressed through the default value system.
 
 ---
 
+#### SkillTree.tsv + SkillEdges.tsv (Graph Types)
+
+Demonstrates the **graph_node** and **graph_edge** built-in families: a DAG of
+skill prerequisites with side-data on each edge.
+
+`SkillTree.tsv` declares `superType=graph_node`. The engine then automatically
+attaches:
+
+1. A **completion pre-processor** that symmetrises the link fields — the
+   author only writes `graphParents`; `graphChildren` is filled in.
+2. A **refs-exist validator** that checks every name in `graphParents` /
+   `graphChildren` references a row in the file.
+3. An **acyclic validator** that fails the load if the prerequisite graph
+   has a cycle (skill A requires B which requires A).
+
+The other two families are wired the same way: `basic_graph_node` (undirected
+`graphLinks` field, only the refs-exist validator) and `tree_node` (same as
+`graph_node` plus a tree-shape validator: ≤1 parent per node, exactly one
+root). For this tutorial a DAG is the right shape because `tracking` requires
+*both* perception *and* stealth — a strict tree would forbid that.
+
+<!-- markdownlint-disable MD010 -->
+
+```tsv
+name:node_name	graphParents:{node_name}|nil	graphChildren:{node_name}|nil	maxLevel:ubyte	description:text
+perception			5	...
+stealth			5	...
+dexterity			5	...
+aim	perception		5	...
+sneakAttack	stealth		5	...
+tracking	"perception","stealth"		3	...
+huntersMark	"perception","dexterity"		3	...
+```
+
+<!-- markdownlint-enable MD010 -->
+
+After the completion pre-processor runs, exported `SkillTree.lua` shows
+back-references filled in:
+
+```lua
+{"perception",  nil,                          {"aim","tracking","huntersMark"}, 5, "..."}
+{"stealth",     nil,                          {"sneakAttack","tracking"},       5, "..."}
+{"tracking",    {"perception","stealth"},     nil,                              3, "..."}
+{"huntersMark", {"perception","dexterity"},   nil,                              3, "..."}
+```
+
+The authored `graphParents` survives round-trip (it's source-of-truth); the
+inferred `graphChildren` is derived state and is *not* written back to the
+TSV on reformat. Author contract: declare each edge on one side only.
+
+**`SkillEdges.tsv`** is an **edge file** attached to `SkillTree.tsv` via the
+`edgesFor:filepath|nil` column in `Files.tsv`:
+
+<!-- markdownlint-disable MD010 -->
+
+```tsv
+fileName:filepath	typeName:type_spec	superType:super_type	...	edgesFor:filepath|nil
+SkillTree.tsv	SkillTree	graph_node	...
+SkillEdges.tsv	SkillEdge	graph_edge	...	SkillTree.tsv
+```
+
+<!-- markdownlint-enable MD010 -->
+
+The primary key column is `name:directed_edge_key`, which encodes the edge
+as `<parent>__<child>` (the `__` separator is reserved by the `node_name`
+type — node names cannot contain `__`, which makes the encoding
+unambiguous). On top of that the edge file adds its own data column —
+here, `requiredLevel:ubyte`, the level you need in the parent skill before
+unlocking the child:
+
+<!-- markdownlint-disable MD010 -->
+
+```tsv
+name:directed_edge_key	requiredLevel:ubyte	comment:comment|nil
+perception__aim	2	Basic ranged training
+perception__tracking	3	Notice subtle tracks and disturbances
+stealth__tracking	2	Move quietly while following a quarry
+perception__huntersMark	4	Detect the faintest traces of prey
+dexterity__huntersMark	3	Keep pace with a fleeing target
+...
+```
+
+<!-- markdownlint-enable MD010 -->
+
+Once `edgesFor` is set, the engine adds three structural checks on top of
+the per-file validators:
+
+- Every edge's two endpoints exist as rows in the target node file.
+- Every edge corresponds to a declared link in the node file (the child
+  lists the parent in `graphParents` — checked *after* completion, so it's
+  symmetric).
+- The node↔edge family must match (`basic_graph_node`↔`basic_graph_edge`,
+  directed↔directed). At most one edge file per node file.
+
+The `comment` column is engine-owned (inherited from `graph_edge`) and
+behaves like the regular `comment` type — preserved on round-trip,
+stripped from exports.
+
+*Rationale:* Many game-data graphs need per-edge data that doesn't fit on
+either endpoint (edge weights, gating conditions, dialogue triggers).
+Keeping the edges in a separate file gives them one source of truth and
+avoids the symmetry problems you'd get by duplicating the data on both
+nodes. Authors who don't need per-edge data can simply omit the edge file.
+
+---
+
 ## Multi-Package Architecture
 
 ### How It Works
@@ -722,6 +831,13 @@ Quick lookup: which file demonstrates which feature.
 | Dependencies | Expansion Manifest |
 | load_after | Expansion Manifest |
 | Manifest custom fields | Both Manifests (`gameGenre`, `targetAudience`, `contentRating`) |
+| `graph_node` family (DAG) | SkillTree.tsv |
+| `graph_edge` family (edge data) | SkillEdges.tsv |
+| `edgesFor` (edge file pointer) | Expansion Files.tsv (SkillEdges row) |
+| `node_name` PK type | SkillTree.tsv (`name` column) |
+| `directed_edge_key` PK type | SkillEdges.tsv (`name` column) |
+| Auto-wired completion pre-processor | SkillTree.tsv (`graphChildren` filled from authored `graphParents`) |
+| Auto-wired graph validators (refs-exist, acyclic) | SkillTree.tsv |
 
 ## Notes
 
