@@ -73,12 +73,30 @@ local function wrapRowForValidation(row)
 end
 
 --- Wraps an array of rows eagerly (so that ipairs works).
+---
+--- The result is a plain Lua array with one extra trick: it mirrors the
+--- dataset's PK index so consumers can do `wrapped[pkValue]` to retrieve a
+--- row in O(1) without rebuilding a name→row map. The PK is taken from
+--- column 1 (per the tsv_model convention; see [tsv_model.lua](tsv_model.lua)
+--- opt_index). Keys are tostring-normalised so a numeric-typed PK survives
+--- a `wrapped[5]`-vs-`wrapped["5"]` distinction (numeric 5 still indexes
+--- the 5th row by position, the string "5" indexes the row whose PK is 5).
 --- @param rows table Array of raw rows
---- @return table Array of wrapped rows
+--- @return table Array of wrapped rows, also indexed by PK string
 local function wrapRowsForValidation(rows)
     local wrapped = {}
     for i, row in ipairs(rows) do
-        wrapped[i] = wrapRowForValidation(row)
+        local wrappedRow = wrapRowForValidation(row)
+        wrapped[i] = wrappedRow
+        local pkCell = row[1]
+        if type(pkCell) == "table" and getmetatable(pkCell) == "cell" then
+            local pk = pkCell.parsed
+            if pk == nil then pk = pkCell.evaluated end
+            if pk ~= nil and type(pk) ~= "table" then
+                pk = tostring(pk)
+                if wrapped[pk] == nil then wrapped[pk] = wrappedRow end
+            end
+        end
     end
     return wrapped
 end

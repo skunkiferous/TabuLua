@@ -119,34 +119,42 @@ local function makeUndirectedEdgeKey(a, b)
     return b .. "__" .. a
 end
 
---- Finds the edge row connecting `a` and `b`, or nil if none.
---- Checks both orderings to remain robust against non-canonical undirected
---- edge data (which the parser canonicalises on read, but mutation paths
---- might not).
-local function edgeForLink(edgeRows, a, b)
-    local k1 = makeEdgeKey(a, b)
-    for _, r in ipairs(edgeRows) do
-        if r.name == k1 then return r end
-    end
-    if a ~= b then
-        local k2 = makeEdgeKey(b, a)
-        for _, r in ipairs(edgeRows) do
-            if r.name == k2 then return r end
-        end
-    end
-    return nil
-end
-
 -- ============================================================
 -- Name -> row index (internal)
+--
+-- Wrapped row arrays from validator_executor / processor_executor mirror
+-- the dataset's PK index (`wrapped[pkValue] == wrapped[i]`), so a name
+-- lookup is already O(1) on production data. The probe below detects
+-- that fast path and reuses the array as the index, falling back to
+-- building a map only for callers (notably test fixtures) that pass plain
+-- Lua arrays without PK indexing.
 -- ============================================================
 
-local function buildNameIndex(rows)
+local function nameIndex(rows)
+    local first = rows[1]
+    if first ~= nil and first.name ~= nil and rows[first.name] == first then
+        return rows
+    end
     local idx = {}
     for _, r in ipairs(rows) do
         if r.name ~= nil then idx[r.name] = r end
     end
     return idx
+end
+
+--- Finds the edge row connecting `a` and `b`, or nil if none.
+--- Checks both orderings to remain robust against non-canonical undirected
+--- edge data (which the parser canonicalises on read, but mutation paths
+--- might not).
+local function edgeForLink(edgeRows, a, b)
+    local idx = nameIndex(edgeRows)
+    local r = idx[makeEdgeKey(a, b)]
+    if r then return r end
+    if a ~= b then
+        r = idx[makeEdgeKey(b, a)]
+        if r then return r end
+    end
+    return nil
 end
 
 -- Resolves a direction argument to the row-field name to follow.
@@ -193,7 +201,7 @@ end
 --- end of the path) or nil if the graph is acyclic. Standard DFS with
 --- WHITE/GREY/BLACK colouring.
 local function findCycle(rows, parentField)
-    local idx = buildNameIndex(rows)
+    local idx = nameIndex(rows)
     local WHITE, GREY, BLACK = 1, 2, 3
     local color = {}
     for _, r in ipairs(rows) do
@@ -263,7 +271,7 @@ end
 --- "children" (directed forward, default) or "parents" (directed back).
 local function bfs(row, rows, direction)
     local linkField = resolveDirection("bfs", row, direction)
-    local idx = buildNameIndex(rows)
+    local idx = nameIndex(rows)
     local visited = {}
     if row.name ~= nil then visited[row.name] = true end
     local queue = {row}
@@ -291,7 +299,7 @@ end
 --- (which is yielded first). Same direction semantics as bfs.
 local function dfs(row, rows, direction)
     local linkField = resolveDirection("dfs", row, direction)
-    local idx = buildNameIndex(rows)
+    local idx = nameIndex(rows)
     local visited = {}
     local stack = {row}
 
@@ -350,7 +358,7 @@ end
 local function shortestPath(a, b, rows)
     if a.name == b.name then return {a} end
     local linkField = resolveDirection("shortestPath", a, nil)
-    local idx = buildNameIndex(rows)
+    local idx = nameIndex(rows)
     local visited = {[a.name] = true}
     local predecessor = {}
     local queue = {a}
@@ -412,17 +420,14 @@ local function graphRefsExist(rows, family)
         return "graphRefsExist: invalid family '" .. tostring(family)
             .. "' (expected 'basic' or 'directed')"
     end
-    local names = {}
-    for _, r in ipairs(rows) do
-        if r.name ~= nil then names[r.name] = true end
-    end
+    local idx = nameIndex(rows)
     for _, r in ipairs(rows) do
         local rName = tostring(r.name)
         for _, fld in ipairs(fields) do
             local links = r[fld]
             if links then
                 for _, refName in ipairs(links) do
-                    if not names[refName] then
+                    if idx[refName] == nil then
                         return string.format(
                             "%s: row '%s' %s references unknown node '%s'",
                             family, rName, fld, tostring(refName))

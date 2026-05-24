@@ -262,20 +262,6 @@ local function cellValue(row, header, colName)
     return cell.evaluated
 end
 
--- Builds name → row index for a tsv_file (skipping the header).
-local function indexByName(tsv_file)
-    local header = tsv_file[1]
-    local out = {}
-    for i = 2, #tsv_file do
-        local row = tsv_file[i]
-        if type(row) == "table" then
-            local n = cellValue(row, header, "name")
-            if n ~= nil then out[n] = row end
-        end
-    end
-    return out, header
-end
-
 -- True if `list` contains `value`. Handles nil lists.
 local function listContains(list, value)
     if list == nil then return false end
@@ -366,8 +352,12 @@ local function validateEdgeFiles(tsv_files, lcFn2EdgesFor, lcFn2Type,
             else
                 -- Endpoint and link-consistency checks. Walk every edge
                 -- row, parse its name into (a, b), and check both halves
-                -- against the node file.
-                local nodeIdx, nodeHeader = indexByName(tsv_files[nodeFileName])
+                -- against the node file. The dataset returned by
+                -- processTSV is already PK-indexed (see tsv_model.lua
+                -- opt_index), so nodeTsv[name] is an O(1) lookup — no
+                -- name→row index needed here.
+                local nodeTsv = tsv_files[nodeFileName]
+                local nodeHeader = nodeTsv[1]
                 local edgeTsv = tsv_files[edgeFileName]
                 local edgeHeader = edgeTsv[1]
                 local linkField = (nodeRole == "basic")
@@ -383,8 +373,8 @@ local function validateEdgeFiles(tsv_files, lcFn2EdgesFor, lcFn2Type,
                                 -- Malformed key — the edge-key parser
                                 -- already rejected it; nothing extra to say.
                             else
-                                local rowA = nodeIdx[a]
-                                local rowB = nodeIdx[b]
+                                local rowA = nodeTsv[a]
+                                local rowB = nodeTsv[b]
                                 if not rowA then
                                     badVal(key, "edge endpoint '" .. a
                                         .. "' is not a row in '"

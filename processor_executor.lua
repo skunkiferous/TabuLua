@@ -130,6 +130,13 @@ local function wrapRowForProcessor(row, header, fileName)
 end
 
 --- Wraps an array of rows. Each entry is a processor-row proxy.
+---
+--- The result is a plain Lua array that also mirrors the dataset's PK
+--- index: `wrapped[pkValue]` returns the wrapped row for that PK in O(1),
+--- so `rowByKey` and graph helpers do not need to rebuild a name→row map.
+--- PK is taken from column 1 (per the tsv_model convention; see
+--- [tsv_model.lua](tsv_model.lua) opt_index) and tostring-normalised so a
+--- numeric-typed PK does not collide with positional indexing.
 --- @param rows table Array of read-only row proxies
 --- @param header table The file header
 --- @param fileName string Name of the file
@@ -137,7 +144,17 @@ end
 local function wrapRowsForProcessor(rows, header, fileName)
     local wrapped = {}
     for i, r in ipairs(rows) do
-        wrapped[i] = wrapRowForProcessor(r, header, fileName)
+        local wrappedRow = wrapRowForProcessor(r, header, fileName)
+        wrapped[i] = wrappedRow
+        local pkCell = r[1]
+        if type(pkCell) == "table" and getmetatable(pkCell) == "cell" then
+            local pk = pkCell.parsed
+            if pk == nil then pk = pkCell.evaluated end
+            if pk ~= nil and type(pk) ~= "table" then
+                pk = tostring(pk)
+                if wrapped[pk] == nil then wrapped[pk] = wrappedRow end
+            end
+        end
     end
     return wrapped
 end
@@ -203,31 +220,16 @@ local function setCellImpl(wrappedRow, column, value)
     end
 end
 
---- Builds an O(1) row-by-primary-key lookup for a wrapped row set.
---- The primary key is the first column of each row (the dataset's `__idx`-keyed
---- model uses the same convention). Returns nil for unknown keys.
+--- Returns an O(1) row-by-primary-key lookup closure for a wrapped row set.
+--- The wrapped row array is itself PK-indexed by `wrapRowsForProcessor`
+--- (see above), so this is just a typed lookup over it. Keys are converted
+--- via tostring to match the indexing convention.
 local function buildRowByKey(wrappedRows)
-    local index = {}
-    for _, wrapped in ipairs(wrappedRows) do
-        local ctx = row_context[wrapped]
-        if ctx then
-            local cell = ctx.rawRow[1]
-            if type(cell) == "table" then
-                local key = unwrap(cell.parsed)
-                if key == nil then
-                    key = unwrap(cell.evaluated)
-                end
-                if key ~= nil then
-                    index[key] = wrapped
-                end
-            end
-        end
-    end
     return function(key)
         if key == nil then
             return nil
         end
-        return index[key]
+        return wrappedRows[type(key) == "string" and key or tostring(key)]
     end
 end
 
