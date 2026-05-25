@@ -11,7 +11,7 @@ been revised to address each of them so a single registry can cover the
 existing three behaviours (`Type` / `enum` / `custom_type_def`) **and** the
 landed graph wiring without losing capability.
 
-**Phases 1, 2a, 2b: landed.** The registry module
+**Phases 1, 2a, 2b, 3a, 3b: landed.** The registry module
 ([type_wiring.lua](../type_wiring.lua)) and the built-in seed module
 ([builtin_wiring.lua](../builtin_wiring.lua)) now host the full per-typeName
 cascade (`onLoad`, `preProcessors`, `rowValidators`, `fileValidators`
@@ -30,7 +30,34 @@ phase (replaces the direct `validateGraphEdgeFiles` call).
 feature-module `registerModule` calls. `graph_wiring.applyAutoWiring`
 and `graph_wiring.validateEdgeFiles` are gone from the public API; the
 leaf detection helpers (`detectFamily`, `detectRole`,
-`detectEdgeFamily`) remain. Phases 3a, 3b, 4 (optional), and 5 remain.
+`detectEdgeFamily`) remain.
+
+User packages now reach the registry through two paths:
+
+- **3a — code library path.** `type_wiring.makeBootstrapAPI()` returns
+  a proxy api + `seal()` closure. The manifest `bootstrap` field
+  (`{{library:name, fn:name}}|nil`) drives this path:
+  `manifest_info.runPackageBootstraps` invokes each entry in
+  package-dependency order, after libraries load and before any
+  descriptor file is parsed. `seal()` fires immediately after — the
+  api's only legitimate use is inside the bootstrap calls
+  themselves, so a captured handle invoked later (e.g. from a
+  function called during file loading) errors at the call site.
+
+- **3b — pure-data path via the `type_wiring_def` built-in.** A new
+  built-in record type whose fields are `typeName` + the three
+  per-typeName spec-list slots. Any file declaring
+  `typeName=type_wiring_def` (or extending it) has its rows
+  dispatched as `type_wiring.register(...)` calls by the standard
+  onLoad cascade — same mechanism used for Type files, enum files,
+  and custom_type_def files. Authors name such files however they
+  like (convention: `TypeWiring.tsv`); the engine recognises them by
+  record type, not by basename. The shared seal of 3a does NOT
+  apply here because 3b registrations happen via direct
+  `type_wiring.register` calls from inside the onLoad handler — they
+  never touch the bootstrap api.
+
+Phases 4 (optional) and 5 remain.
 
 ## Summary
 

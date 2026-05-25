@@ -68,6 +68,11 @@ local MANIFEST_SPEC = [[{
     custom_types:{custom_type_def}|nil,
     # Defines code libraries for expressions and COG
     code_libraries:{{name,string}}|nil,
+    # Bootstrap entries that run once at engine init with access to the
+    # type-wiring registration API. Each entry references a function
+    # exported by one of this package's own code libraries. See
+    # TODO/type_wiring.md Phase 3a.
+    bootstrap:{{library:name, fn:name}}|nil,
     # Defines the package "dependencies"
     dependencies:{{
         # Defines the "id" of a dependency
@@ -410,6 +415,57 @@ local function loadCodeLibraries(badVal, manifest, loadEnv)
     end)
 end
 
+-- Runs each package's `bootstrap` manifest entries (Phase 3a of
+-- TODO/type_wiring.md). For each package walked in dependency order,
+-- resolves every `{library, fn}` entry against loadEnv[library] and
+-- invokes fn(api). Errors via badVal (never raised) so a misconfigured
+-- bootstrap doesn't tear down the whole load. The api is the proxy
+-- from type_wiring.makeBootstrapAPI(); seal() should be called by the
+-- caller AFTER this function returns AND after TypeWiring.tsv rows
+-- have been processed.
+local function runPackageBootstraps(badVal, packages, package_order, loadEnv, api)
+    for _, package_id in ipairs(package_order) do
+        local manifest = packages[package_id]
+        local bootstrap = manifest and manifest.bootstrap
+        if bootstrap then
+            badVal.source_name = manifest.path
+            badVal.line_no = 0
+            badVal.row_key = PACKAGE_ID_ROW_KEY
+            badVal.col_name = "bootstrap"
+            for i, entry in ipairs(bootstrap) do
+                local library = entry.library or entry[1]
+                local fn_name = entry.fn or entry[2]
+                if type(library) ~= "string" or type(fn_name) ~= "string" then
+                    badVal(tostring(library or fn_name or ""),
+                        "bootstrap[" .. i .. "]: invalid entry (expected {library, fn})")
+                else
+                    local exports = loadEnv[library]
+                    if exports == nil then
+                        badVal(library, "bootstrap: library '" .. library
+                            .. "' not loaded (must match one of this package's"
+                            .. " code_libraries entries)")
+                    else
+                        local fn = exports[fn_name]
+                        if type(fn) ~= "function" then
+                            badVal(fn_name, "bootstrap: function '" .. fn_name
+                                .. "' not exported by library '" .. library .. "'")
+                        else
+                            local ok, err = pcall(fn, api)
+                            if not ok then
+                                badVal(fn_name, "bootstrap function '" .. library
+                                    .. "." .. fn_name .. "' raised: " .. tostring(err))
+                            else
+                                logger:info("Ran bootstrap " .. library .. "." .. fn_name
+                                    .. " for package " .. package_id)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 -- Loads and processes all manifest files, building a dependency graph
 local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_env, manifest_files)
     local graph = {}
@@ -652,6 +708,7 @@ local API = {
     isManifestFile = isManifestFile,
     loadManifestFile = loadManifestFile,
     resolveDependencies = resolveDependencies,
+    runPackageBootstraps = runPackageBootstraps,
     validateVariantGroups = validateVariantGroups,
     versionSatisfies = versionSatisfies,
     FILENAME = MANIFEST_FILENAME,

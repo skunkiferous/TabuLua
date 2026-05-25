@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Type-wiring registry — Phases 3a and 3b of [TODO/type_wiring.md](TODO/type_wiring.md).**
+  User packages can now reach the type-wiring registry through two
+  complementary paths.
+
+  **3a — `bootstrap` manifest field (code library path).** A new
+  optional list of `{library, fn}` pairs on the manifest. After all
+  packages' `code_libraries` are loaded but before any descriptor file
+  is parsed, each entry's `fn(api)` is invoked in package-dependency
+  order. The `api` table proxies `register` / `registerModule` onto
+  the registry; a `seal()` closure (called by the engine after the
+  bootstrap phase ends) flips a shared `sealed` flag, so any later
+  call — including one through a proxy a bootstrap stashed into
+  library state — errors at the call site. Use this to register
+  `descriptorColumns`, `sandboxHelpers`, `enginePostPasses`, or
+  Lua-valued `onLoad` callbacks (the slot the `TypeWiring.tsv` path
+  can't reach).
+
+  **3b — `type_wiring_def` built-in record type (pure-data path).**
+  A new built-in alias `type_wiring_def` describes a row's wiring
+  shape: `{typeName:name, preProcessors:{processor_spec}|nil,
+  rowValidators:{validator_spec}|nil, fileValidators:{validator_spec}|nil}`.
+  Any file declaring `typeName=type_wiring_def` (or any user type that
+  extends it) has its rows dispatched as `type_wiring.register(...)`
+  calls by the standard `onLoad` cascade — no hard-coded filename
+  detection. Authors can name such files anything they like
+  (`TypeWiring.tsv` by convention); the engine recognises them by
+  record type, the same way it recognises Type files, enum files,
+  and custom_type_def files. Unknown typeNames register harmlessly:
+  the cascade dispatcher only fires the contributions when a file's
+  extends chain reaches a registered name. One new `manifest_info`
+  helper (`runPackageBootstraps`) drives the 3a side; the 3b side
+  reuses the existing onLoad pipeline (no new files_desc helpers
+  needed).
+
 - **Type-wiring registry — Phases 2a and 2b of [TODO/type_wiring.md](TODO/type_wiring.md).**
   Phase 1 introduced the registry's `onLoad` slot; Phase 2 grows it into
   the full per-typeName cascade (per-type `preProcessors` / `rowValidators`

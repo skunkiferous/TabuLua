@@ -90,6 +90,7 @@ local function extractFilesDescriptors(files)
     return filterSeq(files, isFilesDescriptor)
 end
 
+
 -- Matches packages (package_id=>package{.path}]) and their descriptor files
 local function matchDescriptorFiles(packages, descriptorFilesNames, log)
     log = log or logger

@@ -106,6 +106,44 @@ local CUSTOM_TYPE_DEF_FIELDS = {
     'members', 'pattern', 'tags', 'validate', 'values'
 }
 
+
+-- onLoad handler for files whose typeName is (or extends) `type_wiring_def`.
+-- Each data row becomes one type_wiring.register call. typeName names the
+-- target type; the three spec-list columns flow straight into the
+-- corresponding per-typeName slots. Unknown typeNames register harmlessly —
+-- the cascade dispatcher only fires the contributions when a file's
+-- extends chain reaches a registered name.
+local function onLoadTypeWiringDef(file, fileType, extends, badVal, loadEnv)
+    for i, row in ipairs(file) do
+        if i > 1 and type(row) == "table" then
+            local typeNameCell = row["typeName"]
+            local typeName = typeNameCell and typeNameCell.parsed
+            if typeName and typeName ~= '' then
+                local contributions = {}
+                local function pickList(field)
+                    local cell = row[field]
+                    local v = cell and cell.parsed
+                    if type(v) == "table" and #v > 0 then
+                        contributions[field] = v
+                    end
+                end
+                pickList("preProcessors")
+                pickList("rowValidators")
+                pickList("fileValidators")
+                if next(contributions) then
+                    badVal.line_no = i
+                    badVal.row_key = typeName
+                    local ok, err = pcall(type_wiring.register, typeName, contributions)
+                    if not ok then
+                        badVal(typeName, "type_wiring_def: register failed: "
+                            .. tostring(err))
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function onLoadCustomTypeDef(file, fileType, extends, badVal, loadEnv)
     -- Build inherited defaults by walking the ancestor chain for columns
     -- that are entirely missing from this file's header.
@@ -157,6 +195,17 @@ end
 type_wiring.register("Type", {onLoad = onLoadType})
 type_wiring.register("enum", {onLoad = onLoadEnum})
 type_wiring.register("custom_type_def", {onLoad = onLoadCustomTypeDef})
+
+-- type_wiring_def — built-in record type for user-package "wiring files".
+-- A file declaring `typeName=type_wiring_def` (or extending it) has its
+-- rows dispatched as type_wiring.register(...) calls by the cascade
+-- dispatcher; no hard-coded filename detection is needed. Convention is
+-- to call such files TypeWiring.tsv, but the engine recognises them by
+-- record type rather than basename.
+parsers.registerAlias(nullBadVal, 'type_wiring_def',
+    '{fileValidators:{validator_spec}|nil,preProcessors:{processor_spec}|nil,'
+    .. 'rowValidators:{validator_spec}|nil,typeName:name}')
+type_wiring.register("type_wiring_def", {onLoad = onLoadTypeWiringDef})
 
 -- ============================================================
 -- Module-level: re-declare the ten optional Files.tsv columns that
@@ -474,6 +523,7 @@ local API = {
     onLoadEnum = onLoadEnum,
     onLoadType = onLoadType,
     onLoadCustomTypeDef = onLoadCustomTypeDef,
+    onLoadTypeWiringDef = onLoadTypeWiringDef,
 }
 
 local function apiCall(_, operation, ...)

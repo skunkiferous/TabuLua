@@ -603,6 +603,50 @@ local function runEnginePostPasses(tsv_files, joinMeta, badVal)
 end
 
 -- ============================================================
+-- Bootstrap API (Phase 3 — user packages reach the registry)
+-- ============================================================
+
+-- Returns (api, seal) — a frozen api table whose `register` /
+-- `registerModule` entries proxy onto the registry, plus a `seal()`
+-- closure that flips a shared `sealed` flag. The proxies check the flag
+-- at call time, not lookup time, so a bootstrap that captures
+-- `api.register` into library state and calls it later errors at the
+-- delayed call rather than silently no-op'ing.
+--
+-- Used by manifest_loader to dispatch the `bootstrap` manifest field
+-- and to drive `TypeWiring.tsv` row registration. The engine creates
+-- ONE (api, seal) pair per processFiles call and invokes seal() after
+-- the bootstrap phase finishes (after every bootstrap returns AND
+-- every TypeWiring.tsv row has been processed).
+local function makeBootstrapAPI()
+    local sealed = false
+
+    local function checkSealed(opName)
+        if sealed then
+            error("type_wiring." .. opName
+                .. ": bootstrap phase has ended; the api can no longer be used", 2)
+        end
+    end
+
+    local api = readOnly({
+        register = function(typeName, contributions)
+            checkSealed("register")
+            return register(typeName, contributions)
+        end,
+        registerModule = function(moduleName, declarations)
+            checkSealed("registerModule")
+            return registerModule(moduleName, declarations)
+        end,
+    })
+
+    local function seal()
+        sealed = true
+    end
+
+    return api, seal
+end
+
+-- ============================================================
 -- Snapshot / restore (for global_reset)
 -- ============================================================
 
@@ -671,6 +715,7 @@ local API = {
     descriptorColumnsByName = descriptorColumnsByName,
     sandboxAdditions = sandboxAdditions,
     runEnginePostPasses = runEnginePostPasses,
+    makeBootstrapAPI = makeBootstrapAPI,
     snapshotState = snapshotState,
     restoreState = restoreState,
     _getRegisteredTypes = _getRegisteredTypes,

@@ -45,6 +45,7 @@ local parseType = parsers.parseType
 local manifest_info = require("manifest_info")
 local isManifestFile = manifest_info.isManifestFile
 local resolveDependencies = manifest_info.resolveDependencies
+local runPackageBootstraps = manifest_info.runPackageBootstraps
 local validateVariantGroups = manifest_info.validateVariantGroups
 
 local files_desc = require("files_desc")
@@ -450,8 +451,8 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
     end
 end
 
--- Process files once the order has been established
--- Returns the TSV files and join metadata
+-- Process files once the order has been established.
+-- Returns the TSV files and join metadata.
 local function processOrderedFiles(badVal, files, file2dir, desc_files_order, desc_file2pkg_id,
     raw_files, loadEnv, opt_variants)
     local priorities = {}
@@ -494,6 +495,11 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- Note: the type-wiring registry replaces the former typesSet / enumsSet /
     -- customTypesSet precomputation. Each wired onLoad fires from the per-file
     -- load loop via type_wiring.applyWiring, walking the file's extends chain.
+
+    -- Phase 3b of TODO/type_wiring.md: any user "wiring files" — files
+    -- whose typeName extends the built-in `type_wiring_def` — fire their
+    -- onLoad during the regular per-file load loop below, just like Type
+    -- / enum / custom_type_def files. No special-case file discovery.
 
     -- Check that files referenced in Files.tsv actually exist on disk
     local filesOnDisk = {}
@@ -920,6 +926,21 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
             opt_variants[#opt_variants + 1] = k
         end
     end
+
+    -- Phase 3a of TODO/type_wiring.md: create the bootstrap api/seal pair
+    -- and invoke each package's manifest `bootstrap` entries in dependency
+    -- order. seal() fires immediately after — the api's only legitimate
+    -- use is inside the bootstrap calls themselves; a captured handle
+    -- invoked later (e.g. from a library function called during file
+    -- loading) errors at the call site.
+    --
+    -- Phase 3b's "wiring files" (typeName extending `type_wiring_def`)
+    -- do NOT use this api — they go through the regular per-file onLoad
+    -- pipeline and call type_wiring.register directly, so no seal is
+    -- needed for them.
+    local bootstrapAPI, sealBootstrap = type_wiring.makeBootstrapAPI()
+    runPackageBootstraps(badVal, packages, package_order, loadEnv, bootstrapAPI)
+    sealBootstrap()
 
     local desc_files_order, desc_file2pkg_id = resolveFileDescriptors(files, packages, package_order)
     if not desc_files_order then
