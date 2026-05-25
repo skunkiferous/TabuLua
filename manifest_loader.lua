@@ -66,6 +66,16 @@ local graph_wiring = require("graph_wiring")
 local applyGraphAutoWiring = graph_wiring.applyAutoWiring
 local validateGraphEdgeFiles = graph_wiring.validateEdgeFiles
 
+-- The type-wiring registry replaces the three hand-written branches that
+-- previously dispatched Type / enum / custom_type_def behaviour from the
+-- per-file load loop. builtin_wiring.lua registers the three onLoad
+-- handlers; the dispatcher walks the file's extends chain and fires them.
+local type_wiring = require("type_wiring")
+local applyTypeWiring = type_wiring.applyWiring
+local hasOnLoadFor = type_wiring.hasOnLoadFor
+local hasOnLoad = type_wiring.hasOnLoad
+require("builtin_wiring")
+
 -- CSV file extension
 local CSV = "csv"
 
@@ -132,72 +142,18 @@ local function extractManifestFiles(files)
     return filterSeq(files, isManifestFile)
 end
 
--- Register a parser, if the file defines an enum
-local function registerEnumParser(file, enumType, badVal)
-    if enumType then
-        if file[1][1].value ~= "name:identifier" then
-            badVal.line_no = 1
-            badVal.col_idx = 1
-            badVal.row_key = file[1][1].value
-            local file_name = file[1].__source
-            badVal(file[1][1].value,"First column of ENUM " .. file_name ..
-                " should be a name:identifier")
-        end
-        local labels = {}
-        for i, row in ipairs(file) do
-            if i > 1 and type(row) == "table" then
-                local enum_label = row[1].reformatted
-                labels[#labels+1] = enum_label
-            end
-        end
-        parsers.registerEnumParser(badVal, labels, enumType)
-    end
-end
-
--- Registers type aliases for all types defined in a "type file"
-local function registerAliases(file, fileType, extends, badVal)
-    local defaultSuperType = extends[fileType]
-    while defaultSuperType and #defaultSuperType > 0 and
-        parsers.parseType(nullBadVal, defaultSuperType, false) == nil do
-        defaultSuperType = extends[defaultSuperType]
-    end
-    if defaultSuperType ~= extends[fileType] then
-        logger:info("Default superType for " .. fileType .. " is " ..
-            tostring(defaultSuperType))
-    end
-    for i,line in ipairs(file) do
-        if i > 1 and type(line) == "table" then
-            badVal.line_no = i
-            badVal.col_name = 'name'
-            badVal.col_idx = 1
-            badVal.row_key = line[1].reformatted
-            local type_name = line['name'].reformatted
-            local st =  line['superType']
-            -- Maybe all types in the file have no superType, so we skipped the column?
-            local superType = defaultSuperType
-            if st ~= nil then
-                superType = st.reformatted
-            end
-            if superType and #superType > 0 then
-                if parsers.isBuiltInType(type_name) then
-                    logger:warn(type_name.." is a built-in type, and cannot be aliased to "..superType)
-                elseif not parsers.registerAlias(badVal, type_name, superType) then
-                    logger:error("Failed to register alias " .. type_name.." for "..superType)
-                end
-            end
-        end
-    end
-end
-
 -- Register a record type for a TSV file based on its column structure.
 -- When 'extends' is provided and the fileType has a parent with a registered record type,
 -- validates that each child field type is same-or-subtype of the corresponding parent field.
-local function registerFileType(fileRegisteredTypes, file, fileType, typesSet, enumsSet, extends, badVal)
+-- Files whose typeName transitively extends Type or enum are skipped because the
+-- corresponding wired onLoad has already registered the record-type/parser for them.
+local function registerFileType(fileRegisteredTypes, file, fileType, extends, badVal)
     if not fileType or #fileType == 0 then
         return  -- No type name specified
     end
-    if typesSet[fileType] or enumsSet[fileType] then
-        return  -- Type/enum definitions are handled separately
+    if hasOnLoadFor(fileType, extends, "Type")
+        or hasOnLoadFor(fileType, extends, "enum") then
+        return  -- Type/enum definitions are handled by their wired onLoad.
     end
     -- Skip if this type is already parseable (built-in alias or previously registered).
     -- This avoids conflicts when a file uses typeName=custom_type_def directly, whose
@@ -239,55 +195,6 @@ local function registerFileType(fileRegisteredTypes, file, fileType, typesSet, e
                     end
                 end
             end
-        end
-    end
-end
-
--- The fields of custom_type_def that are extracted from each row for type registration
-local CUSTOM_TYPE_DEF_FIELDS = {
-    'name', 'parent', 'min', 'max', 'minLen', 'maxLen',
-    'members', 'pattern', 'tags', 'validate', 'values'
-}
-
--- Registers custom types from a file whose typeName is or extends custom_type_def.
--- Each data row is treated as a custom_type_def record; its parsed fields are fed into
--- parsers.registerTypesFromSpec, which handles aliases, constrained types, and type tags.
-local function registerCustomTypesFromFile(file, badVal, fileType, extends, loadedFiles)
-    -- Build inherited defaults by walking the ancestor chain for columns
-    -- that are entirely missing from this file's header
-    local header = file[1]
-    local inherited_defaults = {}
-    local ancestor = fileType
-    while ancestor and extends[ancestor] do
-        ancestor = extends[ancestor]
-        local ancestor_file = loadedFiles[ancestor]
-        if ancestor_file then
-            local ancestor_header = ancestor_file[1]
-            for _, field in ipairs(CUSTOM_TYPE_DEF_FIELDS) do
-                if not inherited_defaults[field] and not header[field] then
-                    local col = ancestor_header[field]
-                    if col and col.default_expr then
-                        inherited_defaults[field] = col.default_expr
-                    end
-                end
-            end
-        end
-    end
-
-    for i, row in ipairs(file) do
-        if i > 1 and type(row) == "table" then
-            local spec = {}
-            for _, field in ipairs(CUSTOM_TYPE_DEF_FIELDS) do
-                local cell = row[field]
-                if cell ~= nil then
-                    spec[field] = cell.parsed
-                elseif inherited_defaults[field] then
-                    spec[field] = inherited_defaults[field]
-                end
-            end
-            badVal.line_no = i
-            badVal.row_key = row[1].reformatted
-            parsers.registerTypesFromSpec(badVal, {spec})
         end
     end
 end
@@ -350,18 +257,16 @@ local function buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
     return table_subscribers
 end
 
--- Logs the file being processed
-local function logFile(file_name, fileType, enumsSet, typesSet, customTypesSet, table_subscribers)
-    if enumsSet[fileType] then
-        logger:info("Processing enum file: " .. file_name)
-    elseif typesSet[fileType] then
-        logger:info("Processing type file: " .. file_name)
-    elseif customTypesSet[fileType] then
-        logger:info("Processing custom type definition file: " .. file_name)
+-- Logs the file being processed. Type/enum/custom_type_def files are reported
+-- as "wired" with their typeName so future wired families (graph nodes, etc.)
+-- don't need a new branch here.
+local function logFile(file_name, fileType, extends, table_subscribers)
+    if fileType and hasOnLoad(fileType, extends) then
+        logger:info("Processing wired file (typeName=" .. fileType .. "): " .. file_name)
     elseif type(table_subscribers) == "table" then
         logger:info("Processing constants file: " .. file_name)
     else
-        logger:info("Processing ordinary file:"..file_name)
+        logger:info("Processing ordinary file:" .. file_name)
     end
 end
 
@@ -422,9 +327,11 @@ local function isMigrationScript(rawtsv)
     return false
 end
 
--- Processes a single TSV/CSV file: reads, parses, and registers types/enums if applicable
+-- Processes a single TSV/CSV file: reads, parses, and dispatches any
+-- type-wiring onLoad callbacks whose registered typeName appears in this
+-- file's extends chain (replaces the former Type/enum/custom_type_def branches).
 local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
-    typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
+    extends, raw_files, files_cache,
     options_extractor, expr_eval, loadEnv, badVal)
     badVal.source = file_name
     local content, err = readFile(file_name)
@@ -447,7 +354,7 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
 
     local fileType = lcFn2Type[lcFNKey]
-    logFile(file_name, fileType, enumsSet, typesSet, customTypesSet, table_subscribers)
+    logFile(file_name, fileType, extends, table_subscribers)
 
     -- Look up parent file's header for inheriting column defaults
     local parent_header = nil
@@ -468,17 +375,11 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
         if fileType then
             loadEnv.files[fileType] = file
         end
-        if enumsSet[fileType] then
-            registerEnumParser(file, fileType, badVal)
-        end
-        if typesSet[fileType] then
-            registerAliases(file, fileType, extends, badVal)
-        end
-        if customTypesSet[fileType] then
-            registerCustomTypesFromFile(file, badVal, fileType, extends, loadEnv.files)
-        end
-        -- Register the file's column structure as a type
-        registerFileType(fileRegisteredTypes, file, fileType, typesSet, enumsSet, extends, badVal)
+        -- Fire any registered onLoad whose typeName is an ancestor of fileType.
+        applyTypeWiring(file, fileType, extends, badVal, loadEnv)
+        -- Register the file's column structure as a type (skipped for Type/enum
+        -- descendants — those are handled by their wired onLoad above).
+        registerFileType(fileRegisteredTypes, file, fileType, extends, badVal)
     end
 end
 
@@ -501,7 +402,7 @@ end
 
 -- Load all the non-description files
 local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
-    typesSet, enumsSet, customTypesSet, extends, raw_files, loadEnv, badVal, lcSkippedFiles)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
 
     -- Tracks types registered by registerFileType (as opposed to pre-existing/built-in types).
@@ -517,78 +418,12 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
         end
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV) then
             processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
-                typesSet, enumsSet, customTypesSet, extends, raw_files, files_cache,
+                extends, raw_files, files_cache,
                 options_extractor, expr_eval, loadEnv, badVal)
         else
             processUnknownFile(file_name, raw_files, badVal)
         end
         ::continue::
-    end
-end
-
--- Recursively search the extends table, to see if the typeName maps to "Type",
--- directly, or indirectly.
-local function isType(typeName, extends)
-    while typeName do
-        if typeName:lower() == "type" then
-            return true
-        end
-        typeName = extends[typeName]
-    end
-    return false
-end
-
--- Recursively search the extends table, to see if the typeName maps to "Enum",
--- directly, or indirectly.
-local function isEnum(typeName, extends)
-    while typeName do
-        if typeName:lower() == "enum" then
-            return true
-        end
-        typeName = extends[typeName]
-    end
-    return false
-end
-
--- Recursively search the extends table, to see if the typeName maps to "custom_type_def",
--- directly, or indirectly.
-local function isCustomTypeDef(typeName, extends)
-    while typeName do
-        if typeName:lower() == "custom_type_def" then
-            return true
-        end
-        typeName = extends[typeName]
-    end
-    return false
-end
-
--- Build the set of fileTypes that are, or transitively extend, custom_type_def.
--- Handles both the direct case (typeName == "custom_type_def") and the indirect case
--- where a user-named sub-type has superType=custom_type_def (or a chain leading to it).
-local function buildCustomTypesSet(lcFn2Type, extends)
-    local s = {}
-    for _, fileType in pairs(lcFn2Type) do
-        if fileType and (fileType:lower() == "custom_type_def"
-            or isCustomTypeDef(extends[fileType], extends)) then
-            s[fileType] = true
-            logger:info("Found custom type definition file type: " .. fileType)
-        end
-    end
-    return s
-end
-
--- Find all types extending "Type"
-local function findAllTypes(extends, typesSet, enumsSet)
-    typesSet['type'] = true
-    for typeName, superType in pairs(extends) do
-        if isType(superType, extends) then
-            typesSet[typeName] = true
-            logger:info("Found type: " .. typeName)
-        end
-        if isEnum(superType, extends) then
-            enumsSet[typeName] = true
-            logger:info("Found enum: " .. typeName)
-        end
     end
 end
 
@@ -599,8 +434,6 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local priorities = {}
     local post_proc_files = {}
     local extends = {}
-    local typesSet = {}
-    local enumsSet = {}
     local lcFn2Type = {}
     local lcFn2Ctx = {}
     local lcFn2Col = {}
@@ -635,8 +468,10 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         logger:error("Could not load/process files descriptors. Aborting.")
         return
     end
-    findAllTypes(extends, typesSet, enumsSet)
-    local customTypesSet = buildCustomTypesSet(lcFn2Type, extends)
+    -- Note: the type-wiring registry replaces the former typesSet / enumsSet /
+    -- customTypesSet precomputation. Each wired onLoad fires from the per-file
+    -- load loop via type_wiring.applyWiring, walking the file's extends chain.
+
     -- Check that files referenced in Files.tsv actually exist on disk
     local filesOnDisk = {}
     -- Also build a reverse map: lowercased basename -> list of relative keys on disk
@@ -688,7 +523,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         tsv_files[desc_file[1].__source] = desc_file
     end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
-    lcFn2Ctx, lcFn2Col, typesSet, enumsSet, customTypesSet, extends,
+    lcFn2Ctx, lcFn2Col, extends,
     raw_files, loadEnv, badVal, lcSkippedFiles)
     -- Auto-wire graph completion pre-processors AND validators for files
     -- whose type transitively extends one of the built-in graph families.

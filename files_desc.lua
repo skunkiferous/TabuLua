@@ -15,8 +15,14 @@ local function getVersion()
     return tostring(VERSION)
 end
 
--- Files that need "post-processing" because they define things that need "registering"
-local POST_PROCESS_PARENTS = {Type=true, enum=true}
+-- The set of "files that need post-processing because they register parsers/
+-- aliases/types for siblings" is computed from the type-wiring registry —
+-- any typeName whose ancestor chain has an onLoad triggers the reprocessing
+-- pass. builtin_wiring.lua registers Type / enum / custom_type_def with the
+-- registry at module load time.
+local type_wiring = require("type_wiring")
+require("builtin_wiring")
+local hasOnLoad = type_wiring.hasOnLoad
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -462,17 +468,15 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     return max_prio
 end
 
--- Detect post processing needed
+-- Detect post processing needed. Delegates to the type-wiring registry:
+-- if any ancestor in typeName's extends chain has a registered onLoad,
+-- the file needs a second descriptor pass so the onLoad's registrations
+-- are visible to siblings.
 local function detectPostProcessingNeeded(extends, post_proc_files, file_name, typeName, log)
     log = log or logger
-    local tn = typeName
-    while tn and #tn > 0 do
-        if POST_PROCESS_PARENTS[tn] then
-            post_proc_files[file_name] = typeName
-            log:info("Found " .. tn .. " file: " .. file_name)
-            break
-        end
-        tn = extends[tn]
+    if typeName and #typeName > 0 and hasOnLoad(typeName, extends) then
+        post_proc_files[file_name] = typeName
+        log:info("Found wired file (typeName=" .. typeName .. "): " .. file_name)
     end
 end
 

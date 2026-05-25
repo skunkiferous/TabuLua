@@ -9,9 +9,45 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Type-wiring registry (Phase 1 of [TODO/type_wiring.md](TODO/type_wiring.md)).**
+  New [type_wiring](type_wiring.lua) module exposes a small registry that
+  attaches behaviour to a file by walking its `extends` chain. Phase 1
+  supports a single contribution slot — `onLoad(file, fileType, extends,
+  badVal, loadEnv)` — fired from the per-file load loop *before*
+  subsequent files parse, so registered parsers/aliases/types are
+  visible to siblings in the same package. The companion
+  [builtin_wiring](builtin_wiring.lua) module registers the three
+  built-in handlers (`Type` → alias registration, `enum` → enum parser
+  registration, `custom_type_def` → custom-type spec registration);
+  these handlers moved out of `manifest_loader.lua` essentially
+  unchanged. No user-visible behaviour change — the refactor collapses
+  three hand-written `if isType / isEnum / isCustomTypeDef` branches
+  and four near-identical ancestor walkers into one dispatch loop.
+  Later phases will add `preProcessors` / `rowValidators` /
+  `fileValidators` per-typeName slots and a separate `registerModule`
+  API for engine-init slots (descriptor columns, sandbox helpers,
+  engine post-passes); see TODO/type_wiring.md for the full plan.
+
 ### Changed
 
+- `files_desc.detectPostProcessingNeeded` now consults
+  `type_wiring.hasOnLoad` instead of a hard-coded
+  `POST_PROCESS_PARENTS = {Type=true, enum=true}` table, so any
+  future built-in (or user-package) that registers an `onLoad`
+  automatically triggers the descriptor-file reprocessing pass
+  without a parallel edit to `files_desc.lua`.
+
 ### Removed
+
+- `manifest_loader.lua` no longer defines `registerEnumParser`,
+  `registerAliases`, `registerCustomTypesFromFile`, `isType`, `isEnum`,
+  `isCustomTypeDef`, `findAllTypes`, or `buildCustomTypesSet`. The
+  three onLoad handlers live in [builtin_wiring](builtin_wiring.lua);
+  the four ancestor walkers are subsumed by the single cascade walk
+  in [type_wiring](type_wiring.lua). The `typesSet` / `enumsSet` /
+  `customTypesSet` locals previously precomputed in
+  `processOrderedFiles` are gone — each onLoad handler checks its
+  own applicability via the registry's ancestor walk.
 
 ### Fixed
 

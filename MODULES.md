@@ -7,6 +7,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
+| [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers with the type-wiring registry | error_reporting, global_reset, named_logger, parsers, read_only, type_wiring |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
 | [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
 | [deserialization](#deserialization) | Data deserialization (Lua, JSON, XML, MessagePack) | read_only |
@@ -17,13 +18,13 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [global_reset](#global_reset) | Registry for resetting all module-level mutable state | *(none)* |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
 | [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
-| [files_desc](#files_desc) | File descriptor discovery and load order management | file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model |
+| [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
 | [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
 | [graph_wiring](#graph_wiring) | Auto-wires completion pre-processors and structural validators on graph-family files; runs the edge↔node consistency check | graph_helpers, named_logger, read_only |
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -55,6 +56,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [table_utils](#table_utils) | Table manipulation utilities | *(none)* |
 | [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | named_logger, raw_tsv, read_only, string_utils, file_util |
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
+| [type_wiring](#type_wiring) | Registry that attaches behaviour to files by walking the `extends` chain; Phase 1 supports the `onLoad` slot | named_logger, read_only |
 | [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
 
@@ -68,6 +70,15 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 Pure-Lua RFC 4648 Base64 encode/decode. Provides `encode()`, `decode()`, and `isValid()` for binary data encoding. Used by `parsers.builtin` for the `base64bytes` type and by `exporter` for binary export conversion.
 
 **Dependencies:** read_only
+
+---
+
+### builtin_wiring
+**File:** [builtin_wiring.lua](builtin_wiring.lua)
+
+Seeds the [type_wiring](#type_wiring) registry with the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers. The handlers themselves (alias registration, enum-parser registration, custom-type spec registration) were previously inline in `manifest_loader.lua`; loading `builtin_wiring` puts them in the registry under their canonical typeNames, then snapshots the registry and arranges restoration via `global_reset` so test runs that mutate the registry can recover the built-in baseline.
+
+**Dependencies:** error_reporting, global_reset, named_logger, parsers, read_only, type_wiring
 
 ---
 
@@ -165,9 +176,9 @@ File system operations including path manipulation, file reading/writing, and di
 ### files_desc
 **File:** [files_desc.lua](files_desc.lua)
 
-Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata.
+Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically.
 
-**Dependencies:** file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model
+**Dependencies:** builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring
 
 ---
 
@@ -229,9 +240,9 @@ Handles `Manifest.transposed.tsv` files for package metadata, versioning, type a
 ### manifest_loader
 **File:** [manifest_loader.lua](manifest_loader.lua)
 
-Orchestrates package loading: discovers packages, resolves dependencies, registers types, loads data files in order, and runs all validators (row, file, package) after loading.
+Orchestrates package loading: discovers packages, resolves dependencies, dispatches type-wiring `onLoad` callbacks (via [type_wiring](#type_wiring) — replaces the former hand-written `Type` / `enum` / `custom_type_def` branches), registers types, loads data files in order, and runs all validators (row, file, package) after loading.
 
-**Dependencies:** error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, validator_executor
+**Dependencies:** builtin_wiring, error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor
 
 ---
 
@@ -523,6 +534,15 @@ TSV file comparison tool that compares two TSV files at the data level, understa
 TSV/CSV loading and parsing with type validation via parsers module. Supports expression evaluation in cells (prefixed with `=`).
 
 **Dependencies:** error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils
+
+---
+
+### type_wiring
+**File:** [type_wiring.lua](type_wiring.lua)
+
+Registry that attaches behaviour to a file by walking its `extends` chain. Each entry is keyed by a typeName (case-insensitive on lookup). Phase 1 supports a single contribution slot — `onLoad(file, fileType, extends, badVal, loadEnv)` — which `manifest_loader` dispatches via `applyWiring` from the per-file load loop. The dispatch is shallowest-first, fires each ancestor at most once per call, and is safe against cycles in the `extends` map. Companion accessors: `hasOnLoad(typeName, extends)` (used by `files_desc` to decide whether a file requires the second descriptor pass) and `hasOnLoadFor(typeName, extends, ancestorTypeName)` (used by `manifest_loader.registerFileType` to skip records whose type registration is owned by a wired `onLoad`). See [TODO/type_wiring.md](TODO/type_wiring.md) for the full multi-phase plan; later phases add `preProcessors` / `rowValidators` / `fileValidators` slots and a separate `registerModule` API for engine-init declarations.
+
+**Dependencies:** named_logger, read_only
 
 ---
 
