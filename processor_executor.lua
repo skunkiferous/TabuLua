@@ -25,11 +25,25 @@ local normalizeValidatorSpec = validator_executor.normalizeValidatorSpec
 
 local parsers = require("parsers")
 
+-- Type-wiring registry: feature modules contribute extra sandbox helpers
+-- via registerModule(...).sandboxHelpers.processor. We do NOT require
+-- builtin_wiring here, because builtin_wiring requires processor_executor
+-- (it references our graph completion functions in the registry slot
+-- below) — pulling builtin_wiring in would create a circular dependency.
+-- The registry is fine with partial loads: each module contributes
+-- additively under the same moduleName as builtin_wiring does.
+local type_wiring = require("type_wiring")
+
 local logger = require("named_logger").getLogger(NAME)
 
 -- The processor read-side helper block (identical set to the validator
 -- sandbox). Shared, never-mutated reference table merged into every processor
--- sandbox env alongside sandbox_env's safe builtins / utilities.
+-- sandbox env alongside sandbox_env's safe builtins / utilities. Built-in
+-- helpers go here; registry-contributed helpers (e.g. completeBasicGraph
+-- and completeDirectedGraph) are merged in AFTER this module's local
+-- functions are defined — see the registerModule + merge block lower
+-- down. PROCESSOR_READ_HELPERS is forward-referenced from createProcessorEnv
+-- so the merge must run before the first env is built.
 local PROCESSOR_READ_HELPERS = {
     unique = validator_helpers.unique,
     sum = validator_helpers.sum,
@@ -339,6 +353,32 @@ local function completeDirectedGraph(wrappedRows)
     end
 end
 
+-- Register the graph completion helpers under the "graph_wiring" module
+-- so wired processor expressions like "completeBasicGraph(rows)" resolve
+-- at expression-eval time. We register here (not in builtin_wiring)
+-- because builtin_wiring requires processor_executor for these refs;
+-- doing it in builtin_wiring would create a circular dependency.
+type_wiring.registerModule("graph_wiring", {
+    sandboxHelpers = {
+        processor = {
+            completeBasicGraph    = completeBasicGraph,
+            completeDirectedGraph = completeDirectedGraph,
+        },
+    },
+})
+
+-- Merge registry-contributed processor helpers (graph completion helpers
+-- registered above, plus any future feature-module additions) into
+-- PROCESSOR_READ_HELPERS. Name collisions with the built-in block are a
+-- registration error.
+for name, fn in pairs(type_wiring.sandboxAdditions().processor) do
+    if PROCESSOR_READ_HELPERS[name] ~= nil and PROCESSOR_READ_HELPERS[name] ~= fn then
+        error("processor_executor: type-wiring registry helper '" .. name
+            .. "' conflicts with a built-in processor helper of the same name", 0)
+    end
+    PROCESSOR_READ_HELPERS[name] = fn
+end
+
 -- ============================================================
 -- Sandboxed Execution
 -- ============================================================
@@ -373,14 +413,10 @@ local function createProcessorEnv(wrappedRows, fileName, ctx, extraEnv)
     env.copy = function(v)
         return deepCopyUnwrapped(v)
     end
-    -- Graph-family completion entry points (auto-wired by graph_wiring;
-    -- also callable by user expressions if they need re-completion).
-    env.completeBasicGraph = function(rowsArg)
-        return completeBasicGraph(rowsArg or wrappedRows)
-    end
-    env.completeDirectedGraph = function(rowsArg)
-        return completeDirectedGraph(rowsArg or wrappedRows)
-    end
+    -- Graph-family completion entry points (auto-wired through the
+    -- type-wiring registry — see the registerModule call above). User
+    -- expressions that want to re-complete can call them too, but must
+    -- pass `rows` explicitly (the registry doesn't inject a default).
 
     -- Context (writable, shared across processors in this file run)
     env.ctx = ctx

@@ -62,10 +62,6 @@ local runPackageValidators = validator_executor.runPackageValidators
 local processor_executor = require("processor_executor")
 local runFilePreProcessors = processor_executor.runFilePreProcessors
 
-local graph_wiring = require("graph_wiring")
-local applyGraphAutoWiring = graph_wiring.applyAutoWiring
-local validateGraphEdgeFiles = graph_wiring.validateEdgeFiles
-
 -- The type-wiring registry replaces the three hand-written branches that
 -- previously dispatched Type / enum / custom_type_def behaviour from the
 -- per-file load loop. builtin_wiring.lua registers the three onLoad
@@ -327,10 +323,25 @@ local function isMigrationScript(rawtsv)
     return false
 end
 
+-- Ensures `map[key]` is a populated array, creating an empty one if missing.
+-- Returns the array. Used to give type_wiring.applyWiring writable targets
+-- for the per-file processor / validator wiring contributions.
+local function ensureList(map, key)
+    local list = map[key]
+    if list == nil then
+        list = {}
+        map[key] = list
+    end
+    return list
+end
+
 -- Processes a single TSV/CSV file: reads, parses, and dispatches any
--- type-wiring onLoad callbacks whose registered typeName appears in this
--- file's extends chain (replaces the former Type/enum/custom_type_def branches).
-local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
+-- type-wiring contributions whose registered typeName appears in this
+-- file's extends chain (replaces the former Type/enum/custom_type_def
+-- branches and the post-load applyGraphAutoWiring pass).
+local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts,
+    lcFn2Type, lcFn2Ctx, lcFn2Col,
+    lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
     extends, raw_files, files_cache,
     options_extractor, expr_eval, loadEnv, badVal)
     badVal.source = file_name
@@ -375,8 +386,17 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
         if fileType then
             loadEnv.files[fileType] = file
         end
-        -- Fire any registered onLoad whose typeName is an ancestor of fileType.
-        applyTypeWiring(file, fileType, extends, badVal, loadEnv)
+        -- Dispatch type-wiring contributions for this file: fires registered
+        -- onLoad handlers AND accumulates per-file preProcessors / row+file
+        -- validators into the joinMeta maps. The maps are mutated in place;
+        -- ensureList creates an empty list the first time a file gets a
+        -- wired entry.
+        applyTypeWiring(fileType, extends, {
+            file = file, badVal = badVal, loadEnv = loadEnv,
+            preProcessors  = ensureList(lcFn2PreProcessors,  lcFNKey),
+            rowValidators  = ensureList(lcFn2RowValidators,  lcFNKey),
+            fileValidators = ensureList(lcFn2FileValidators, lcFNKey),
+        })
         -- Register the file's column structure as a type (skipped for Type/enum
         -- descendants — those are handled by their wired onLoad above).
         registerFileType(fileRegisteredTypes, file, fileType, extends, badVal)
@@ -402,6 +422,7 @@ end
 
 -- Load all the non-description files
 local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
+    lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
     extends, raw_files, loadEnv, badVal, lcSkippedFiles)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
 
@@ -417,7 +438,9 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
             end
         end
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV) then
-            processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts, lcFn2Type, lcFn2Ctx, lcFn2Col,
+            processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts,
+                lcFn2Type, lcFn2Ctx, lcFn2Col,
+                lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
                 extends, raw_files, files_cache,
                 options_extractor, expr_eval, loadEnv, badVal)
         else
@@ -523,14 +546,13 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         tsv_files[desc_file[1].__source] = desc_file
     end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
-    lcFn2Ctx, lcFn2Col, extends,
-    raw_files, loadEnv, badVal, lcSkippedFiles)
-    -- Auto-wire graph completion pre-processors AND validators for files
-    -- whose type transitively extends one of the built-in graph families.
-    -- Done here so the entries flow through joinMeta.lcFn2PreProcessors /
-    -- lcFn2FileValidators and run as part of the normal phases.
-    applyGraphAutoWiring(lcFn2PreProcessors, lcFn2FileValidators,
-        lcFn2Type, extends)
+    lcFn2Ctx, lcFn2Col,
+    lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles)
+    -- Note: graph wiring (completion pre-processors + structural file
+    -- validators) is now applied per-file through type_wiring.applyWiring
+    -- inside processSingleTSVFile — see builtin_wiring.lua's register()
+    -- calls for basic_graph_node / graph_node / tree_node.
     -- Build join metadata for exporter
     local joinMeta = {
         lcFn2JoinInto = lcFn2JoinInto,
@@ -921,16 +943,13 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     local validatorsOk, validationWarnings = runAllValidators(
         tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
 
-    -- Run the graph edge-file consistency validator (Phase A5 of
-    -- TODO/graph_types.md). It runs after file validators so the cheaper
-    -- per-file structural checks (refs-exist, cycle, tree-shape) get to
-    -- report first; running after pre-processors means link fields are
-    -- fully completed and edges-vs-links comparison is accurate.
-    local edgeValidatorsOk = validateGraphEdgeFiles(tsv_files,
-        joinMeta.lcFn2EdgesFor or {},
-        joinMeta.lcFn2Type or {},
-        joinMeta.extends or {},
-        badVal)
+    -- Run any registered enginePostPasses (feature modules contribute these
+    -- via type_wiring.registerModule). They get (tsv_files, joinMeta, badVal)
+    -- and return true on success, false on any reported error. The graph
+    -- edge↔node consistency check (formerly the direct call to
+    -- validateGraphEdgeFiles) now lives here as the "graph_wiring" module's
+    -- registered post-pass — see builtin_wiring.lua.
+    local postPassesOk = type_wiring.runEnginePostPasses(tsv_files, joinMeta, badVal)
 
     -- Combine pre-processor warnings with validator warnings for callers
     if processorWarnings and #processorWarnings > 0 then
@@ -950,7 +969,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         -- every error-level processor and every error-level validator succeeded.
         -- (Pre-processors run before validators in the pipeline, but for callers
         -- they are folded into the same pass/fail signal.)
-        validationPassed = processorsOk and validatorsOk and edgeValidatorsOk,
+        validationPassed = processorsOk and validatorsOk and postPassesOk,
         validationWarnings = validationWarnings,
     }
 end

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Type-wiring registry — Phases 2a and 2b of [TODO/type_wiring.md](TODO/type_wiring.md).**
+  Phase 1 introduced the registry's `onLoad` slot; Phase 2 grows it into
+  the full per-typeName cascade (per-type `preProcessors` / `rowValidators`
+  / `fileValidators` with per-entry `position` override and
+  expression-string idempotency) plus a new `registerModule` API for
+  module-level engine-init slots (`descriptorColumns`, `sandboxHelpers`,
+  `enginePostPasses`). Public accessors are `runEnginePostPasses`,
+  `sandboxAdditions`, `descriptorColumns` / `descriptorColumnsByName`.
+  The graph-types auto-wiring previously implemented as hand-written
+  helpers in `graph_wiring.lua` now flows through these slots; user
+  behaviour is unchanged.
 - **Type-wiring registry (Phase 1 of [TODO/type_wiring.md](TODO/type_wiring.md)).**
   New [type_wiring](type_wiring.lua) module exposes a small registry that
   attaches behaviour to a file by walking its `extends` chain. Phase 1
@@ -30,6 +41,30 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **`Files.tsv` core schema shrunk to six intrinsic columns.**
+  `files_desc.lua` now hard-codes only `fileName`, `typeName`,
+  `superType`, `baseType`, `loadOrder`, and `description`. The other
+  ten columns — `publishContext`, `publishColumn`, `joinInto`,
+  `joinColumn`, `export`, `joinedTypeName`, `variant`, `rowValidators`,
+  `fileValidators`, `preProcessors`, `edgesFor` — are re-introduced
+  by feature-module `registerModule(...)` calls in `builtin_wiring.lua`
+  at engine init. Header recognition, `joinMeta` field names, parse
+  semantics, and behaviour are unchanged; only the wiring path is
+  different.
+- **Sandbox helper merging via the type-wiring registry.**
+  `processor_executor` and `validator_executor` merge the union of
+  registry-contributed `sandboxHelpers` into their helper blocks at
+  engine init. Name collisions with built-in helpers are a
+  registration-time error.
+- **Graph wiring flows through the registry.**
+  `applyGraphAutoWiring` and `validateGraphEdgeFiles` are no longer
+  called directly from `manifest_loader`. Per-typeName completion +
+  validators for `basic_graph_node` / `graph_node` / `tree_node` are
+  registered in `builtin_wiring.lua`; the edge-consistency check is
+  an `enginePostPasses` callback there too. `completeBasicGraph` /
+  `completeDirectedGraph` (processor side) and `graphRefsExist` /
+  `graphAcyclic` / `graphTreeShape` (validator side) flow into the
+  sandbox envs through the registry's `sandboxAdditions()`.
 - `files_desc.detectPostProcessingNeeded` now consults
   `type_wiring.hasOnLoad` instead of a hard-coded
   `POST_PROCESS_PARENTS = {Type=true, enum=true}` table, so any
@@ -39,6 +74,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Removed
 
+- **`graph_wiring.applyAutoWiring` and `graph_wiring.validateEdgeFiles`
+  are no longer in the public API.** The dispatch entry points are
+  replaced by registry registrations in `builtin_wiring.lua`; what
+  remains in `graph_wiring.lua` are the leaf detection helpers
+  (`detectFamily`, `detectRole`, `detectEdgeFamily`). Direct callers
+  (none outside the engine + tests) should reach the same behaviour
+  through `manifest_loader.processFiles`. The associated tests in
+  `spec/graph_wiring_spec.lua` were removed; equivalent end-to-end
+  coverage lives in `spec/graph_wiring_integration_spec.lua`.
 - `manifest_loader.lua` no longer defines `registerEnumParser`,
   `registerAliases`, `registerCustomTypesFromFile`, `isType`, `isEnum`,
   `isCustomTypeDef`, `findAllTypes`, or `buildCustomTypesSet`. The

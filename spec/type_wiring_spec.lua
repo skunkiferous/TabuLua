@@ -166,7 +166,8 @@ describe("type_wiring", function()
             local extends = {}
             local badVal = {}
             local loadEnv = {}
-            type_wiring.applyWiring(file, "MyType", extends, badVal, loadEnv)
+            type_wiring.applyWiring("MyType", extends,
+                {file = file, badVal = badVal, loadEnv = loadEnv})
             assert.is_not_nil(captured)
             assert.equals(file, captured.file)
             assert.equals("MyType", captured.fileType)
@@ -181,7 +182,7 @@ describe("type_wiring", function()
                 onLoad = function() calls = calls + 1 end,
             })
             local extends = {Child = "Mid", Mid = "MyType"}
-            type_wiring.applyWiring({}, "Child", extends, {}, {})
+            type_wiring.applyWiring("Child", extends, {file = {}, badVal = {}})
             assert.equals(1, calls)
         end)
 
@@ -194,7 +195,7 @@ describe("type_wiring", function()
                 onLoad = function() order[#order + 1] = "Child" end,
             })
             local extends = {Child = "Parent"}
-            type_wiring.applyWiring({}, "Child", extends, {}, {})
+            type_wiring.applyWiring("Child", extends, {file = {}, badVal = {}})
             assert.same({"Child", "Parent"}, order)
         end)
 
@@ -203,33 +204,82 @@ describe("type_wiring", function()
             type_wiring.register("MyType", {
                 onLoad = function() calls = calls + 1 end,
             })
-            type_wiring.applyWiring({}, "MyType", {}, {}, {})
+            type_wiring.applyWiring("MyType", {}, {file = {}, badVal = {}})
             assert.equals(1, calls)
         end)
 
         it("is a no-op when fileType is nil", function()
             assert.has_no_error(function()
-                type_wiring.applyWiring({}, nil, {}, {}, {})
+                type_wiring.applyWiring(nil, {}, {file = {}, badVal = {}})
             end)
         end)
 
         it("is a no-op when no ancestor is registered", function()
             assert.has_no_error(function()
-                type_wiring.applyWiring({}, "Unknown", {Unknown = "Stranger"}, {}, {})
+                type_wiring.applyWiring("Unknown", {Unknown = "Stranger"},
+                    {file = {}, badVal = {}})
             end)
         end)
 
         it("is safe against cycles in extends", function()
             local extends = {A = "B", B = "A"}
             assert.has_no_error(function()
-                type_wiring.applyWiring({}, "A", extends, {}, {})
+                type_wiring.applyWiring("A", extends, {file = {}, badVal = {}})
             end)
         end)
 
         it("errors with a clear message when extends is missing", function()
             assert.has_error(function()
-                type_wiring.applyWiring({}, "MyType", nil, {}, {})
+                type_wiring.applyWiring("MyType", nil, {file = {}, badVal = {}})
             end)
+        end)
+
+        it("errors when ctx is missing", function()
+            assert.has_error(function()
+                type_wiring.applyWiring("MyType", {})
+            end)
+        end)
+
+        it("accumulates preProcessors with default prepend position", function()
+            type_wiring.register("MyType", {
+                preProcessors = {{expr = "completeMyType(rows)", priority = 50}},
+            })
+            local pre = {"userProc"}
+            type_wiring.applyWiring("MyType", {}, {preProcessors = pre})
+            assert.equals(2, #pre)
+            assert.equals("completeMyType(rows)", pre[1].expr)
+            assert.equals("userProc", pre[2])
+        end)
+
+        it("accumulates fileValidators with default append position", function()
+            type_wiring.register("MyType", {
+                fileValidators = {{expr = "checkShape(rows)"}},
+            })
+            local fv = {"userValidator"}
+            type_wiring.applyWiring("MyType", {}, {fileValidators = fv})
+            assert.equals("userValidator", fv[1])
+            assert.equals("checkShape(rows)", fv[2].expr)
+        end)
+
+        it("honours per-entry position override", function()
+            type_wiring.register("MyType", {
+                preProcessors = {{expr = "lateProc(rows)", position = "append"}},
+            })
+            local pre = {"userProc"}
+            type_wiring.applyWiring("MyType", {}, {preProcessors = pre})
+            assert.equals("userProc", pre[1])
+            assert.equals("lateProc(rows)", pre[2].expr)
+        end)
+
+        it("does not insert a duplicate-expression wired entry", function()
+            type_wiring.register("MyType", {
+                fileValidators = {{expr = "checkX(rows)"}},
+            })
+            local fv = {}
+            type_wiring.applyWiring("MyType", {}, {fileValidators = fv})
+            type_wiring.applyWiring("MyType", {}, {fileValidators = fv})
+            type_wiring.applyWiring("MyType", {}, {fileValidators = fv})
+            assert.equals(1, #fv)
         end)
     end)
 

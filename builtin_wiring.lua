@@ -17,6 +17,13 @@ local nullBadVal = error_reporting.nullBadVal
 
 local parsers = require("parsers")
 
+local graph_helpers = require("graph_helpers")
+local splitEdgeKey = graph_helpers.splitEdgeKey
+
+local graph_wiring = require("graph_wiring")
+local detectFamily = graph_wiring.detectFamily
+local detectEdgeFamily = graph_wiring.detectEdgeFamily
+
 local type_wiring = require("type_wiring")
 
 -- Returns the module version as a string.
@@ -150,6 +157,302 @@ end
 type_wiring.register("Type", {onLoad = onLoadType})
 type_wiring.register("enum", {onLoad = onLoadEnum})
 type_wiring.register("custom_type_def", {onLoad = onLoadCustomTypeDef})
+
+-- ============================================================
+-- Module-level: re-declare the ten optional Files.tsv columns that
+-- used to be hard-coded in files_desc.lua. After the L4 shrink, only
+-- the six intrinsic core columns (fileName, typeName, superType,
+-- baseType, loadOrder, description) are hard-coded in files_desc.lua;
+-- everything else lives here under the feature module that uses it.
+--
+-- The fieldOnMeta values match the existing keys in joinMeta so
+-- downstream consumers (exporter, manifest_loader, etc.) keep working
+-- unchanged.
+-- ============================================================
+
+-- Normalisers used by descriptor-column declarations: every column the
+-- engine treats as "empty string === absent" goes through nilIfEmpty;
+-- the joinInto column additionally lowercases (basename matching is
+-- case-insensitive).
+local function nilIfEmpty(v)
+    if v == nil or v == "" then return nil end
+    return v
+end
+
+local function lowerOrNil(v)
+    if v == nil or v == "" then return nil end
+    return v:lower()
+end
+
+-- For list-typed columns (rowValidators/fileValidators/preProcessors):
+-- empty table is treated as absent so consumers can iterate with ipairs
+-- safely (the previous hand-written code had the same `#v > 0` guard).
+local function listOrNil(v)
+    if type(v) ~= "table" or #v == 0 then return nil end
+    return v
+end
+
+type_wiring.registerModule("publish", {
+    descriptorColumns = {
+        {name = "publishContext", type = "name|nil",
+         fieldOnMeta = "lcFn2Ctx",            parse = nilIfEmpty},
+        {name = "publishColumn",  type = "name|nil",
+         fieldOnMeta = "lcFn2Col",            parse = nilIfEmpty},
+    },
+})
+
+type_wiring.registerModule("file_joining", {
+    descriptorColumns = {
+        {name = "joinInto",       type = "filepath|nil",
+         fieldOnMeta = "lcFn2JoinInto",       parse = lowerOrNil},
+        {name = "joinColumn",     type = "name|nil",
+         fieldOnMeta = "lcFn2JoinColumn",     parse = nilIfEmpty},
+        {name = "export",         type = "boolean|nil",
+         fieldOnMeta = "lcFn2Export",         parse = nilIfEmpty},
+        {name = "joinedTypeName", type = "type_spec|nil",
+         fieldOnMeta = "lcFn2JoinedTypeName", parse = nilIfEmpty},
+    },
+})
+
+type_wiring.registerModule("variants", {
+    descriptorColumns = {
+        {name = "variant", type = "name|nil",
+         fieldOnMeta = "lcFn2Variant",        parse = nilIfEmpty},
+    },
+})
+
+type_wiring.registerModule("validators", {
+    descriptorColumns = {
+        {name = "rowValidators",  type = "{validator_spec}|nil",
+         fieldOnMeta = "lcFn2RowValidators",  parse = listOrNil},
+        {name = "fileValidators", type = "{validator_spec}|nil",
+         fieldOnMeta = "lcFn2FileValidators", parse = listOrNil},
+    },
+})
+
+type_wiring.registerModule("pre_processors", {
+    descriptorColumns = {
+        {name = "preProcessors", type = "{processor_spec}|nil",
+         fieldOnMeta = "lcFn2PreProcessors",  parse = listOrNil},
+    },
+})
+
+-- ============================================================
+-- Graph wiring (Phase 2b)
+--
+-- Owns the edgesFor descriptor column, the enginePostPasses entry for
+-- edge↔node consistency, and the per-typeName completion/validation
+-- bundles for the three graph node families. Sandbox helpers
+-- (completeBasicGraph etc.) are registered by processor_executor and
+-- validator_executor themselves — see the comments there. Splitting
+-- registrations across modules avoids a circular dependency between
+-- builtin_wiring and processor_executor.
+-- ============================================================
+
+-- Returns the parsed value of a row's cell by column name. Falls back to
+-- evaluated/value if `parsed` is absent (older cells). Used by the edge
+-- file validator below.
+local function cellValue(row, header, colName)
+    local col = header[colName]
+    if not col then return nil end
+    local cell = row[col.idx]
+    if not cell then return nil end
+    if cell.parsed ~= nil then return cell.parsed end
+    return cell.evaluated
+end
+
+-- True if `list` contains `value`. Handles nil lists.
+local function listContains(list, value)
+    if list == nil then return false end
+    for _, v in ipairs(list) do
+        if v == value then return true end
+    end
+    return false
+end
+
+-- enginePostPasses callback for edge↔node consistency. Same algorithm as
+-- the pre-refactor graph_wiring.validateEdgeFiles, just reshaped to the
+-- registry's (tsv_files, joinMeta, badVal) signature.
+local function validateEdgeFilesPass(tsv_files, joinMeta, badVal)
+    local lcFn2EdgesFor = joinMeta.lcFn2EdgesFor or {}
+    local lcFn2Type = joinMeta.lcFn2Type or {}
+    local extendsMap = joinMeta.extends or {}
+
+    if next(lcFn2EdgesFor) == nil then
+        return true -- no edge files declared
+    end
+
+    -- Build a reverse index from lcfn -> full file_name (the tsv_files key).
+    local lcfnToFileName = {}
+    for file_name in pairs(tsv_files) do
+        local lcfn = file_name:match("[/\\]([^/\\]+)$") or file_name
+        lcfnToFileName[lcfn:lower()] = file_name
+    end
+
+    -- Detect collisions: at most one edge file per node file.
+    local nodeToEdge = {}
+    local ok = true
+    for edgeLcfn, nodeLcfn in pairs(lcFn2EdgesFor) do
+        local existing = nodeToEdge[nodeLcfn]
+        if existing then
+            badVal.source_name = lcfnToFileName[edgeLcfn] or edgeLcfn
+            badVal(edgeLcfn, "node file '" .. nodeLcfn
+                .. "' already has an edge file: '" .. existing
+                .. "'. A node file may have at most one edge file.")
+            ok = false
+        else
+            nodeToEdge[nodeLcfn] = edgeLcfn
+        end
+    end
+
+    -- Per-edge-file checks.
+    for edgeLcfn, nodeLcfn in pairs(lcFn2EdgesFor) do
+        local edgeFileName = lcfnToFileName[edgeLcfn]
+        local nodeFileName = lcfnToFileName[nodeLcfn]
+        if not edgeFileName then
+            -- Edge file declared in Files.tsv but not present on disk;
+            -- reported separately by the loader's existence check.
+            ok = false
+        elseif not nodeFileName then
+            badVal.source_name = edgeFileName
+            badVal(edgeLcfn, "edgesFor target '" .. nodeLcfn
+                .. "' does not exist (must match an entry in fileName)")
+            ok = false
+        else
+            local edgeRole = detectEdgeFamily(lcFn2Type[edgeLcfn], extendsMap)
+            local nodeRole = detectFamily(lcFn2Type[nodeLcfn], extendsMap)
+            if not edgeRole then
+                badVal.source_name = edgeFileName
+                badVal(edgeLcfn, "file declares 'edgesFor' but its typeName '"
+                    .. tostring(lcFn2Type[edgeLcfn])
+                    .. "' does not extend any edge family"
+                    .. " (basic_graph_edge / graph_edge / tree_edge)")
+                ok = false
+            elseif not nodeRole then
+                badVal.source_name = edgeFileName
+                badVal(edgeLcfn, "edgesFor target '" .. nodeLcfn
+                    .. "' has typeName '" .. tostring(lcFn2Type[nodeLcfn])
+                    .. "' which does not extend any node family"
+                    .. " (basic_graph_node / graph_node / tree_node)")
+                ok = false
+            elseif edgeRole ~= nodeRole then
+                badVal.source_name = edgeFileName
+                badVal(edgeLcfn, "edge family mismatch: edge file is '"
+                    .. edgeRole .. "' but node file is '" .. nodeRole
+                    .. "' (basic edges only pair with basic node files,"
+                    .. " directed edges with directed node files)")
+                ok = false
+            else
+                -- Endpoint and link-consistency checks.
+                local nodeTsv = tsv_files[nodeFileName]
+                local nodeHeader = nodeTsv[1]
+                local edgeTsv = tsv_files[edgeFileName]
+                local edgeHeader = edgeTsv[1]
+                local linkField = (nodeRole == "basic")
+                    and "graphLinks" or "graphChildren"
+                badVal.source_name = edgeFileName
+                for i = 2, #edgeTsv do
+                    local row = edgeTsv[i]
+                    if type(row) == "table" then
+                        local key = cellValue(row, edgeHeader, "name")
+                        if type(key) == "string" then
+                            local a, b = splitEdgeKey(key)
+                            if a and b then
+                                local rowA = nodeTsv[a]
+                                local rowB = nodeTsv[b]
+                                if not rowA then
+                                    badVal(key, "edge endpoint '" .. a
+                                        .. "' is not a row in '"
+                                        .. nodeLcfn .. "'")
+                                    ok = false
+                                end
+                                if not rowB then
+                                    badVal(key, "edge endpoint '" .. b
+                                        .. "' is not a row in '"
+                                        .. nodeLcfn .. "'")
+                                    ok = false
+                                end
+                                if rowA and rowB then
+                                    local aLinks = cellValue(rowA, nodeHeader, linkField)
+                                    if not listContains(aLinks, b) then
+                                        badVal(key,
+                                            "edge has no matching link in '"
+                                            .. nodeLcfn .. "': '" .. a
+                                            .. "." .. linkField
+                                            .. "' does not contain '" .. b
+                                            .. "'")
+                                        ok = false
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return ok
+end
+
+-- Graph wiring's contributions: descriptorColumn (edgesFor), enginePostPass
+-- (edge↔node consistency). Sandbox helpers are added by processor_executor
+-- and validator_executor — they self-register to avoid the circular
+-- dependency a centralised registration would create here.
+type_wiring.registerModule("graph_wiring", {
+    descriptorColumns = {
+        {name = "edgesFor", type = "filepath|nil",
+         fieldOnMeta = "lcFn2EdgesFor",       parse = lowerOrNil},
+    },
+    enginePostPasses = {validateEdgeFilesPass},
+})
+
+-- Per-typeName completion + validator bundles for the three graph node
+-- families. We register the FULL bundle per leaf (per-leaf flattening,
+-- option (a) under "Parser-alias dispatch" in TODO/type_wiring.md L5)
+-- because tree_node is a parser-alias of graph_node and `extends`
+-- doesn't follow parser-alias links — so the cascade walker stops at
+-- "tree_node" and never reaches "graph_node"'s contributions.
+--
+-- priority=50 puts completion ahead of the default user processor
+-- priority of 100; rerunAfterPatches=true so cross-package mod patches
+-- re-symmetrise the link fields before validators see them.
+local BASIC_COMPLETION = {
+    expr = "completeBasicGraph(rows)",
+    priority = 50,
+    rerunAfterPatches = true,
+    level = "error",
+}
+local DIRECTED_COMPLETION = {
+    expr = "completeDirectedGraph(rows)",
+    priority = 50,
+    rerunAfterPatches = true,
+    level = "error",
+}
+
+type_wiring.register("basic_graph_node", {
+    preProcessors  = {BASIC_COMPLETION},
+    fileValidators = {
+        {expr = "graphRefsExist(rows, 'basic')", level = "error"},
+    },
+})
+
+type_wiring.register("graph_node", {
+    preProcessors  = {DIRECTED_COMPLETION},
+    fileValidators = {
+        {expr = "graphRefsExist(rows, 'directed')", level = "error"},
+        {expr = "graphAcyclic(rows)",               level = "error"},
+    },
+})
+
+type_wiring.register("tree_node", {
+    preProcessors  = {DIRECTED_COMPLETION},
+    fileValidators = {
+        {expr = "graphRefsExist(rows, 'directed')", level = "error"},
+        {expr = "graphAcyclic(rows)",               level = "error"},
+        {expr = "graphTreeShape(rows)",             level = "error"},
+    },
+})
 
 -- Snapshot the registry now (built-ins registered) and arrange restoration
 -- on global_reset.reset(), mirroring how parsers.lua handles built-in types.

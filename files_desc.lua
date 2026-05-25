@@ -15,14 +15,18 @@ local function getVersion()
     return tostring(VERSION)
 end
 
--- The set of "files that need post-processing because they register parsers/
--- aliases/types for siblings" is computed from the type-wiring registry —
--- any typeName whose ancestor chain has an onLoad triggers the reprocessing
--- pass. builtin_wiring.lua registers Type / enum / custom_type_def with the
--- registry at module load time.
+-- The type-wiring registry owns two things relevant to files_desc:
+--   * hasOnLoad — drives detectPostProcessingNeeded (replaces the former
+--     POST_PROCESS_PARENTS hard-coded table).
+--   * descriptorColumnsByName — the union of optional Files.tsv columns
+--     contributed by feature modules. After the L4 shrink, only the
+--     six intrinsic core columns are hard-coded below; everything else
+--     comes through the registry.
+-- builtin_wiring.lua does the registrations at module load time.
 local type_wiring = require("type_wiring")
 require("builtin_wiring")
 local hasOnLoad = type_wiring.hasOnLoad
+local descriptorColumnsByName = type_wiring.descriptorColumnsByName
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -53,30 +57,28 @@ local recordFieldTypes = parsers.recordFieldTypes
 -- File containing priorities/load-order, in lowercase
 local FILES_DESC = "files.tsv"
 
--- Expected columns of the "files descriptor" files
-local FILE_NAME_COL = "fileName:filepath"
-local TYPE_NAME_COL = "typeName:type_spec"
-local SUPER_TYPE_COL = "superType:super_type"
-local BASE_TYPE_COL = "baseType:boolean"
-local PUBLISH_CONTEXT_COL = "publishContext:name|nil"
-local PUBLISH_COLUMN_COL = "publishColumn:name|nil"
-local LOAD_ORDER_COL = "loadOrder:number"
-local DESCRIPTION_COL = "description:text"
--- File joining columns
-local JOIN_INTO_COL = "joinInto:filepath|nil"
-local JOIN_COLUMN_COL = "joinColumn:name|nil"
-local EXPORT_COL = "export:boolean|nil"
-local JOINED_TYPE_NAME_COL = "joinedTypeName:type_spec|nil"
--- Graph edge-file column (Phase A5 of TODO/graph_types.md): points an
--- edge file at its node file (basename match, same convention as joinInto).
-local EDGES_FOR_COL = "edgesFor:filepath|nil"
--- Variant column
-local VARIANT_COL = "variant:name|nil"
--- Validator columns
-local ROW_VALIDATORS_COL = "rowValidators:{validator_spec}|nil"
-local FILE_VALIDATORS_COL = "fileValidators:{validator_spec}|nil"
--- Pre-processor column
-local PRE_PROCESSORS_COL = "preProcessors:{processor_spec}|nil"
+-- The six intrinsic core columns. Any other column header recognised by
+-- this module flows in through the type-wiring registry's
+-- descriptorColumns() declarations (see builtin_wiring.lua). The core
+-- six are hard-coded because the cascade dispatcher itself depends on
+-- typeName / superType / baseType, and the load loop depends on
+-- fileName / loadOrder; moving them through the registry would create
+-- a bootstrap cycle.
+local CORE_COLUMNS_BY_HEADER = {
+    ["fileName:filepath"]    = "fileName",
+    ["typeName:type_spec"]   = "typeName",
+    ["superType:super_type"] = "superType",
+    ["baseType:boolean"]     = "baseType",
+    ["loadOrder:number"]     = "loadOrder",
+    ["description:text"]     = "description",
+}
+
+-- The five core columns whose absence is a configuration error worth
+-- warning about. `description` is pure user metadata so its absence is
+-- harmless.
+local REQUIRED_CORE_COLUMNS = {
+    "fileName", "typeName", "superType", "baseType", "loadOrder",
+}
 
 -- Returns true, if this is a process-first meta-data file
 local function isFilesDescriptor(file)
@@ -167,85 +169,44 @@ end
 -- Loads a file descriptor as TSV
 local loadDescriptorFile = genLoadDescriptorFile()
 
--- Warn if column is missing
-local function warnMissingColumn(file_name, col_idx, col_name, log)
-    if col_idx == -1 then
-        log = log or logger
-        log:warn("Missing column '" .. col_name .. "' in " .. file_name)
-    end
-end
-
--- Parse files descriptions header
+-- Parse a Files.tsv header into an `{[colName] = idx}` map. The six core
+-- columns are recognised by their exact "name:type" header strings; every
+-- other column is matched against the type-wiring descriptorColumns()
+-- declarations. Unrecognised headers produce a "Column ignored" warning,
+-- preserving the prior behaviour.
 local function parseFilesDescHeader(file_name, file, log)
     local header = file[1]
-    local fileNameIdx = -1
-    local typeNameIdx = -1
-    local superTypeIdx = -1
-    local baseTypeIdx = -1
-    local publishContextIdx = -1
-    local publishColumnIdx = -1
-    local loadOrderIdx = -1
-    local joinIntoIdx = -1
-    local joinColumnIdx = -1
-    local exportIdx = -1
-    local joinedTypeNameIdx = -1
-    local variantIdx = -1
-    local rowValidatorsIdx = -1
-    local fileValidatorsIdx = -1
-    local preProcessorsIdx = -1
-    local edgesForIdx = -1
+    local indicesByName = {}
+    local optCols = descriptorColumnsByName()
+    -- Build a header-string lookup for registry columns: "name:type" -> decl.
+    local optByHeader = {}
+    for _, decl in pairs(optCols) do
+        optByHeader[decl.name .. ":" .. decl.type] = decl
+    end
     for idx, col in ipairs(header) do
         local colStr = tostring(col)
-        if colStr == FILE_NAME_COL then
-            fileNameIdx = idx
-        elseif colStr == TYPE_NAME_COL then
-            typeNameIdx = idx
-        elseif colStr == SUPER_TYPE_COL then
-            superTypeIdx = idx
-        elseif colStr == BASE_TYPE_COL then
-            baseTypeIdx = idx
-        elseif colStr == PUBLISH_CONTEXT_COL then
-            publishContextIdx = idx
-        elseif colStr == PUBLISH_COLUMN_COL then
-            publishColumnIdx = idx
-        elseif colStr == LOAD_ORDER_COL then
-            loadOrderIdx = idx
-        elseif colStr == JOIN_INTO_COL then
-            joinIntoIdx = idx
-        elseif colStr == JOIN_COLUMN_COL then
-            joinColumnIdx = idx
-        elseif colStr == EXPORT_COL then
-            exportIdx = idx
-        elseif colStr == JOINED_TYPE_NAME_COL then
-            joinedTypeNameIdx = idx
-        elseif colStr == VARIANT_COL then
-            variantIdx = idx
-        elseif colStr == ROW_VALIDATORS_COL then
-            rowValidatorsIdx = idx
-        elseif colStr == FILE_VALIDATORS_COL then
-            fileValidatorsIdx = idx
-        elseif colStr == PRE_PROCESSORS_COL then
-            preProcessorsIdx = idx
-        elseif colStr == EDGES_FOR_COL then
-            edgesForIdx = idx
-        elseif colStr== DESCRIPTION_COL then
-            -- For the user only; ignore ...
+        local coreName = CORE_COLUMNS_BY_HEADER[colStr]
+        if coreName then
+            indicesByName[coreName] = idx
         else
-            logger:warn("Column ignored: "..colStr)
+            local decl = optByHeader[colStr]
+            if decl then
+                indicesByName[decl.name] = idx
+            else
+                logger:warn("Column ignored: " .. colStr)
+            end
         end
     end
-    warnMissingColumn(file_name, fileNameIdx, "fileName", log)
-    warnMissingColumn(file_name, typeNameIdx, "typeName", log)
-    warnMissingColumn(file_name, superTypeIdx, "superType", log)
-    warnMissingColumn(file_name, baseTypeIdx, "baseType", log)
-    warnMissingColumn(file_name, publishContextIdx, "publishContext", log)
-    warnMissingColumn(file_name, publishColumnIdx, "publishColumn", log)
-    warnMissingColumn(file_name, loadOrderIdx, "loadOrder", log)
-    -- Note: join columns, variant column, validator columns, pre-processor
-    -- column and edgesFor column are optional, so we don't warn if missing
-    return fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
-        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx, edgesForIdx
+    -- Warn (don't error) about missing required core columns. publishContext
+    -- and publishColumn previously also warned on absence — those moved to
+    -- the registry and are now properly optional (no warning).
+    for _, name in ipairs(REQUIRED_CORE_COLUMNS) do
+        if indicesByName[name] == nil then
+            log = log or logger
+            log:warn("Missing column '" .. name .. "' in " .. file_name)
+        end
+    end
+    return indicesByName
 end
 
 -- Check the file name matches the type name
@@ -346,38 +307,55 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcFileNames = opts.lcFileNames
     local lcTypeNames = opts.lcTypeNames
     local lcFn2Type = opts.lcFn2Type
-    local lcFn2Ctx = opts.lcFn2Ctx
-    local lcFn2Col = opts.lcFn2Col
-    local lcFn2JoinInto = opts.lcFn2JoinInto
-    local lcFn2JoinColumn = opts.lcFn2JoinColumn
-    local lcFn2Export = opts.lcFn2Export
-    local lcFn2JoinedTypeName = opts.lcFn2JoinedTypeName
-    local lcFn2RowValidators = opts.lcFn2RowValidators
-    local lcFn2FileValidators = opts.lcFn2FileValidators
-    local lcFn2PreProcessors = opts.lcFn2PreProcessors
-    local lcFn2EdgesFor = opts.lcFn2EdgesFor
+    -- Optional-column joinMeta-shaped maps are accessed via the per-column
+    -- `fieldOnMeta` declarations (looked up below); no need to alias them
+    -- here. Core-column maps stay aliased for the load loop.
     local lcFn2LineNo = opts.lcFn2LineNo
     local fn2Idx = opts.fn2Idx
     local log = opts.log
     local variants = opts.variants
     local lcSkippedFiles = opts.lcSkippedFiles
 
-    local fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx, publishColumnIdx,
-        loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx, edgesForIdx =
-        parseFilesDescHeader(file_name, file, log)
-    fn2Idx[file_name] = {fileNameIdx, typeNameIdx, superTypeIdx, baseTypeIdx, publishContextIdx,
-        publishColumnIdx, loadOrderIdx, joinIntoIdx, joinColumnIdx, exportIdx, joinedTypeNameIdx,
-        variantIdx, rowValidatorsIdx, fileValidatorsIdx, preProcessorsIdx, edgesForIdx}
-    if fileNameIdx ~= -1 and loadOrderIdx ~= -1 then
+    local indicesByName = parseFilesDescHeader(file_name, file, log)
+    fn2Idx[file_name] = indicesByName
+
+    local fileNameIdx  = indicesByName.fileName
+    local typeNameIdx  = indicesByName.typeName
+    local superTypeIdx = indicesByName.superType
+    local baseTypeIdx  = indicesByName.baseType
+    local loadOrderIdx = indicesByName.loadOrder
+    local variantIdx   = indicesByName.variant
+
+    -- Registered optional columns the loader will populate into joinMeta.
+    -- The per-column `parse` function (when set) normalises the raw cell
+    -- value before storage; a nil result means "treat as absent".
+    local optColumnDecls = descriptorColumnsByName()
+
+    -- Resolve target maps once per file: the loader's `opts` table holds
+    -- one joinMeta-shaped map per column.fieldOnMeta. A nil target means
+    -- the loader didn't pre-allocate a map for that column (in practice
+    -- every registered column has one, but we guard anyway).
+    local columnPlan = {}
+    for colName, decl in pairs(optColumnDecls) do
+        local idx = indicesByName[colName]
+        if idx then
+            columnPlan[#columnPlan + 1] = {
+                idx = idx,
+                target = opts[decl.fieldOnMeta],
+                parse = decl.parse,
+            }
+        end
+    end
+
+    if fileNameIdx and loadOrderIdx then
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
             if i > 1 and type(row) == "table" then
                 local fn = row[fileNameIdx].parsed
                 local lcfn = fn:lower()
-                -- Variant filtering: rows with a non-empty variant tag are only
-                -- active when that variant is explicitly selected
-                if variantIdx ~= -1 then
+                -- Variant filtering: rows with a non-empty variant tag are
+                -- only active when that variant is explicitly selected.
+                if variantIdx then
                     local variantVal = row[variantIdx] and row[variantIdx].parsed
                     if variantVal and variantVal ~= '' then
                         if not variants or not variants[variantVal] then
@@ -389,9 +367,9 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                     end
                 end
                 local prio = tonumber(row[loadOrderIdx].parsed) or 0
-                local tn = row[typeNameIdx].parsed
-                local st = row[superTypeIdx].parsed
-                local bt = tostring(row[baseTypeIdx].parsed)
+                local tn = typeNameIdx and row[typeNameIdx].parsed
+                local st = superTypeIdx and row[superTypeIdx].parsed
+                local bt = baseTypeIdx and tostring(row[baseTypeIdx].parsed)
 
                 prio = prio + prio_offset
                 prios[lcfn] = prio
@@ -403,62 +381,19 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                 checkBaseType(file_name, fn, bt, st, log)
                 lcFn2Type[lcfn] = tn
                 lcFn2LineNo[lcfn] = i
-                lcFn2Ctx[lcfn] = row[publishContextIdx].parsed
-                if lcFn2Ctx[lcfn] == '' then
-                    lcFn2Ctx[lcfn] = nil
-                end
-                lcFn2Col[lcfn] = row[publishColumnIdx].parsed
-                if lcFn2Col[lcfn] == '' then
-                    lcFn2Col[lcfn] = nil
-                end
-                -- Handle file joining columns
-                if joinIntoIdx ~= -1 then
-                    local joinInto = row[joinIntoIdx] and row[joinIntoIdx].parsed
-                    if joinInto and joinInto ~= '' then
-                        lcFn2JoinInto[lcfn] = joinInto:lower()
-                    end
-                end
-                if joinColumnIdx ~= -1 then
-                    local joinColumn = row[joinColumnIdx] and row[joinColumnIdx].parsed
-                    if joinColumn and joinColumn ~= '' then
-                        lcFn2JoinColumn[lcfn] = joinColumn
-                    end
-                end
-                if exportIdx ~= -1 then
-                    local exportVal = row[exportIdx] and row[exportIdx].parsed
-                    if exportVal ~= nil and exportVal ~= '' then
-                        lcFn2Export[lcfn] = exportVal
-                    end
-                end
-                if joinedTypeNameIdx ~= -1 then
-                    local joinedTypeName = row[joinedTypeNameIdx] and row[joinedTypeNameIdx].parsed
-                    if joinedTypeName and joinedTypeName ~= '' then
-                        lcFn2JoinedTypeName[lcfn] = joinedTypeName
-                    end
-                end
-                -- Handle validator columns
-                if rowValidatorsIdx ~= -1 then
-                    local rowValidators = row[rowValidatorsIdx] and row[rowValidatorsIdx].parsed
-                    if rowValidators and type(rowValidators) == "table" and #rowValidators > 0 then
-                        lcFn2RowValidators[lcfn] = rowValidators
-                    end
-                end
-                if fileValidatorsIdx ~= -1 then
-                    local fileValidators = row[fileValidatorsIdx] and row[fileValidatorsIdx].parsed
-                    if fileValidators and type(fileValidators) == "table" and #fileValidators > 0 then
-                        lcFn2FileValidators[lcfn] = fileValidators
-                    end
-                end
-                if preProcessorsIdx ~= -1 then
-                    local preProcessors = row[preProcessorsIdx] and row[preProcessorsIdx].parsed
-                    if preProcessors and type(preProcessors) == "table" and #preProcessors > 0 then
-                        lcFn2PreProcessors[lcfn] = preProcessors
-                    end
-                end
-                if edgesForIdx ~= -1 then
-                    local edgesFor = row[edgesForIdx] and row[edgesForIdx].parsed
-                    if edgesFor and edgesFor ~= '' then
-                        lcFn2EdgesFor[lcfn] = edgesFor:lower()
+
+                -- Apply the registered descriptor columns. Each column's
+                -- `parse` function (when set) normalises the raw value; a
+                -- non-nil result is stored into joinMeta[col.fieldOnMeta][lcfn].
+                for _, plan in ipairs(columnPlan) do
+                    local target = plan.target
+                    if target ~= nil then
+                        local cell = row[plan.idx]
+                        local raw = cell and cell.parsed
+                        local stored = plan.parse and plan.parse(raw) or raw
+                        if stored ~= nil and stored ~= '' then
+                            target[lcfn] = stored
+                        end
                     end
                 end
                 ::continue::
@@ -483,7 +418,9 @@ end
 -- Reprocess all files of one mod, after first processing
 local function reprocessFilesDesc(mod_files, post_proc_files, extends, log, fn2Idx)
     for _, file in ipairs(mod_files) do
-        local fileNameIdx, typeNameIdx = table.unpack(fn2Idx[file[1].__source])
+        local indices = fn2Idx[file[1].__source]
+        local fileNameIdx = indices.fileName
+        local typeNameIdx = indices.typeName
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
             if i > 1 and type(row) == "table" then
@@ -582,7 +519,7 @@ local function setBadValForJoin(badVal, lcfn, lcFileNames, lcFn2LineNo, fn2Idx)
     badVal.row_key = ""
     badVal.col_name = "joinInto"
     local indices = descriptorFile and fn2Idx[descriptorFile]
-    badVal.col_idx = indices and indices[8] or 0  -- 8th element is joinIntoIdx
+    badVal.col_idx = (indices and indices.joinInto) or 0
     badVal.col_types = {}
 end
 

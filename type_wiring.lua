@@ -18,40 +18,143 @@ local function getVersion()
 end
 
 -- ============================================================
--- Type-wiring registry (Phase 1, see TODO/type_wiring.md)
+-- Type-wiring registry (see TODO/type_wiring.md)
 --
--- Per-typeName contributions, keyed by lowercased typeName. Each entry
--- is a table of optional contribution slots.
+-- Two distinct registration APIs:
 --
--- Phase 1 supports a single slot:
---   onLoad: function(file, fileType, extends, badVal, loadEnv)
---     Called during the per-file load loop *before subsequent files
---     parse*, so the handler can register parsers/aliases/types that
---     later files refer to.
+--   register(typeName, contributions)
+--     Per-typeName "cascade" contributions, dispatched by walking a
+--     file's `extends` chain at load time. Slots:
+--       onLoad         function(file, fileType, extends, badVal, loadEnv)
+--       preProcessors  array of processor_spec ({expr, priority?, ...})
+--       rowValidators  array of validator_spec ({expr, level?, ...})
+--       fileValidators array of validator_spec
 --
--- Later phases will add preProcessors / rowValidators / fileValidators
--- (per-typeName) and a separate registerModule API for engine-init slots
--- (descriptorColumns, sandboxHelpers, enginePostPasses).
+--   registerModule(moduleName, declarations)
+--     Module-level engine-init declarations, not tied to any typeName. Slots:
+--       descriptorColumns  array of {name, type, fieldOnMeta, parse?}
+--       sandboxHelpers     {processor = {[name]=fn,...}, validator = ...,
+--                           both = ...}
+--       enginePostPasses   array of function(tsv_files, joinMeta, badVal) → ok
+--
+-- The two APIs MUST NOT be mixed — passing a per-typeName slot to
+-- registerModule (or vice versa) is a registration-time error.
 -- ============================================================
 
-local REGISTRY = {}
+local REGISTRY = {}             -- lowercased typeName -> per-typeName entry
+local MODULES = {}              -- moduleName -> module-level entry (insertion-ordered list)
+local MODULE_ORDER = {}         -- registration order of module names (for deterministic dispatch)
 
--- Snapshot for global_reset restore. Populated by snapshotState() once
+-- Aggregate caches built lazily from MODULES. Invalidated on any
+-- registerModule call.
+local CACHE = {
+    descriptorColumns = nil,    -- list of column declarations
+    descriptorColumnsByName = nil,
+    sandboxAdditions = nil,     -- {processor = {...}, validator = {...}}
+    enginePostPasses = nil,     -- ordered list of callbacks
+}
+
+-- Snapshots for global_reset restore. Populated by snapshotState() once
 -- the built-in wirings have been registered (see builtin_wiring.lua).
-local SNAPSHOT = nil
+local REGISTRY_SNAPSHOT = nil
+local MODULES_SNAPSHOT = nil
+local MODULE_ORDER_SNAPSHOT = nil
 
--- The contribution keys recognised in Phase 1. Unknown keys produce a
--- registration-time error so a typo (e.g. `OnLoad`) isn't silently dropped.
-local KNOWN_KEYS = {onLoad = true}
+-- Allowed contribution keys per API. Unknown keys produce a
+-- registration-time error so typos aren't silently dropped.
+local PER_TYPE_KEYS = {
+    onLoad = true,
+    preProcessors = true,
+    rowValidators = true,
+    fileValidators = true,
+}
+local MODULE_KEYS = {
+    descriptorColumns = true,
+    sandboxHelpers = true,
+    enginePostPasses = true,
+}
 
--- Registers a contribution bundle for `typeName`. A subsequent
--- applyWiring(file, fileType, extends, ...) walks the file's extends chain
--- and fires each registered ancestor's contributions.
---
--- Re-registering an identical onLoad for the same typeName is a silent
--- no-op (idempotent). Registering a *different* onLoad for a typeName
--- that already has one is a registration-time error so two modules can't
--- silently shadow each other.
+-- Default insertion position per per-typeName slot (L1):
+-- completion processors must run *before* user processors (prepend);
+-- structural validators must run *after* user validators (append).
+local DEFAULT_POSITION = {
+    preProcessors = "prepend",
+    rowValidators = "append",
+    fileValidators = "append",
+}
+
+local function invalidateCache()
+    CACHE.descriptorColumns = nil
+    CACHE.descriptorColumnsByName = nil
+    CACHE.sandboxAdditions = nil
+    CACHE.enginePostPasses = nil
+end
+
+-- ============================================================
+-- Per-typeName API
+-- ============================================================
+
+-- Returns the entry's expression string, or nil if the entry doesn't have
+-- one (some entries may be plain strings — `lcFn2PreProcessors` rows from
+-- user-authored Files.tsv cells are stored as bare expression strings).
+local function entryExpr(entry)
+    if type(entry) == "string" then return entry end
+    if type(entry) == "table" then return entry.expr end
+    return nil
+end
+
+local function alreadyContainsExpr(list, expr)
+    if list == nil or expr == nil then return false end
+    for _, existing in ipairs(list) do
+        if entryExpr(existing) == expr then return true end
+    end
+    return false
+end
+
+-- Inserts a wired entry into a target list using the entry's `position`
+-- field if present, else the slot's default position. Skips entries
+-- whose `expr` is already in the list (idempotency, L6). Mirrors
+-- graph_wiring.appendUnique pre-refactor.
+local function insertContribution(target, entry, defaultPosition)
+    if target == nil then return end
+    local expr = entryExpr(entry)
+    if expr ~= nil and alreadyContainsExpr(target, expr) then return end
+    local pos = (type(entry) == "table" and entry.position) or defaultPosition
+    if pos == "prepend" then
+        table.insert(target, 1, entry)
+    else
+        target[#target + 1] = entry
+    end
+end
+
+-- Validates a {expr, ...} array contribution before storing it.
+local function validateSpecList(typeName, slotName, list)
+    if type(list) ~= "table" then
+        error("type_wiring.register: " .. slotName
+            .. " must be an array of specs for typeName '"
+            .. typeName .. "'", 3)
+    end
+    for i, entry in ipairs(list) do
+        if type(entry) == "table" then
+            if entry.expr ~= nil and type(entry.expr) ~= "string" then
+                error("type_wiring.register: " .. slotName .. "[" .. i
+                    .. "].expr must be a string for typeName '"
+                    .. typeName .. "'", 3)
+            end
+            if entry.position ~= nil and entry.position ~= "prepend"
+                and entry.position ~= "append" then
+                error("type_wiring.register: " .. slotName .. "[" .. i
+                    .. "].position must be 'prepend' or 'append' for typeName '"
+                    .. typeName .. "'", 3)
+            end
+        elseif type(entry) ~= "string" then
+            error("type_wiring.register: " .. slotName .. "[" .. i
+                .. "] must be a table or string for typeName '"
+                .. typeName .. "'", 3)
+        end
+    end
+end
+
 local function register(typeName, contributions)
     if type(typeName) ~= "string" or typeName == "" then
         error("type_wiring.register: typeName must be a non-empty string", 2)
@@ -61,22 +164,39 @@ local function register(typeName, contributions)
             .. typeName .. "'", 2)
     end
     for k in pairs(contributions) do
-        if not KNOWN_KEYS[k] then
+        if MODULE_KEYS[k] then
+            error("type_wiring.register: '" .. k
+                .. "' is a module-level slot — use registerModule instead (typeName '"
+                .. typeName .. "')", 2)
+        end
+        if not PER_TYPE_KEYS[k] then
             error("type_wiring.register: unknown contribution key '" .. tostring(k)
                 .. "' for typeName '" .. typeName .. "'", 2)
         end
     end
-    local onLoad = contributions.onLoad
-    if onLoad ~= nil and type(onLoad) ~= "function" then
+
+    if contributions.onLoad ~= nil and type(contributions.onLoad) ~= "function" then
         error("type_wiring.register: onLoad must be a function for typeName '"
             .. typeName .. "'", 2)
     end
+    if contributions.preProcessors ~= nil then
+        validateSpecList(typeName, "preProcessors", contributions.preProcessors)
+    end
+    if contributions.rowValidators ~= nil then
+        validateSpecList(typeName, "rowValidators", contributions.rowValidators)
+    end
+    if contributions.fileValidators ~= nil then
+        validateSpecList(typeName, "fileValidators", contributions.fileValidators)
+    end
+
     local key = typeName:lower()
     local entry = REGISTRY[key]
     if entry == nil then
         entry = {typeName = typeName}
         REGISTRY[key] = entry
     end
+
+    local onLoad = contributions.onLoad
     if onLoad ~= nil then
         if entry.onLoad ~= nil and entry.onLoad ~= onLoad then
             error("type_wiring.register: onLoad for typeName '" .. typeName
@@ -85,12 +205,27 @@ local function register(typeName, contributions)
         entry.onLoad = onLoad
         logger:info("Registered onLoad wiring for " .. typeName)
     end
+
+    -- For spec lists: each registration *appends* to the entry's list with
+    -- the same idempotency rule applied at dispatch time. Re-registering
+    -- the same expression is a silent no-op (deduplicated at dispatch).
+    local function appendSpecs(slot, source)
+        if source == nil then return end
+        entry[slot] = entry[slot] or {}
+        for _, e in ipairs(source) do
+            if not alreadyContainsExpr(entry[slot], entryExpr(e)) then
+                entry[slot][#entry[slot] + 1] = e
+            end
+        end
+    end
+    appendSpecs("preProcessors",  contributions.preProcessors)
+    appendSpecs("rowValidators",  contributions.rowValidators)
+    appendSpecs("fileValidators", contributions.fileValidators)
 end
 
 -- Walks the extends chain starting at typeName, calling visit(entry, ancestorName)
 -- for each ancestor that has a registry entry. Shallowest-first. A cycle in
--- `extends` terminates the walk silently (the Files.tsv parser reports cycles
--- separately).
+-- `extends` terminates the walk silently.
 local function forEachWiredAncestor(typeName, extends, visit)
     if typeName == nil then return end
     local current = typeName
@@ -106,35 +241,54 @@ local function forEachWiredAncestor(typeName, extends, visit)
     end
 end
 
--- Phase 1 dispatch: walks fileType's extends chain and fires each registered
--- ancestor's onLoad exactly once per call (shallowest first).
+-- Walks `fileType`'s extends chain and dispatches contributions.
 --
--- The onLoad receives (file, fileType, extends, badVal, loadEnv). It is
--- responsible for its own re-entry safety (e.g., parsers.registerAlias
--- already detects duplicate registrations) — the dispatcher does not
--- enforce idempotency at the callback level because it can't compare
--- side effects.
-local function applyWiring(file, fileType, extends, badVal, loadEnv)
+-- ctx is a table whose fields determine what work to do:
+--   ctx.file / ctx.badVal / ctx.loadEnv → fire onLoad slots
+--   ctx.preProcessors / ctx.rowValidators / ctx.fileValidators →
+--     insert wired entries into these target arrays (per-file lists).
+--
+-- Each ancestor fires at most once per call (shallowest first). onLoad
+-- is responsible for its own re-entry safety (e.g. parsers.registerAlias
+-- already detects duplicates). Spec-list inserts are idempotent by
+-- expression string.
+local function applyWiring(fileType, extends, ctx)
     if fileType == nil then return end
     if type(extends) ~= "table" then
         error("type_wiring.applyWiring: extends must be a table", 2)
     end
+    if type(ctx) ~= "table" then
+        error("type_wiring.applyWiring: ctx must be a table", 2)
+    end
+    local fireOnLoad = (ctx.file ~= nil) or (ctx.badVal ~= nil) or (ctx.loadEnv ~= nil)
     local called = {}
     forEachWiredAncestor(fileType, extends, function(entry, ancestorName)
-        if entry.onLoad then
-            local key = ancestorName:lower()
-            if not called[key] then
-                called[key] = true
-                entry.onLoad(file, fileType, extends, badVal, loadEnv)
+        local key = ancestorName:lower()
+        if called[key] then return end
+        called[key] = true
+        if fireOnLoad and entry.onLoad then
+            entry.onLoad(ctx.file, fileType, extends, ctx.badVal, ctx.loadEnv)
+        end
+        if entry.preProcessors and ctx.preProcessors then
+            for _, e in ipairs(entry.preProcessors) do
+                insertContribution(ctx.preProcessors, e, DEFAULT_POSITION.preProcessors)
+            end
+        end
+        if entry.rowValidators and ctx.rowValidators then
+            for _, e in ipairs(entry.rowValidators) do
+                insertContribution(ctx.rowValidators, e, DEFAULT_POSITION.rowValidators)
+            end
+        end
+        if entry.fileValidators and ctx.fileValidators then
+            for _, e in ipairs(entry.fileValidators) do
+                insertContribution(ctx.fileValidators, e, DEFAULT_POSITION.fileValidators)
             end
         end
     end)
 end
 
 -- True iff any ancestor of typeName (including itself) has a registered
--- onLoad. Used by files_desc.detectPostProcessingNeeded to decide whether
--- a file requires the second descriptor pass (so newly-registered types
--- become visible to siblings in the same package).
+-- onLoad. Used by files_desc.detectPostProcessingNeeded.
 local function hasOnLoad(typeName, extends)
     if typeName == nil then return false end
     if type(extends) ~= "table" then return false end
@@ -146,10 +300,7 @@ local function hasOnLoad(typeName, extends)
 end
 
 -- True iff `ancestorTypeName` appears in typeName's extends chain AND there
--- is a registered onLoad for `ancestorTypeName`. Used by registerFileType
--- in manifest_loader to skip files whose record-type registration is owned
--- by a wired onLoad (Type / enum), so the loader doesn't double-register
--- the file's column-shape as an alias.
+-- is a registered onLoad for `ancestorTypeName`.
 local function hasOnLoadFor(typeName, extends, ancestorTypeName)
     if typeName == nil or ancestorTypeName == nil then return false end
     if type(extends) ~= "table" then return false end
@@ -167,35 +318,337 @@ local function hasOnLoadFor(typeName, extends, ancestorTypeName)
     return false
 end
 
--- Snapshots the current registry. Called once by builtin_wiring after all
--- built-in registrations are in place. restoreState() reverts the registry
--- to this snapshot, which is what global_reset.reset() invokes between
--- test runs that mutate the registry.
-local function snapshotState()
-    local s = {}
-    for k, v in pairs(REGISTRY) do
-        s[k] = v
-    end
-    SNAPSHOT = s
+-- ============================================================
+-- Module-level API
+-- ============================================================
+
+local function specsEqual(a, b)
+    -- Equality predicate used to detect identical re-declarations of the
+    -- same descriptor column. Compares name, type, and fieldOnMeta; the
+    -- `parse` field is opaque (function-identity equality).
+    return a.name == b.name
+        and a.type == b.type
+        and a.fieldOnMeta == b.fieldOnMeta
+        and a.parse == b.parse
 end
 
--- Restores the registry to the most recent snapshot (cleared if no snapshot
--- has been taken yet). Wired via global_reset by builtin_wiring.
+local function validateColumnDecl(moduleName, decl, index)
+    if type(decl) ~= "table" then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "] must be a table for moduleName '" .. moduleName .. "'", 3)
+    end
+    if type(decl.name) ~= "string" or decl.name == "" then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "].name must be a non-empty string for moduleName '"
+            .. moduleName .. "'", 3)
+    end
+    if type(decl.type) ~= "string" or decl.type == "" then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "].type must be a non-empty string for moduleName '"
+            .. moduleName .. "'", 3)
+    end
+    if type(decl.fieldOnMeta) ~= "string" or decl.fieldOnMeta == "" then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "].fieldOnMeta must be a non-empty string for moduleName '"
+            .. moduleName .. "'", 3)
+    end
+    if decl.parse ~= nil and type(decl.parse) ~= "function" then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "].parse must be a function for moduleName '"
+            .. moduleName .. "'", 3)
+    end
+end
+
+local function mergeColumnDecls(moduleName, decls, target, contributorByName)
+    for i, decl in ipairs(decls) do
+        validateColumnDecl(moduleName, decl, i)
+        local existing = target[decl.name]
+        if existing == nil then
+            target[decl.name] = decl
+            contributorByName[decl.name] = moduleName
+        elseif specsEqual(existing, decl) then
+            -- Identical re-declaration: silent merge.
+        else
+            error("type_wiring.registerModule: descriptorColumn '" .. decl.name
+                .. "' redeclared with incompatible spec by modules '"
+                .. contributorByName[decl.name] .. "' and '" .. moduleName
+                .. "'", 3)
+        end
+    end
+end
+
+local function mergeSandboxHelpers(moduleName, helpers, target, contributorByName)
+    local function mergeBucket(bucketName, source)
+        if source == nil then return end
+        if type(source) ~= "table" then
+            error("type_wiring.registerModule: sandboxHelpers."
+                .. bucketName .. " must be a table for moduleName '"
+                .. moduleName .. "'", 4)
+        end
+        target[bucketName] = target[bucketName] or {}
+        for name, fn in pairs(source) do
+            if type(name) ~= "string" or name == "" then
+                error("type_wiring.registerModule: sandboxHelpers."
+                    .. bucketName .. " keys must be non-empty strings for moduleName '"
+                    .. moduleName .. "'", 4)
+            end
+            if type(fn) ~= "function" then
+                error("type_wiring.registerModule: sandboxHelpers."
+                    .. bucketName .. "." .. name
+                    .. " must be a function for moduleName '"
+                    .. moduleName .. "'", 4)
+            end
+            local key = bucketName .. ":" .. name
+            local existingFn = target[bucketName][name]
+            if existingFn == nil then
+                target[bucketName][name] = fn
+                contributorByName[key] = moduleName
+            elseif existingFn ~= fn then
+                error("type_wiring.registerModule: sandboxHelper '"
+                    .. bucketName .. "." .. name
+                    .. "' redeclared with a different function by modules '"
+                    .. contributorByName[key] .. "' and '" .. moduleName .. "'", 4)
+            end
+        end
+    end
+    mergeBucket("processor", helpers.processor)
+    mergeBucket("validator", helpers.validator)
+    -- "both" is sugar: helpers in both processor and validator envs.
+    if helpers.both then
+        mergeBucket("processor", helpers.both)
+        mergeBucket("validator", helpers.both)
+    end
+end
+
+local function registerModule(moduleName, declarations)
+    if type(moduleName) ~= "string" or moduleName == "" then
+        error("type_wiring.registerModule: moduleName must be a non-empty string", 2)
+    end
+    if type(declarations) ~= "table" then
+        error("type_wiring.registerModule: declarations must be a table for moduleName '"
+            .. moduleName .. "'", 2)
+    end
+    for k in pairs(declarations) do
+        if PER_TYPE_KEYS[k] then
+            error("type_wiring.registerModule: '" .. k
+                .. "' is a per-typeName slot — use register instead (moduleName '"
+                .. moduleName .. "')", 2)
+        end
+        if not MODULE_KEYS[k] then
+            error("type_wiring.registerModule: unknown declaration key '" .. tostring(k)
+                .. "' for moduleName '" .. moduleName .. "'", 2)
+        end
+    end
+
+    local mod = MODULES[moduleName]
+    if mod == nil then
+        mod = {
+            moduleName = moduleName,
+            descriptorColumns = {},
+            sandboxHelpers = {},
+            enginePostPasses = {},
+        }
+        MODULES[moduleName] = mod
+        MODULE_ORDER[#MODULE_ORDER + 1] = moduleName
+    end
+
+    if declarations.descriptorColumns ~= nil then
+        if type(declarations.descriptorColumns) ~= "table" then
+            error("type_wiring.registerModule: descriptorColumns must be a list for moduleName '"
+                .. moduleName .. "'", 2)
+        end
+        for i, decl in ipairs(declarations.descriptorColumns) do
+            validateColumnDecl(moduleName, decl, i)
+            mod.descriptorColumns[#mod.descriptorColumns + 1] = decl
+        end
+        logger:info(moduleName .. ": registered " .. #declarations.descriptorColumns
+            .. " descriptor column(s)")
+    end
+
+    if declarations.sandboxHelpers ~= nil then
+        if type(declarations.sandboxHelpers) ~= "table" then
+            error("type_wiring.registerModule: sandboxHelpers must be a table for moduleName '"
+                .. moduleName .. "'", 2)
+        end
+        -- Stash a reference (we re-validate at aggregate time so collision
+        -- errors name both contributors via the aggregate path).
+        mod.sandboxHelpers[#mod.sandboxHelpers + 1] = declarations.sandboxHelpers
+    end
+
+    if declarations.enginePostPasses ~= nil then
+        if type(declarations.enginePostPasses) ~= "table" then
+            error("type_wiring.registerModule: enginePostPasses must be a list for moduleName '"
+                .. moduleName .. "'", 2)
+        end
+        for i, fn in ipairs(declarations.enginePostPasses) do
+            if type(fn) ~= "function" then
+                error("type_wiring.registerModule: enginePostPasses[" .. i
+                    .. "] must be a function for moduleName '"
+                    .. moduleName .. "'", 2)
+            end
+            mod.enginePostPasses[#mod.enginePostPasses + 1] = fn
+        end
+    end
+
+    invalidateCache()
+end
+
+-- Stable list of keys (used by buildDescriptorColumnsCache for
+-- determinism — natural pairs() iteration order isn't guaranteed).
+local function sortedKeys(t)
+    local out = {}
+    for k in pairs(t) do out[#out + 1] = k end
+    table.sort(out)
+    return out
+end
+
+local function buildDescriptorColumnsCache()
+    local target = {}
+    local contributorByName = {}
+    -- Iterate in registration order (deterministic).
+    for _, moduleName in ipairs(MODULE_ORDER) do
+        local mod = MODULES[moduleName]
+        if mod and #mod.descriptorColumns > 0 then
+            mergeColumnDecls(moduleName, mod.descriptorColumns, target, contributorByName)
+        end
+    end
+    -- Stable ordered list for callers that want array iteration.
+    local ordered = {}
+    for _, name in ipairs(sortedKeys(target)) do
+        ordered[#ordered + 1] = target[name]
+    end
+    CACHE.descriptorColumns = ordered
+    CACHE.descriptorColumnsByName = target
+end
+
+-- Returns the merged descriptor-column declarations as an array.
+-- Identical re-declarations across modules are silently merged; conflicting
+-- re-declarations raise an error at this point (deferred from registerModule
+-- so the error message can name both contributors).
+local function descriptorColumns()
+    if CACHE.descriptorColumns == nil then
+        buildDescriptorColumnsCache()
+    end
+    return CACHE.descriptorColumns
+end
+
+-- Returns a map name → declaration, for O(1) lookups by column name.
+local function descriptorColumnsByName()
+    if CACHE.descriptorColumnsByName == nil then
+        buildDescriptorColumnsCache()
+    end
+    return CACHE.descriptorColumnsByName
+end
+
+local function buildSandboxAdditionsCache()
+    local target = {processor = {}, validator = {}}
+    local contributorByName = {}
+    for _, moduleName in ipairs(MODULE_ORDER) do
+        local mod = MODULES[moduleName]
+        if mod then
+            for _, helpers in ipairs(mod.sandboxHelpers) do
+                mergeSandboxHelpers(moduleName, helpers, target, contributorByName)
+            end
+        end
+    end
+    CACHE.sandboxAdditions = target
+end
+
+-- Returns the merged sandbox helper additions:
+--   { processor = {[name]=fn, ...}, validator = {[name]=fn, ...} }
+-- processor_executor / validator_executor merge these into their helper
+-- blocks at engine init. Name collisions across modules are an error;
+-- the merged result is cached.
+local function sandboxAdditions()
+    if CACHE.sandboxAdditions == nil then
+        buildSandboxAdditionsCache()
+    end
+    return CACHE.sandboxAdditions
+end
+
+local function buildEnginePostPassesCache()
+    local ordered = {}
+    local seen = {}
+    -- Walk modules in registration order; within a module, append in the
+    -- order callbacks were registered. Function-identity dedup so a
+    -- callback registered under more than one moduleName runs once.
+    for _, moduleName in ipairs(MODULE_ORDER) do
+        local mod = MODULES[moduleName]
+        if mod then
+            for _, fn in ipairs(mod.enginePostPasses) do
+                if not seen[fn] then
+                    seen[fn] = true
+                    ordered[#ordered + 1] = fn
+                end
+            end
+        end
+    end
+    CACHE.enginePostPasses = ordered
+end
+
+-- Runs every registered engine post-pass against (tsv_files, joinMeta, badVal).
+-- Each callback returns true on success, false on any reported error
+-- (errors via badVal, not raised). Returns the aggregate result — true
+-- iff every pass returned truthy.
+local function runEnginePostPasses(tsv_files, joinMeta, badVal)
+    if CACHE.enginePostPasses == nil then
+        buildEnginePostPassesCache()
+    end
+    local ok = true
+    for _, fn in ipairs(CACHE.enginePostPasses) do
+        local result = fn(tsv_files, joinMeta, badVal)
+        if not result then ok = false end
+    end
+    return ok
+end
+
+-- ============================================================
+-- Snapshot / restore (for global_reset)
+-- ============================================================
+
+local function snapshotState()
+    local r = {}
+    for k, v in pairs(REGISTRY) do r[k] = v end
+    REGISTRY_SNAPSHOT = r
+
+    local m = {}
+    for k, v in pairs(MODULES) do m[k] = v end
+    MODULES_SNAPSHOT = m
+
+    local o = {}
+    for i, name in ipairs(MODULE_ORDER) do o[i] = name end
+    MODULE_ORDER_SNAPSHOT = o
+end
+
 local function restoreState()
     for k in pairs(REGISTRY) do REGISTRY[k] = nil end
-    if SNAPSHOT then
-        for k, v in pairs(SNAPSHOT) do REGISTRY[k] = v end
+    if REGISTRY_SNAPSHOT then
+        for k, v in pairs(REGISTRY_SNAPSHOT) do REGISTRY[k] = v end
     end
+    for k in pairs(MODULES) do MODULES[k] = nil end
+    if MODULES_SNAPSHOT then
+        for k, v in pairs(MODULES_SNAPSHOT) do MODULES[k] = v end
+    end
+    for i in ipairs(MODULE_ORDER) do MODULE_ORDER[i] = nil end
+    if MODULE_ORDER_SNAPSHOT then
+        for i, name in ipairs(MODULE_ORDER_SNAPSHOT) do MODULE_ORDER[i] = name end
+    end
+    invalidateCache()
 end
 
--- Test/debug accessor: list the typeNames that currently have a registry
--- entry, sorted alphabetically. Not part of the documented surface.
+-- Test/debug accessors (not part of the documented surface).
 local function _getRegisteredTypes()
     local out = {}
     for _, entry in pairs(REGISTRY) do
         out[#out + 1] = entry.typeName
     end
     table.sort(out)
+    return out
+end
+
+local function _getRegisteredModules()
+    local out = {}
+    for _, name in ipairs(MODULE_ORDER) do out[#out + 1] = name end
     return out
 end
 
@@ -210,12 +663,18 @@ end
 local API = {
     getVersion = getVersion,
     register = register,
+    registerModule = registerModule,
     applyWiring = applyWiring,
     hasOnLoad = hasOnLoad,
     hasOnLoadFor = hasOnLoadFor,
+    descriptorColumns = descriptorColumns,
+    descriptorColumnsByName = descriptorColumnsByName,
+    sandboxAdditions = sandboxAdditions,
+    runEnginePostPasses = runEnginePostPasses,
     snapshotState = snapshotState,
     restoreState = restoreState,
     _getRegisteredTypes = _getRegisteredTypes,
+    _getRegisteredModules = _getRegisteredModules,
 }
 
 local function apiCall(_, operation, ...)

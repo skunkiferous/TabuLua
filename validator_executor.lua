@@ -18,12 +18,30 @@ local sandbox_env = require("sandbox_env")
 local validator_helpers = require("validator_helpers")
 local graph_helpers = require("graph_helpers")
 
+-- Type-wiring registry: we self-register the three graph validators
+-- under the "graph_wiring" module (Phase 2b — these used to be
+-- hard-coded in VALIDATOR_HELPERS). Not requiring builtin_wiring here
+-- avoids the circular dependency builtin_wiring → processor_executor →
+-- validator_executor → builtin_wiring would create.
+local type_wiring = require("type_wiring")
+type_wiring.registerModule("graph_wiring", {
+    sandboxHelpers = {
+        validator = {
+            graphRefsExist = graph_helpers.graphRefsExist,
+            graphAcyclic   = graph_helpers.graphAcyclic,
+            graphTreeShape = graph_helpers.graphTreeShape,
+        },
+    },
+})
+
 local logger = require("named_logger").getLogger(NAME)
 
 -- The validator read-side helper block. Shared, never-mutated reference set
 -- merged into every validator sandbox env. The safe builtins, `math`, the
 -- curated `string`/`table` subsets and the TabuLua helper block all come from
 -- sandbox_env; only these validator-specific helpers are declared here.
+-- Graph validators (graphRefsExist / graphAcyclic / graphTreeShape) flow
+-- in through the registry merge below — no longer hard-coded here.
 local VALIDATOR_HELPERS = {
     unique = validator_helpers.unique,
     sum = validator_helpers.sum,
@@ -41,12 +59,18 @@ local VALIDATOR_HELPERS = {
     -- Type introspection helpers
     listMembersOfTag = validator_helpers.listMembersOfTag,
     isMemberOfTag = validator_helpers.isMemberOfTag,
-    -- Graph validators (auto-wired by graph_wiring; also callable from
-    -- user validator expressions if they want extra graph checks).
-    graphRefsExist = graph_helpers.graphRefsExist,
-    graphAcyclic = graph_helpers.graphAcyclic,
-    graphTreeShape = graph_helpers.graphTreeShape,
 }
+
+-- Merge in registry-contributed validator helpers (graph helpers,
+-- future feature-module additions). Name collisions with the built-in
+-- block are a registration error.
+for name, fn in pairs(type_wiring.sandboxAdditions().validator) do
+    if VALIDATOR_HELPERS[name] ~= nil and VALIDATOR_HELPERS[name] ~= fn then
+        error("validator_executor: type-wiring registry helper '" .. name
+            .. "' conflicts with a built-in validator helper of the same name", 0)
+    end
+    VALIDATOR_HELPERS[name] = fn
+end
 
 -- ============================================================
 -- Row Wrapping for Validators

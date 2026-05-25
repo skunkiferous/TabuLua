@@ -11,18 +11,26 @@ been revised to address each of them so a single registry can cover the
 existing three behaviours (`Type` / `enum` / `custom_type_def`) **and** the
 landed graph wiring without losing capability.
 
-**Phase 1: landed.** The registry module ([type_wiring.lua](../type_wiring.lua))
-and the built-in-wiring seed module ([builtin_wiring.lua](../builtin_wiring.lua))
-are in place. The three `Type` / `enum` / `custom_type_def` `onLoad`
-handlers moved out of `manifest_loader.lua` and into `builtin_wiring`
-unchanged. `manifest_loader` lost its three `if`-cascade dispatch
-branches and its four ancestor walkers (`isType`, `isEnum`,
-`isCustomTypeDef`, `findAllTypes`, `buildCustomTypesSet`); a single
-`type_wiring.applyWiring` call replaces them. `files_desc`'s
-`POST_PROCESS_PARENTS` table became a `type_wiring.hasOnLoad` query, so
-future `onLoad`-registering types automatically trigger the
-descriptor-file reprocessing pass without a parallel edit. Phases 2a,
-2b, 3a, 3b, 4 (optional), and 5 remain.
+**Phases 1, 2a, 2b: landed.** The registry module
+([type_wiring.lua](../type_wiring.lua)) and the built-in seed module
+([builtin_wiring.lua](../builtin_wiring.lua)) now host the full per-typeName
+cascade (`onLoad`, `preProcessors`, `rowValidators`, `fileValidators`
+with per-entry `position` override and expression-string idempotency)
+and the module-level `registerModule` API (`descriptorColumns`,
+`sandboxHelpers`, `enginePostPasses`). `manifest_loader` calls
+`type_wiring.applyWiring` once per file (replaces the three `onLoad`
+branches AND the post-load graph auto-wiring pass) and
+`type_wiring.runEnginePostPasses` once after the per-file validator
+phase (replaces the direct `validateGraphEdgeFiles` call).
+`processor_executor` and `validator_executor` merge
+`type_wiring.sandboxAdditions()` into their helper blocks at engine init.
+`files_desc.lua`'s core hard-coded schema is now six columns
+(`fileName`, `typeName`, `superType`, `baseType`, `loadOrder`,
+`description`); the other ten optional columns flow in through
+feature-module `registerModule` calls. `graph_wiring.applyAutoWiring`
+and `graph_wiring.validateEdgeFiles` are gone from the public API; the
+leaf detection helpers (`detectFamily`, `detectRole`,
+`detectEdgeFamily`) remain. Phases 3a, 3b, 4 (optional), and 5 remain.
 
 ## Summary
 

@@ -7,7 +7,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
-| [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers with the type-wiring registry | error_reporting, global_reset, named_logger, parsers, read_only, type_wiring |
+| [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
 | [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
 | [deserialization](#deserialization) | Data deserialization (Lua, JSON, XML, MessagePack) | read_only |
@@ -20,11 +20,11 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
 | [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
-| [graph_wiring](#graph_wiring) | Auto-wires completion pre-processors and structural validators on graph-family files; runs the edge↔node consistency check | graph_helpers, named_logger, read_only |
+| [graph_wiring](#graph_wiring) | Family detection helpers for graph-shaped record types (`detectFamily`, `detectRole`, `detectEdgeFamily`). After Phase 2b the dispatch / validation entry points moved into the type-wiring registry | read_only |
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, and dependencies | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -41,7 +41,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [parsers.type_parsing](#parserstype_parsing) | Core type parsing with inheritance support | parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.state, parsers.utils, serialization |
 | [parsers.utils](#parsersutils) | Utility functions for parsers module | parsers.state, serialization, table_parsing |
 | [predicates](#predicates) | Type checking predicate functions | read_only, string_utils, table_parsing, table_utils |
-| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers |
+| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, type_wiring, validator_executor, validator_helpers |
 | [raw_tsv](#raw_tsv) | Low-level TSV file parsing and writing | file_util, predicates, read_only, string_utils |
 | [read_only](#read_only) | Read-only table proxy wrappers | table_utils |
 | [reformatter](#reformatter) | TSV file reformatting and multi-format export | error_reporting, exporter, file_util, manifest_info, manifest_loader, named_logger, read_only, serialization |
@@ -57,7 +57,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | named_logger, raw_tsv, read_only, string_utils, file_util |
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
 | [type_wiring](#type_wiring) | Registry that attaches behaviour to files by walking the `extends` chain; Phase 1 supports the `onLoad` slot | named_logger, read_only |
-| [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers |
+| [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, type_wiring, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
 
 ---
