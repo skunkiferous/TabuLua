@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.21.0] - 2026-05-26
+
+### Added
+
 - **Type-wiring registry — Phases 3a and 3b of [TODO/type_wiring.md](TODO/type_wiring.md).**
   User packages can now reach the type-wiring registry through two
   complementary paths.
