@@ -1,0 +1,15 @@
+# ExpansionWiring.tsv -- Type-Wiring example (v0.21.0).
+#
+# This file is loaded as a type_wiring_def record file. Each row registers
+# wiring contributions for one typeName via the type-wiring registry.
+#
+# loadOrder=6 (set in Files.tsv) places this file before the item / boss
+# data files, so the registrations are in place by the time those files
+# load. Convention is to name such files TypeWiring.tsv, but the engine
+# recognises them by record type (`type_wiring_def`), not by filename.
+#
+# This row says: every file whose typeName extends `Item` (core's Item.tsv
+# plus expansion's ExpansionItem.tsv) gets an extra warning-level check
+# confirming the file isn't empty.
+typeName:name	fileValidators:{validator_spec}|nil
+Item	{expr="count(rows) >= 1 or 'item file should have at least one row'",level="warn"}

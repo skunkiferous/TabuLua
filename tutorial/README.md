@@ -42,8 +42,9 @@ tutorial/
     ExpansionSpell.tsv               # Expansion library expressions
     SkillTree.tsv                    # graph_node: DAG with multi-parent skills
     SkillEdges.tsv                   # graph_edge: per-edge data attached via edgesFor
+    ExpansionWiring.tsv              # type_wiring_def: pure-data Type Wiring (v0.21.0)
     libs/
-      bossLib.lua                    # Expansion code library
+      bossLib.lua                    # Expansion code library + bootstrap (v0.21.0)
 ```
 
 ## Running the Tutorial

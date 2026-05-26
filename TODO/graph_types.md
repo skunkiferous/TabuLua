@@ -306,6 +306,19 @@ every file that extends it". This could later support other built-in
 shape-types (`series_node`, `partition_node`, …). Worth a footnote in the
 plan but not v1 work.
 
+**Update (post-Phase 2b of [type_wiring.md](type_wiring.md)):** the
+generalisation has landed. The auto-wiring described in Phases A3–A5
+below is now expressed as `type_wiring.register("basic_graph_node",
+{...})`, `type_wiring.register("graph_node", {...})`, and
+`type_wiring.register("tree_node", {...})` calls in
+[builtin_wiring.lua](../builtin_wiring.lua), plus a
+`type_wiring.registerModule("graph_wiring", {...})` call that owns the
+`edgesFor` descriptor column, the sandbox helpers, and the
+edge-consistency engine post-pass. `graph_wiring.applyAutoWiring` and
+`graph_wiring.validateEdgeFiles` are gone from the public API; the
+detection helpers (`detectFamily`, `detectRole`, `detectEdgeFamily`)
+remain. User-visible behaviour is unchanged.
+
 ### Cycle-detection helper
 
 `graph_helpers` exposes a shared cycle-detection helper used by both the

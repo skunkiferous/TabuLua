@@ -1172,6 +1172,7 @@ Since the file has only a single data row and multiple values can be quite long,
 | `url` | `http\|nil` | Source URL for this package |
 | `custom_types` | `{custom_type_def}\|nil` | Custom types with data-driven validators (also used for simple type aliases) |
 | `code_libraries` | `{{name,string}}\|nil` | Code libraries for expressions and COG |
+| `bootstrap` | `{{fn:name,library:name}}\|nil` | Functions invoked once at engine init with the type-wiring registration `api` — see [Type Wiring](#type-wiring-attaching-behaviour-to-a-type) |
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
@@ -1917,3 +1918,142 @@ A row like `perception__missing` (where `missing` isn't a row in
 `SkillTree.tsv`) would fail the auto-wired endpoint-exists check;
 `stealth__perception` (no such link in `SkillTree.tsv`) would fail the
 edge-must-match-link check.
+
+## Type Wiring (Attaching Behaviour to a Type)
+
+A package can attach pre-processors, row validators, and file validators
+to a typeName so every file extending that type inherits them. There are
+two ways to do it — a **pure-data path** (you author a TSV file, no Lua
+needed) and a **code-library path** (a manifest-declared function runs
+once at engine init with access to a richer registration API).
+
+Both paths feed the same engine-internal registry that the built-in
+auto-wiring (Type files, enum files, custom_type_def files, graph_node
+families) uses. There is no privileged path for built-ins.
+
+### Pure-Data Path: `type_wiring_def` Files
+
+A file whose `typeName` is (or extends) the built-in record type
+`type_wiring_def` is treated as a "wiring file." Each row registers
+wiring for one typeName. The record shape:
+
+```text
+typeName:name
+preProcessors:{processor_spec}|nil
+rowValidators:{validator_spec}|nil
+fileValidators:{validator_spec}|nil
+```
+
+Convention is to name such files `TypeWiring.tsv`, but the engine
+recognises them by record type rather than basename — you can name your
+file anything you like, as long as `Files.tsv` lists it with the right
+typeName.
+
+Example: a package wants every file extending its `Item` type to run a
+"non-empty name" file validator and a normalisation pre-processor.
+
+`Files.tsv`:
+
+```tsv
+fileName:filepath  typeName:type_spec  superType:super_type  baseType:boolean  loadOrder:number  description:text
+ItemWiring.tsv     ItemWiring          type_wiring_def       true              5                 Engine-attached behaviour for Item files
+Sword.tsv          Sword               Item                  false             10                Swords
+Bow.tsv            Bow                 Item                  false             10                Bows
+```
+
+`ItemWiring.tsv`:
+
+```tsv
+typeName:name  preProcessors:{processor_spec}|nil  fileValidators:{validator_spec}|nil
+Item                                               "count(rows) > 0 or 'item file is empty'"
+```
+
+The wiring file's `loadOrder` should be **lower** than the files it
+affects, so the registration is in place by the time those files load.
+This is the same ordering convention used by `Type` files,
+`enum` files, and `custom_type_def` files.
+
+Unknown typeNames register harmlessly: the dispatcher only fires the
+contributions when a file's extends chain actually reaches the
+registered name. A wiring entry for a never-extended type is a silent
+no-op.
+
+`type_wiring_def` files can declare expressions (strings) but cannot
+declare Lua function values — for that, use the bootstrap path.
+
+### Code-Library Path: Manifest `bootstrap` Field
+
+A package can declare one or more bootstrap entries in its
+`Manifest.transposed.tsv`:
+
+```text
+bootstrap   {{library:name, fn:name}}|nil
+```
+
+Each entry names a function exported by one of the package's own
+`code_libraries`. After every package's code libraries are loaded but
+before any descriptor file is parsed, each bootstrap function is
+invoked once with an `api` argument that proxies onto the type-wiring
+registry. Bootstraps run in package-dependency order, so a child
+package can register against typeNames a parent's bootstrap just
+declared.
+
+The `api` argument exposes two methods:
+
+| Method | Purpose |
+| --- | --- |
+| `api.register(typeName, contributions)` | Per-typeName cascade contributions: `onLoad`, `preProcessors`, `rowValidators`, `fileValidators`. |
+| `api.registerModule(moduleName, declarations)` | Module-level engine-init declarations: `descriptorColumns` (extra Files.tsv columns), `sandboxHelpers` (functions callable from validator/processor expressions), `enginePostPasses` (cross-file checks). |
+
+After the bootstrap phase ends, the `api` is sealed: any subsequent
+call — including one through a proxy reference a bootstrap stashed
+into library state for later use — raises an error. The api is meant
+to be used inside the bootstrap call only.
+
+Example: a package adds a custom `Files.tsv` column and a post-load
+consistency check.
+
+`Manifest.transposed.tsv` (excerpt):
+
+```text
+package_id        MyPackage
+code_libraries    "wiring",libs/wiring.lua
+bootstrap         {library="wiring",fn="bootstrap"}
+```
+
+`libs/wiring.lua`:
+
+```lua
+local M = {}
+
+function M.bootstrap(api)
+    api.registerModule("my_package", {
+        descriptorColumns = {
+            {name = "tier", type = "integer|nil", fieldOnMeta = "lcFn2Tier"},
+        },
+        enginePostPasses = {
+            function(tsv_files, joinMeta, badVal)
+                -- Cross-file consistency check, returning true on success.
+                return true
+            end,
+        },
+    })
+end
+
+return M
+```
+
+### What Each Path Can Contribute
+
+| Slot | Engine code | `bootstrap` (code library) | `type_wiring_def` file |
+| --- | --- | --- | --- |
+| `onLoad` (Lua function) | Yes | No (cannot mutate parser-registration tables from the sandbox) | No (TSV cells can't encode Lua function values) |
+| `preProcessors` / `rowValidators` / `fileValidators` (per typeName) | Yes | Yes via `api.register` | Yes (one row per typeName) |
+| `descriptorColumns` (extra Files.tsv columns) | Yes | Yes via `api.registerModule` | No (would be circular: a Files.tsv row can't reference a column Files.tsv itself doesn't yet recognise) |
+| `sandboxHelpers` (functions for expression sandbox) | Yes | Yes via `api.registerModule` | No (TSV cells can't encode Lua function values) |
+| `enginePostPasses` (cross-file checks) | Yes | Yes via `api.registerModule` | No (same reason as sandbox helpers) |
+
+If your package needs only the per-typeName spec-list slots (the
+common case), use a `type_wiring_def` file — it's simpler. Reach for
+the bootstrap path only when you need `descriptorColumns`,
+`sandboxHelpers`, or `enginePostPasses`.

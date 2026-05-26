@@ -129,6 +129,59 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+### Migration guide (Type-Wiring Registry refactor)
+
+**Required changes for existing data projects: none.** This release is
+an internal refactor of how the engine attaches behaviour to file
+types. Existing `Manifest.transposed.tsv`, `Files.tsv`, and data files
+continue to load and behave identically.
+
+**What changed internally:**
+
+- Ten previously hard-coded optional columns in `Files.tsv`
+  (`publishContext`, `publishColumn`, `joinInto`, `joinColumn`,
+  `export`, `joinedTypeName`, `variant`, `rowValidators`,
+  `fileValidators`, `preProcessors`, `edgesFor`) are now registered
+  by feature modules at engine init rather than enumerated in
+  `files_desc.lua`. All ten continue to be recognised in any
+  `Files.tsv`; their semantics, types, and behaviour are unchanged.
+- The six intrinsic columns (`fileName`, `typeName`, `superType`,
+  `baseType`, `loadOrder`, `description`) remain hard-coded core.
+- The graph-types auto-wiring previously implemented as hand-written
+  helpers in `graph_wiring.lua` now flows through the registry;
+  user-visible behaviour is unchanged. `graph_wiring.applyAutoWiring`
+  and `graph_wiring.validateEdgeFiles` are no longer in the public
+  API.
+
+**New opt-in surfaces (you can ignore these unless you want them):**
+
+- **`type_wiring_def` built-in record type.** Any file declaring
+  `typeName=type_wiring_def` (or extending it) is treated as a
+  "wiring file" — each row becomes a registration. Lets a package
+  attach `preProcessors` / `rowValidators` / `fileValidators` to
+  arbitrary typeNames without any Lua. Convention is to call such
+  files `TypeWiring.tsv` but the engine recognises them by record
+  type, not by basename. See `DATA_FORMAT_README.md` § *Type Wiring*.
+- **`bootstrap` field in the manifest**. A new optional list of
+  `{fn, library}` pairs that run once at engine init with an `api`
+  argument exposing `register` and `registerModule`. Use this when
+  shipping a code library that needs to add engine-extending
+  behaviour (custom `Files.tsv` columns, sandbox helpers for use in
+  expressions, cross-file validators). The api is sealed after the
+  bootstrap phase ends — captured handles can't outlive the phase.
+
+**If you maintain engine-side Lua that reaches into `joinMeta`:**
+every existing field (`lcFn2JoinInto`, `lcFn2EdgesFor`,
+`lcFn2RowValidators`, …) continues to exist with the same shape and
+contents — only the population path has moved, not the data layout.
+
+**If you import `graph_wiring` directly from a code library:**
+`graph_wiring.detectFamily`, `detectRole`, and `detectEdgeFamily`
+remain exported (leaf detection helpers). The dispatch entry points
+(`applyAutoWiring`, `validateEdgeFiles`) are gone — the engine reaches
+them through the registry now, and direct callers should do the same
+via `type_wiring.applyWiring` / `type_wiring.runEnginePostPasses`.
+
 ## [0.20.0] - 2026-05-24
 
 ### Added

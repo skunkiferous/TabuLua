@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "PowerShell(.\\\\run_tests.cmd 2>&1)"
     ]
   }
 }

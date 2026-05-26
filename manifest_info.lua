@@ -70,9 +70,10 @@ local MANIFEST_SPEC = [[{
     code_libraries:{{name,string}}|nil,
     # Bootstrap entries that run once at engine init with access to the
     # type-wiring registration API. Each entry references a function
-    # exported by one of this package's own code libraries. See
-    # TODO/type_wiring.md Phase 3a.
-    bootstrap:{{library:name, fn:name}}|nil,
+    # exported by one of this package's own code libraries. Record
+    # fields are written in alphabetical (canonical) order: `fn` then
+    # `library`. See TODO/type_wiring.md Phase 3a.
+    bootstrap:{{fn:name,library:name}}|nil,
     # Defines the package "dependencies"
     dependencies:{{
         # Defines the "id" of a dependency
