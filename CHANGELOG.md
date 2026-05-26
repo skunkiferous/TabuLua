@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **PK-lookup audit — [TODO/pk_lookup_audit.md](TODO/pk_lookup_audit.md).**
+  Eliminated redundant row scans in code paths that had a PK-indexed
+  parsed dataset (or wrapped row array) available but were still
+  rebuilding name→row maps locally. Three focused fixes:
+  - `manifest_loader.extractDataRows` now mirrors the dataset's
+    column-1 PK index onto the returned array, so file validators,
+    file pre-processors, and package validators inherit an
+    `rows[pkValue]` O(1) lookup without per-call rebuilds.
+  - `validator_helpers.lookup` gains a one-probe PK fast-path: when
+    `column` is the PK column of a PK-indexed array, it short-circuits
+    to `rows[tostring(value)]`; non-PK columns and plain-array test
+    fixtures fall through to the existing linear scan.
+  - `tsv_diff.comparePKBased` gets a comment explaining why it
+    *must* build its own `pk2Map` (raw-TSV input with normalised PK
+    keys — no native index to reuse).
+  No behaviour change for consumers. Documented the wrapper-PK
+  contract on `manifest_loader`, `validator_executor`,
+  `processor_executor`, and `validator_helpers` in
+  [MODULES.md](MODULES.md) to prevent regression.
+
 ### Removed
 
 ### Fixed

@@ -207,11 +207,30 @@ end
 -- ============================================================
 
 --- Finds a row where a column equals a specific value.
+---
+--- PK fast-path: when `rows` is a parsed dataset or a wrapper that mirrors
+--- the dataset's PK index, and `column` is the PK column (column 1 or its
+--- name), the lookup is O(1) via `rows[tostring(value)]`. Detection is a
+--- one-row probe on `rows[1]` -- if `rows[tostring(first[column])] == first`,
+--- the index is wired up and `column` is the PK. The post-check
+--- `candidate[column] == value` preserves the existing type-strict equality
+--- (so e.g. value=5 does not match a row whose PK was "5").
 --- @param rows table Array of row objects (with parsed values directly accessible)
 --- @param column string|number Column name or index
 --- @param value any Value to search for
 --- @return table|nil Matching row or nil
 local function lookup(rows, column, value)
+    local first = rows[1]
+    if first ~= nil then
+        local firstColVal = first[column]
+        if firstColVal ~= nil and rows[tostring(firstColVal)] == first then
+            local candidate = rows[tostring(value)]
+            if candidate ~= nil and candidate[column] == value then
+                return candidate
+            end
+            return nil
+        end
+    end
     for _, row in ipairs(rows) do
         if row[column] == value then
             return row

@@ -242,6 +242,8 @@ Handles `Manifest.transposed.tsv` files for package metadata, versioning, type a
 
 Orchestrates package loading: discovers packages, resolves dependencies, dispatches type-wiring `onLoad` callbacks (via [type_wiring](#type_wiring) — replaces the former hand-written `Type` / `enum` / `custom_type_def` branches), registers types, loads data files in order, and runs all validators (row, file, package) after loading.
 
+**`extractDataRows` preserves the dataset's PK index.** The internal `extractDataRows(tsv_file)` helper returns the data rows as a plain array but also copies the dataset's column-1 PK keys onto the result, so callers receive a row array that is still PK-indexed (`rows[someName]` is O(1)). Direct consumers — file validators, file pre-processors, package validators — should reuse this index instead of rebuilding a name→row map.
+
 **Dependencies:** builtin_wiring, error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor
 
 ---
@@ -403,6 +405,8 @@ when their spec opts into the future mod-override re-run; the default is a
 single run per file. Updates only `cell.parsed`/`cell.evaluated` so the
 reformatter preserves the original on-disk text. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors) for the user-facing description.
 
+**Wrapped row arrays preserve the dataset's PK index.** `wrapRowsForProcessor` returns a plain Lua array that also mirrors the dataset's column-1 PK index, so `wrappedRows[someName]` returns the wrapped row for that PK in O(1). The `rowByKey` helper delegates to this index; processor authors should reach for `rowByKey` (or the index directly) rather than scanning rows manually.
+
 **Dependencies:** error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers
 
 ---
@@ -552,6 +556,8 @@ Registry that attaches behaviour to a file by walking its `extends` chain. Each 
 
 Sandboxed execution engine for row, file, and package validators. Normalizes validator specs (string or `{expr, level}` records), creates sandboxed environments with helper functions and context variables, and interprets validator results. Enforces execution quotas (1000 row, 10000 file, 100000 package). Error-level validators stop on first failure; warn-level validators collect warnings and continue.
 
+**Wrapped row arrays preserve the dataset's PK index.** `wrapRowsForValidation` returns a plain Lua array that also mirrors the dataset's column-1 PK index, so `wrappedRows[someName]` returns the wrapped row for that PK in O(1). Consumers should use this directly instead of building a local name→row map; the [graph_helpers](#graph_helpers) `nameIndex` helper is the right tool when generality over plain-array fixtures is needed.
+
 **Dependencies:** graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, validator_helpers
 
 ---
@@ -560,7 +566,7 @@ Sandboxed execution engine for row, file, and package validators. Normalizes val
 
 **File:** [validator_helpers.lua](validator_helpers.lua)
 
-Helper functions available to validator expressions in the sandboxed environment. Provides collection predicates (`unique`, `sum`, `min`, `max`, `avg`, `count`), iteration helpers (`all`, `any`, `none`, `filter`, `find`), and lookup helpers (`lookup`, `groupBy`). All column-based functions operate on cell objects via `.parsed` to extract computed values.
+Helper functions available to validator expressions in the sandboxed environment. Provides collection predicates (`unique`, `sum`, `min`, `max`, `avg`, `count`), iteration helpers (`all`, `any`, `none`, `filter`, `find`), and lookup helpers (`lookup`, `groupBy`). All column-based functions operate on cell objects via `.parsed` to extract computed values. `lookup` short-circuits to O(1) when `column` is the PK column and the rows table is PK-indexed (the wrappers from [validator_executor](#validator_executor) and [processor_executor](#processor_executor), or anything from `extractDataRows`); otherwise it falls through to a linear scan, so plain-array test fixtures still work.
 
 **Dependencies:** read_only, serialization
 

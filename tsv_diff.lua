@@ -352,7 +352,13 @@ local function comparePKBased(rows1, rows2, commonCols, pkIdx1, pkIdx2, options)
     local result = {}
     local diffCount = 0
 
-    -- Build PK index for file 2
+    -- Build PK index for file 2.
+    -- These rows come from raw TSV (stringToRawTSV), not from processTSV,
+    -- so there is no native opt_index to reuse. Even if there were, the PKs
+    -- are passed through normalizeValue (whitespace/case folding per
+    -- options) before being used as keys, so the key shape would not match
+    -- the dataset's tostring(evaluated) keys. Building a local map is the
+    -- correct approach here.
     local pk2Map = {} -- pk_value -> row
     for _, row in ipairs(rows2) do
         local pk = normalizeValue(row[pkIdx2] or "", options)

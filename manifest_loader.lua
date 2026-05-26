@@ -727,12 +727,26 @@ local function mergeManifestFiles(tsv_files, manifest_tsv_files)
     end
 end
 
--- Extracts data rows from a TSV file (skips header and non-table rows)
+-- Extracts data rows from a TSV file (skips header and non-table rows).
+-- Mirrors the dataset's PK index so consumers can do `rows[pkValue]` to
+-- retrieve a row in O(1) without rebuilding a name->row map. PK is taken
+-- from column 1 (per the tsv_model convention; see tsv_model.lua opt_index)
+-- and tostring-normalised so a numeric-typed PK does not collide with
+-- positional indexing.
 local function extractDataRows(tsv_file)
     local rows = {}
     for i, row in ipairs(tsv_file) do
         if i > 1 and type(row) == "table" then
             rows[#rows + 1] = row
+            local pkCell = row[1]
+            if type(pkCell) == "table" and getmetatable(pkCell) == "cell" then
+                local pk = pkCell.parsed
+                if pk == nil then pk = pkCell.evaluated end
+                if pk ~= nil and type(pk) ~= "table" then
+                    pk = tostring(pk)
+                    if rows[pk] == nil then rows[pk] = row end
+                end
+            end
         end
     end
     return rows
