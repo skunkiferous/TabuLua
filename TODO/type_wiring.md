@@ -1074,13 +1074,17 @@ reasons:
 
 The right home for COG is a *separate* registry — a "content pipeline" or
 "text-stage" registry whose dispatch key is "any text file" (or "files
-matching glob X") and whose value is the raw string. Today it would have
-one member (COG itself). Worth carving out only if a second stage appears
-— a decompressor, a macro pre-expander, a license-header stripper.
-Collapsing a single branch isn't enough motivation on its own; recorded
-here because the architectural shape is the same and a future contributor
-should not propose adding COG to the type-wiring registry without seeing
-why it doesn't fit.
+matching glob X") and whose value is the raw string. When this was first
+written COG was the single member, so the note said to carve it out "only
+if a second stage appears — a decompressor, a macro pre-expander, a
+license-header stripper." Those stages are now wanted (decompression of
+`.gz`/`.zst` inputs; transcoders for XML/JSON/SQLite/`.mtx` → TSV), so
+that registry **is now planned** — see [content_pipeline.md](content_pipeline.md).
+COG migrates into it as the first `macro`-phase stage. This section
+remains as the rationale for *why* COG does not belong in the type-wiring
+registry; a future contributor should not propose adding COG here without
+seeing why the dispatch key (file name, not record type) and the value
+(raw bytes, not a parsed file) make it a different registry.
 
 ## Implementation Plan
 

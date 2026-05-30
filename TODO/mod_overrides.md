@@ -702,6 +702,14 @@ The reformatter writes the **original** patch files and the **original** parent 
 does not bake patches back into the parent. This matches the current rule for
 pre-processor effects and for COG-generated rows: derived data is not source-of-truth.
 
+The same rule extends to **content-pipeline-derived files** (see
+[content_pipeline.md](content_pipeline.md)): if a parent or patch file is shipped
+compressed (`.gz`) or in a structured format (XML/JSON/SQLite/`.mtx`), the engine
+decodes/transcodes it to TSV *before* schema overlays and patches apply, but the
+reformatter writes back the **compressed/structured source**, not the derived TSV.
+Non-reversible transcodes (JSON→TSV has no automatic inverse) are read-only inputs the
+reformatter leaves untouched.
+
 A potential addition for tooling: a `--export-merged` flag that writes a copy of each
 parent file with patches applied, separately from the source layout. Useful for "show me
 the final state". Not required for v1.
@@ -990,3 +998,11 @@ expressiveness/observability/performance refinements.
   package appends graph nodes (`patchOp=add` rows in a patch file targeting the parent's
   graph file), and a parent node-completion processor flagged `rerunAfterPatches: true`
   (or a tier-C cross-package processor) recomputes back-references across the merged graph.
+
+- [content_pipeline.md](content_pipeline.md) is the **sibling registry** that handles
+  file-name/extension-keyed text stages (decompression, XML/JSON/SQLite/`.mtx`
+  transcoding, and COG itself). It is relevant here because a mod may ship its overlay,
+  patch, or data files compressed or in a structured format: the content pipeline decodes
+  and transcodes them to TSV **before** this document's overlay → parse → patch →
+  cross-package-processor pipeline (§7) begins. The reformatter's "derived data is not
+  baked back" rule (§7.1) now also covers content-pipeline-derived files.
