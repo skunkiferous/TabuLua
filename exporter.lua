@@ -161,6 +161,21 @@ local function writeExportFile(path, content)
     return true
 end
 
+-- Block-streams a passthrough binary's bytes from its source to the export path
+-- without ever loading the whole file into memory (§3.5). Used when a raw_files
+-- entry is a {__passthrough=true, sourcePath, ...} descriptor rather than a
+-- string — i.e. a binary file no content-pipeline stage needed.
+local function streamExportFile(path, sourcePath)
+    logger:info("Exporting (streamed): " .. path)
+    local ok, err = file_util.copyFileStreamed(sourcePath, path)
+    if not ok then
+        logger:error("Failed to stream " .. path .. " from " .. tostring(sourcePath)
+            .. ": " .. tostring(err))
+        return false
+    end
+    return true
+end
+
 -- Transforms Files.tsv for export by:
 -- 1. Removing join-related columns from header
 -- 2. Filtering out secondary files (files with joinInto set)
@@ -320,6 +335,14 @@ local function exportTSV(process_files, exportParams, serializer)
         end
         if not ensureParentDir(new_name, dirChecked) then
             return false
+        end
+        -- A passthrough descriptor (binary file no stage processed) is streamed
+        -- by reference, never held in memory (§3.5).
+        if type(content) == "table" and content.__passthrough then
+            if not streamExportFile(new_name, content.sourcePath) then
+                return false
+            end
+            goto continue
         end
         if is_tsv then
             local tsv = tsv_files[file_name]
@@ -812,6 +835,13 @@ local function exportMessagePack(process_files, exportParams)
         end
         if not ensureParentDir(new_name, dirChecked) then
             return false
+        end
+        -- Passthrough binary: stream the original bytes (§3.5).
+        if type(content) == "table" and content.__passthrough then
+            if not streamExportFile(new_name, content.sourcePath) then
+                return false
+            end
+            goto continue
         end
         if is_tsv then
             local tsv = tsv_files[file_name]

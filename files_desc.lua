@@ -39,9 +39,11 @@ local clearSeq = table_utils.clearSeq
 local file_util = require("file_util")
 local getParentPath = file_util.getParentPath
 local sortFilesBreadthFirst = file_util.sortFilesBreadthFirst
-local readFile = file_util.readFile
 
-local lua_cog = require("lua_cog")
+-- The content pipeline owns the read→COG sequence (see content_pipeline.md §5);
+-- requiring builtin_content_stages registers COG as the `macro` stage.
+local content_pipeline = require("content_pipeline")
+require("builtin_content_stages")
 
 local raw_tsv = require("raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
@@ -152,13 +154,12 @@ local function genLoadDescriptorFile()
     -- Loads a file descriptor as TSV
     local result = function(file, raw_files, loadEnv, badVal)
         logger:info("Processing descriptor file: " .. file)
-        local content, err = readFile(file)
+        -- The pipeline reads the file, stores the normalised pre-COG source in
+        -- raw_files, and runs COG (the registered `macro` stage).
+        local content = content_pipeline.readAndRun(file, loadEnv, badVal, raw_files)
         if not content then
-            badVal(nil, "File " .. file .. " could not be read: " .. err)
-            return nil, err
+            return nil, "File " .. file .. " could not be read"
         end
-        raw_files[file] = content
-        content = lua_cog.processContentBV(file, content, loadEnv, badVal)
         local rawtsv = stringToRawTSV(content)
         return processTSV(tsv_model.defaultOptionsExtractor, ldfExprEval, ldfParserFinder,
             file, rawtsv, badVal, nil, false)

@@ -561,6 +561,39 @@ describe("exporter", function()
             local content = file_util.readFile(txt_file)
             assert.equals("This is a readme file", content)
         end)
+
+        it("streams a passthrough binary descriptor byte-identically (never loaded)", function()
+            -- A binary fixture with bytes that must survive untouched: CR, LF, NUL,
+            -- high bytes. If the exporter mistook the descriptor for string content
+            -- and wrote it in text mode, \n would become \r\n on Windows and the
+            -- bytes would not match.
+            local src = path_join(temp_dir, "asset.bin")
+            local raw_bytes = "\137PNG\r\n\26\n\0\1\2\3 binary \255\254 data\r\n"
+            do
+                local f = assert(io.open(src, "wb"))
+                f:write(raw_bytes)
+                f:close()
+            end
+            local size = assert(file_util.getFileSize(src))
+
+            local process_files = createProcessFiles(temp_dir)
+            -- raw_files holds an O(1) descriptor TABLE, not a string: the bytes
+            -- were never loaded into memory (§3.5).
+            process_files.raw_files["asset.bin"] = {
+                __passthrough = true,
+                kind = "binary",
+                sourcePath = src,
+                size = size,
+            }
+
+            local out_dir = path_join(temp_dir, "out")
+            local success = exporter.exportLuaTSV(process_files, {exportDir = out_dir})
+            assert.is_true(success)
+
+            local exported = path_join(out_dir, "asset.bin")
+            local got = file_util.readFileBinary(exported)
+            assert.equals(raw_bytes, got)
+        end)
     end)
 
     describe("edge cases", function()

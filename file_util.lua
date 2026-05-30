@@ -324,6 +324,82 @@ local function readFile(file_path)
     return content, nil
 end
 
+--- Reads the entire contents of a file in binary mode ("rb").
+--- Unlike readFile (text mode "r"), this performs no platform EOL translation,
+--- so the bytes are returned exactly as on disk. Used by the content pipeline,
+--- which normalises EOL itself in an explicit, testable stage and needs the
+--- true bytes for magic-byte sniffing and binary assets (see TODO/content_pipeline.md §3.4).
+--- @param file_path string The path to the file to read
+--- @return string|nil The file contents, or nil on error
+--- @return string|nil Error message if read failed, nil on success
+local function readFileBinary(file_path)
+    if type(file_path) ~= "string" then
+        return nil, "file_path not a string: "..type(file_path)
+    end
+    local ok, file, err = pcall(io.open, file_path, "rb")
+    if not ok then return nil, file end
+    if not file then return nil, err end
+    local content = file:read("*all")
+    file:close()
+    return content, nil
+end
+
+--- Returns the size of a file in bytes, without reading its contents.
+--- Used by the content pipeline to record a passthrough binary's size in its
+--- raw_files descriptor (an O(1) stat, never a full read — see §3.5).
+--- @param file_path string The path to the file
+--- @return number|nil The size in bytes, or nil on error
+--- @return string|nil Error message on failure, nil on success
+local function getFileSize(file_path)
+    if type(file_path) ~= "string" then
+        return nil, "file_path not a string: "..type(file_path)
+    end
+    local attr, err = lfs.attributes(file_path)
+    if not attr then
+        return nil, err or ("Cannot stat file: " .. file_path)
+    end
+    return attr.size
+end
+
+--- Copies a file by streaming fixed-size blocks, never holding the whole file
+--- in memory. Both handles are opened binary, so the copy is byte-exact (no EOL
+--- translation). This is how the exporter writes passthrough binary assets
+--- whose bytes were never loaded into raw_files (see §3.5 "Large binary files").
+--- @param src string Source path
+--- @param dst string Destination path
+--- @param blockSize number|nil Block size in bytes (default 64 KiB)
+--- @return boolean|nil True on success, nil on error
+--- @return string|nil Error message on failure, nil on success
+--- @side_effect Creates or overwrites dst
+local function copyFileStreamed(src, dst, blockSize)
+    if type(src) ~= "string" then
+        return nil, "src not a string: "..type(src)
+    end
+    if type(dst) ~= "string" then
+        return nil, "dst not a string: "..type(dst)
+    end
+    blockSize = blockSize or (64 * 1024)
+    local ok, inF, err = pcall(io.open, src, "rb")
+    if not ok then return nil, inF end
+    if not inF then return nil, err end
+    local okd, outF, errd = pcall(io.open, dst, "wb")
+    if not okd then inF:close(); return nil, outF end
+    if not outF then inF:close(); return nil, errd end
+    while true do
+        local block = inF:read(blockSize)
+        if block == nil then break end
+        local wok, werr = outF:write(block)
+        if not wok then
+            inF:close(); outF:close()
+            return nil, werr
+        end
+    end
+    inF:close()
+    local cok, cerr = outF:close()
+    if not cok then return nil, cerr end
+    return true
+end
+
 --- Writes content to a file (overwrites if exists).
 --- @param file_path string The path to the file to write
 --- @param content string The content to write
@@ -755,13 +831,16 @@ end
 local API = {
     changeExtension = changeExtension,
     collectFiles = collectFiles,
+    copyFileStreamed = copyFileStreamed,
     deleteTempDir = deleteTempDir,
     emptyDir = emptyDir,
+    getFileSize = getFileSize,
     getFilesAndDirs = getFilesAndDirs,
     getParentPath = getParentPath,
     getSystemTempDir = getSystemTempDir,
     getVersion = getVersion,
     hasExtension = hasExtension,
+    readFileBinary = readFileBinary,
     isAbsolutePath = isAbsolutePath,
     isDir = isDir,
     isRootDir = isRootDir,

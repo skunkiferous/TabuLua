@@ -26,14 +26,12 @@ local readOnly = read_only.readOnly
 
 local file_util = require("file_util")
 local collectFiles = file_util.collectFiles
-local readFile = file_util.readFile
 local hasExtension = file_util.hasExtension
 local normalizePath = file_util.normalizePath
 
 local tsv_model = require("tsv_model")
 local processTSV = tsv_model.processTSV
 
-local lua_cog = require("lua_cog")
 local sandbox_env = require("sandbox_env")
 
 local raw_tsv = require("raw_tsv")
@@ -72,6 +70,17 @@ local applyTypeWiring = type_wiring.applyWiring
 local hasOnLoadFor = type_wiring.hasOnLoadFor
 local hasOnLoad = type_wiring.hasOnLoad
 require("builtin_wiring")
+
+-- The content-pipeline registry owns the read→decode→transcode→normalise→COG
+-- sequence that the three load call sites used to hand-roll (see
+-- TODO/content_pipeline.md §2, §5). builtin_content_stages registers COG (the
+-- `macro` stage) and the core EOL-normalise stage; requiring it here triggers
+-- that registration, exactly as `require("builtin_wiring")` does above.
+local content_pipeline = require("content_pipeline")
+require("builtin_content_stages")
+local unixEOL = file_util.unixEOL
+local readFileBinary = file_util.readFileBinary
+local getFileSize = file_util.getFileSize
 
 -- CSV file extension
 local CSV = "csv"
@@ -346,14 +355,13 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     extends, raw_files, files_cache,
     options_extractor, expr_eval, loadEnv, badVal)
     badVal.source = file_name
-    local content, err = readFile(file_name)
+    -- The content pipeline reads the file (binary), populates raw_files with the
+    -- normalised pre-COG source, and runs the decode→transcode→normalise→COG
+    -- stages. COG is no longer named here — it is the registered `macro` stage.
+    local content = content_pipeline.readAndRun(file_name, loadEnv, badVal, raw_files)
     if not content then
-        badVal(nil, "File could not be read: " .. err)
         return
     end
-
-    raw_files[file_name] = content
-    content = lua_cog.processContentBV(file_name, content, loadEnv, badVal)
     local rawtsv = stringToRawTSV(content)
 
     if isMigrationScript(rawtsv) then
@@ -404,7 +412,37 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     end
 end
 
--- Reads a non-TSV/CSV file and stores its content
+-- Stores a not-yet-parsed file in raw_files for verbatim / streamed export.
+-- Text files (per the content-pipeline extension table) are read in binary and
+-- EOL-normalised to a string — matching what the old text-mode read produced.
+-- Binary files no stage needs are NOT loaded: they get an O(1) passthrough
+-- descriptor (a stat, not a read) and are block-streamed at export time, so a
+-- multi-hundred-MB asset never sits in memory (§3.5 "Large binary files").
+-- opt_badVal, if given, reports read/stat failures.
+local function storeRawFile(file_name, raw_files, opt_badVal)
+    if content_pipeline.isTextFile(file_name) then
+        local content, err = readFileBinary(file_name)
+        if content then
+            raw_files[file_name] = unixEOL(content)
+        elseif opt_badVal then
+            opt_badVal(nil, "File could not be read: " .. tostring(err))
+        end
+    else
+        local size, err = getFileSize(file_name)
+        if size then
+            raw_files[file_name] = {
+                __passthrough = true,
+                kind = "binary",
+                sourcePath = file_name,
+                size = size,
+            }
+        elseif opt_badVal then
+            opt_badVal(nil, "File could not be stat'd: " .. tostring(err))
+        end
+    end
+end
+
+-- Reads a non-TSV/CSV file and stores its content (or a passthrough descriptor).
 local function processUnknownFile(file_name, raw_files, badVal)
     if hasExtension(file_name, "lua") then
         logger:info("Loading code library: " .. file_name)
@@ -413,12 +451,7 @@ local function processUnknownFile(file_name, raw_files, badVal)
     else
         logger:warn("Don't know how to process " .. file_name)
     end
-    local content, err = readFile(file_name)
-    if not content then
-        badVal(nil, "File could not be read: " .. err)
-    else
-        raw_files[file_name] = content
-    end
+    storeRawFile(file_name, raw_files, badVal)
 end
 
 -- Load all the non-description files
@@ -715,7 +748,7 @@ end
 local function loadRemainingFiles(files, raw_files)
     for _, file_name in ipairs(files) do
         if not raw_files[file_name] then
-            raw_files[file_name] = readFile(file_name)
+            storeRawFile(file_name, raw_files)
         end
     end
 end

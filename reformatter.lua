@@ -358,7 +358,11 @@ end
 --- @side_effect Modifies files on disk if content changed
 local function reformat(tsv_files, raw_files, badVal)
     for file_name, tsv in pairs(tsv_files) do
-        if raw_files[file_name] then
+        -- Binary passthrough files (§3.5) are stored as descriptor tables, not
+        -- strings, and never have a tsv_files entry — so this loop should only
+        -- ever see string sources. Guard anyway: a non-string raw_files entry is
+        -- not a reformattable source.
+        if type(raw_files[file_name]) == "string" then
             -- Manifests are now reformatted too: user-defined fields are preserved
             -- in the tsv_model, and __comment placeholders restore comment lines
             local new_content = tostring(tsv)

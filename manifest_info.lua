@@ -22,7 +22,10 @@ local error_reporting = require("error_reporting")
 
 local parsers = require("parsers")
 
-local lua_cog = require("lua_cog")
+-- The content pipeline owns the read→COG sequence for manifest files (see
+-- content_pipeline.md §5); requiring builtin_content_stages registers COG.
+local content_pipeline = require("content_pipeline")
+require("builtin_content_stages")
 
 local sandbox = require("sandbox")
 local sandbox_env = require("sandbox_env")
@@ -228,13 +231,12 @@ local function loadManifestFile(badVal, raw_files, cog_env, manifest_file)
         return nil
     end
 
-    local content, err = file_util.readFile(manifest_file)
+    -- The pipeline reads the manifest, stores its normalised pre-COG source in
+    -- raw_files, and runs COG (the registered `macro` stage).
+    local content = content_pipeline.readAndRun(manifest_file, cog_env, badVal, raw_files)
     if not content then
-        badVal(manifest_file, "Failed to find/read manifest file: " .. err)
         return nil
     end
-    raw_files[manifest_file] = content
-    content = lua_cog.processContentBV(manifest_file, content, cog_env, badVal)
 
     local loaded_tsv = raw_tsv.stringToRawTSV(content)
     local before = badVal.errors
