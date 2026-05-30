@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(ls:*)",
-      "PowerShell(.\\\\run_tests.cmd 2>&1)"
+      "PowerShell(.\\\\run_tests.cmd 2>&1)",
+      "Bash(Select-Object -First 30)",
+      "Bash(git log *)"
     ]
   }
 }

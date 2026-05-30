@@ -2,9 +2,16 @@
 
 ## Status
 
-Research and plan. Companion to [pre_processors.md](pre_processors.md), which lists "letting
-a dependent package add rows to a file defined in a parent package" as a deferred prerequisite.
-This document covers that prerequisite *and* the broader "modify parent rows" case.
+Research and plan. Companion to [pre_processors.md](pre_processors.md) (now **landed**),
+which lists "letting a dependent package add rows to a file defined in a parent package" as
+a deferred prerequisite. This document covers that prerequisite *and* the broader "modify
+parent rows" case.
+
+Reconciled against the engine state as of v0.21.0: the [type-wiring registry](type_wiring.md)
+(Phases 1–3b landed) is now the implementation vehicle for the new built-ins, descriptor
+columns, cross-file passes, and sandbox helpers this plan needs — see the note in §3 and the
+revised pipeline in §7. The `graph_node` / `tree_node` built-ins this plan once treated as
+downstream have also already shipped (§12).
 
 ## Scope
 
@@ -149,6 +156,27 @@ fileName:filepath        typeName:type_spec   schemaOverlayOf:filepath|nil   ...
 ItemSchema.tsv           SchemaOverlay        Item.tsv                       ...
 ```
 
+> **Implementation vehicle — the type-wiring registry.** Since v0.20.0 the engine
+> has a [type-wiring registry](type_wiring.md) (`type_wiring.lua` + `builtin_wiring.lua`,
+> Phases 1–3b landed). It is the canonical home for everything this document used to
+> describe as a hand-edit to the core engine. Concretely:
+> - The `schemaOverlayOf` / `patchOf` / `bulkPatchOf` **Files.tsv columns** are
+>   contributed through `type_wiring.registerModule(moduleName, {descriptorColumns=…})`,
+>   not by editing `files_desc.lua`'s core schema — which deliberately shrank to its six
+>   intrinsic columns precisely so features add their own columns this way.
+> - The `SchemaOverlay` row type's load-time behaviour is a per-typeName
+>   `type_wiring.register(...)` `onLoad` contribution (the same cascade that dispatches
+>   `Type`, `enum`, `custom_type_def`, and the graph-node families).
+> - The cross-file passes (`applySchemaOverlays`, `applyPatches`, cross-package
+>   processors) register as **`enginePostPasses`** — the registry slot built for work
+>   that needs cross-file state outside the per-file sandbox (see §7).
+> - Helper functions the overlay/patch executors expose to `=expr` cells go in via
+>   **`sandboxHelpers`**.
+>
+> The sections below describe the *behaviour*; read "new built-in type" / "new
+> Files.tsv column" / "new pipeline step" as "one `register` / `registerModule` call",
+> not as a bespoke engine edit.
+
 `SchemaOverlay` is a new built-in row type. Each row targets one column of the parent
 file and declares one or more loosening changes:
 
@@ -238,6 +266,10 @@ fileName:filepath   typeName:type_spec   patchOf:filepath|nil   ...
 ItemPatch.tsv       patch                Item.tsv               ...
 ```
 
+(`patchOf` is contributed as a descriptor column through `type_wiring.registerModule`,
+and the `patch` keyword's load behaviour as a `type_wiring.register` `onLoad` —
+see the implementation-vehicle note in §3.)
+
 `typeName` is the fixed keyword **`patch`**. This marks the file as a patch document
 rather than a row-typed data file: the engine knows not to try to validate the patch
 file's rows against any parent row type, and reformatters / exporters treat it as a
@@ -291,6 +323,12 @@ shield      update              25                                  =nil
 | `remove` | Delete the row whose primary key matches. Non-key cells are ignored. |
 | `update` | Modify named cells of an existing row. **Empty cells = leave the target's cell unchanged** (a local override of TabuLua's normal "empty = use default" rule). Missing target row = error (or warning, configurable). |
 | `replace` | Wholesale replace: same as `remove` + `add`. Used when "what was unchanged" is no longer meaningful. |
+
+**Matching by primary key is O(1).** Parsed files are natively PK-indexed —
+`tsv_files[fileName][pkValue]` is a direct lookup straight out of the loader (see
+[pk_lookup_audit.md](pk_lookup_audit.md)). The patch executor's `remove` / `update` /
+`replace` row matching must use that index, not a linear scan, and must not copy the
+rows into a plain array first (which would drop the PK keys).
 
 **Primary-key uniqueness invariant.** A given parent primary key appears in **at most
 one row** per patch file. All changes to one parent row are coalesced into a single
@@ -606,28 +644,34 @@ This is the escape hatch. Most mods won't need any of tier C.
 
 ## 7. Pipeline integration
 
-The current pipeline (per `pre_processors.md`):
+The current pipeline. Since the [type-wiring registry](type_wiring.md) landed, per-file
+load behaviour is dispatched by `type_wiring.applyWiring` (replacing the old hand-written
+`onLoad` branches) and cross-file work runs in `type_wiring.runEnginePostPasses`
+(replacing the direct `validateEdgeFiles` call). Own-package pre-processors flow through
+the same `applyWiring` cascade:
 
 ```
 processFiles
   ├── resolvePackageDependencies
   ├── resolveFileDescriptors
-  ├── processOrderedFiles          -- parses TSVs, evaluates =expr cells
-  ├── runAllPreProcessors          -- mutate own-package parsed rows
-  └── runAllValidators
+  ├── processOrderedFiles          -- parses TSVs + applyWiring per file (=expr, onLoad, own-package pre-processors)
+  ├── runAllValidators             -- row + file + package validators
+  └── runEnginePostPasses          -- cross-file passes (today: graph edge validation)
 ```
 
-After this proposal:
+After this proposal. The new steps are **not** hand-inserted pipeline branches — each is
+a registry contribution (see §3 implementation-vehicle note). `applySchemaOverlays` runs
+ahead of cell parsing; `applyPatches` and `runPackagePreProcessors` register as
+`enginePostPasses`; validators re-run against the post-pass state:
 
 ```
 processFiles
   ├── resolvePackageDependencies
   ├── resolveFileDescriptors
-  ├── applySchemaOverlays    [NEW]    -- tier A0: defaults / widening / validator levels
-  ├── processOrderedFiles          -- parses TSVs in each package; patch files parsed against overlaid schema
-  ├── runAllPreProcessors          -- own-package pre-processors (per pre_processors.md)
-  ├── applyPatches            [NEW]   -- tier A + B: applies patch files in package order
-  ├── runPackagePreProcessors [NEW]   -- tier C: cross-package mutators + rerun-flagged parent processors
+  ├── applySchemaOverlays    [NEW]    -- tier A0: defaults / widening / validator levels (pre-parse pass)
+  ├── processOrderedFiles          -- parses TSVs + applyWiring; patch files parsed against overlaid schema
+  ├── applyPatches            [NEW]   -- tier A + B: enginePostPass, applies patch files in package order
+  ├── runPackagePreProcessors [NEW]   -- tier C: enginePostPass, cross-package mutators + rerun-flagged parent processors
   └── runAllValidators             -- row + file + package validators (re-run against final state)
 ```
 
@@ -729,12 +773,17 @@ Each phase is independently shippable.
 **Phase 1 — schema overlay (`schemaOverlayOf`, default override, type widening,
 validator-severity override).**
 
-- New built-in row type `SchemaOverlay` and `Files.tsv` column `schemaOverlayOf:filepath|nil`.
+- New built-in row type `SchemaOverlay` (registered via `type_wiring.register` `onLoad`)
+  and `Files.tsv` column `schemaOverlayOf:filepath|nil` (contributed via
+  `type_wiring.registerModule` `descriptorColumns`, not by editing the core `files_desc`
+  schema — §3 note).
 - New module `schema_overlay.lua`.
 - Type-compatibility check: confirm `widenTo` strictly extends the parent type; reject
   narrowing.
 - Validator-by-text matcher with severity override (incl. `none` to remove entirely).
-- Pipeline: `applySchemaOverlays` step inserted before file-cell parsing.
+- Pipeline: `applySchemaOverlays` runs before file-cell parsing. Unlike `applyPatches`
+  it is a *pre-parse* pass (the parser must already be widened before cells are typed),
+  so it is not an `enginePostPass`; it hooks the load loop ahead of `processOrderedFiles`.
 - Multi-overlay composition: later wins for `newDefault`; union for `widenTo`; min for
   severity.
 - Tutorial: small example overlay changing a default and widening a type.
@@ -757,8 +806,11 @@ and loosen constraints. It also unblocks Phase 2's "negative price" use case.
 - Enforce **primary-key uniqueness within the patch file** — each parent PK appears
   at most once per file (§4.2 invariant). All changes to one parent row coalesce into
   multiple non-empty cells of a single patch row.
-- New module `patch_executor.lua` (sibling of `validator_executor` and the planned
-  `processor_executor`). Reads patch files, applies ops to target tsv_files in load order.
+- New module `patch_executor.lua` (sibling of `validator_executor` and the now-landed
+  `processor_executor`). Reads patch files, applies ops to target tsv_files in load order,
+  matching parent rows via the native PK index (§4.2). Its `applyPatches` entry point
+  registers as a `type_wiring` `enginePostPass`; the `patchOf` column and `patch` /
+  `patch_op` built-ins register via `registerModule` / `register` (§3 note).
 - **Two-step value handling:** parse each non-empty patch cell against the patch
   file's own column type (which by convention is the parent's column type made
   nullable); then re-validate the value against the **parent's** column parser at
@@ -828,11 +880,16 @@ Once the encoding is settled, the implementation work is:
 
 **Phase 5 — package-scoped pre-processors (tier C).**
 
-- Builds on the existing pre-processors plan ([pre_processors.md](pre_processors.md)),
+- Builds on the now-landed pre-processors feature ([pre_processors.md](pre_processors.md)),
   which already specifies the relevant `processor_spec` fields (`priority`,
   `rerunAfterPatches`, `requires`).
+- A child package contributes package-scoped processors through the
+  [type-wiring registry](type_wiring.md)'s user paths — the `type_wiring_def` pure-data
+  built-in (a `TypeWiring.tsv`-style file) or the manifest `bootstrap` library API — so
+  no engine edit is needed to register a mod's wiring.
 - Permissions/scoping extension to `processor_executor` so a child package's processor
-  can mutate parent files (not only its own).
+  can mutate parent files (not only its own); the cross-package run itself is an
+  `enginePostPass`.
 - Cross-package scheduling (§6.1): package load order is the default; `requires:{package_id}`
   declares explicit ordering between sibling-mod processors that touch the same file;
   cycles in the `requires` graph error at load; missing required packages warn.
@@ -918,11 +975,18 @@ expressiveness/observability/performance refinements.
 
 ## 12. Relationship to existing TODOs
 
-- This document **subsumes** the "feature #2 — append rows to parent package file"
-  prerequisite noted in [pre_processors.md](pre_processors.md). Phase 2 alone delivers
-  that prerequisite.
+- [pre_processors.md](pre_processors.md) has **landed** and is now this document's design
+  reference rather than a pending prerequisite — its `processor_spec` fields (`priority`,
+  `rerunAfterPatches`, `requires`) that tiers C/§6 rely on all exist. This document still
+  **subsumes** the separate "feature #2 — append rows to parent package file" prerequisite
+  it notes; Phase 2 alone delivers that.
 
-- The `graph_node` / `tree_node` built-in mentioned in `pre_processors.md` becomes
-  cleanly implementable once Phase 2 + Phase 5 are in place: a child package can append
-  graph nodes (`patchOp=add` rows in a patch file targeting the parent's graph file), and a
-  package-scoped pre-processor can recompute back-references across the merged graph.
+- The `graph_node` / `basic_graph_node` / `tree_node` built-ins have **already shipped**
+  (graph_types Layer A, v0.20.0) — so they are no longer "implementable once Phase 2 +
+  Phase 5 land". The relationship now runs the other way: the graph auto-wiring is the
+  worked example the [type-wiring registry](type_wiring.md) generalizes, and that registry
+  (see §3) is the mechanism this document's tiers register through. What mod-overrides adds
+  on top of the existing graph built-ins is the ability to **mod a parent graph**: a child
+  package appends graph nodes (`patchOp=add` rows in a patch file targeting the parent's
+  graph file), and a parent node-completion processor flagged `rerunAfterPatches: true`
+  (or a tier-C cross-package processor) recomputes back-references across the merged graph.
