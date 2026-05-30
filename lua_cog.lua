@@ -37,11 +37,11 @@ local isSamePath = file_util.isSamePath
 -- replacing part of the "comment block" with the output of the code block. The "comment block" is
 -- built in 5 parts. The "idea" is that whenever required, you run this on all your (text) files,
 -- and it will replace (update) the parts of the files that need to be replaced. It's basically a
--- very generic "template engine", that can be used inside any file that uses one of the 3
--- "comment styles" (-- or ## or //) The code block is executed in a sandbox, and the output of the
--- code block is inserted into the file. The code can make use of many functions, like those from the
--- predicates module, that have been added to the sandbox environment. User code in "code libraries"
--- can also be (re)used.
+-- very generic "template engine", that can be used inside any file that uses one of the 4
+-- "comment styles" (-- or ## or // or HTML comments) The code block is executed in a sandbox, and
+-- the output of the code block is inserted into the file. The code can make use of many functions,
+-- like those from the predicates module, that have been added to the sandbox environment. User code
+-- in "code libraries" can also be (re)used.
 
 -- First, the comment "start marker". It can be one of those 3 strings:
 -- 1) ---[[[
@@ -61,6 +61,22 @@ local isSamePath = file_util.isSamePath
 -- 1) ---[[[end]]]
 -- 2) ###[[end]]]
 -- 3) ///[[[end]]]
+
+-- There is also a fourth, "HTML comment" style, meant for Markdown / HTML files, where the three
+-- line-comment sigils above render as visible markup. Its sigil is "<!---" (three dashes, distinct
+-- from an ordinary "<!--" comment which Cog ignores), and it uses a *block* form: the start marker
+-- "<!---[[[" opens a single HTML comment that stays open across the raw Lua code lines (no per-line
+-- prefix is required or stripped) and is closed by the code-end marker "]]]--->". The generated
+-- output sits outside the comment (visible Markdown) and the replaced block ends at the self-closed
+-- "<!---[[[end]]]--->" marker. All five parts stay hidden when the Markdown is rendered. Example:
+-- <!---[[[
+-- return "generated text"
+-- ]]]--->
+-- generated text
+-- <!---[[[end]]]--->
+-- Caveat: avoid a literal "-->" inside a block-form code body, as a Markdown renderer would close
+-- the surrounding HTML comment early (Cog itself only scans for the "]]]--->" line, so it is
+-- unaffected).
 
 -- Here we can test the script on itself. "---XXXX", "###XXXX", and "///XXXX" will be replaced with "--Hello, world!"
 
@@ -93,6 +109,9 @@ local isSamePath = file_util.isSamePath
 local function processLines(lines, env, errors)
     local inCodeBlock = false
     local inOutputBlock = false
+    -- How the current code block opened: "line" (---/###/// per-line sigil) or "html"
+    -- (<!---[[[ block form). Decides how code lines are accumulated (§1.4 of cog_markdown.md).
+    local blockStyle = nil
     local codeBuffer = ""
     local outputBuffer = {}
     local lineNo = 0
@@ -102,7 +121,7 @@ local function processLines(lines, env, errors)
         -- match() is better than find "plain" because match() will only search at the start if we
         --use ^
         local isEnd = line:match("^%-%-%-%[%[%[end%]%]%]") or line:match("^%#%#%#%[%[%[end%]%]%]")
-            or line:match("^%/%/%/%[%[%[end%]%]%]")
+            or line:match("^%/%/%/%[%[%[end%]%]%]") or line:match("^<!%-%-%-%[%[%[end%]%]%]%-%-%->")
         if isEnd or not inOutputBlock then
             outputBuffer[#outputBuffer+1] = line
         end
@@ -113,48 +132,64 @@ local function processLines(lines, env, errors)
                 return nil
             end
             inOutputBlock = false
-        elseif line:match("^%-%-%-%[%[%[") or line:match("^%#%#%#%[%[%[") or
-             line:match("^%/%/%/%[%[%[") then
-            if inCodeBlock or inOutputBlock then
-                errors[#errors+1] = "Code blocks cannot be nested(2) at line " .. lineNo
-                    .. "! Aborting!"
-                return nil
+        else
+            -- Detect a start marker and record which comment style opened the block. The HTML
+            -- style must be checked first: "<!---[[[" does not start with a line sigil, but the
+            -- output-end "<!---[[[end]]]--->" is handled above (isEnd) before we reach here.
+            local startStyle
+            if line:match("^<!%-%-%-%[%[%[") then
+                startStyle = "html"
+            elseif line:match("^%-%-%-%[%[%[") or line:match("^%#%#%#%[%[%[")
+                 or line:match("^%/%/%/%[%[%[") then
+                startStyle = "line"
             end
-            inCodeBlock = true
-        elseif line:match("^%-%-%-%]%]%]") or line:match("^%#%#%#%]%]%]")
-             or line:match("^%/%/%/%]%]%]") then
-            if not (inCodeBlock and not inOutputBlock) then
-                errors[#errors+1] = "Code blocks cannot be nested(3) at line " .. lineNo
-                    .. "! Aborting!"
-                return nil
-            end
-            inCodeBlock = false
-            inOutputBlock = true
-            
-            -- Execute the code block, using th provided environment, "env"
-            local opt = {quota = 40000, env = env or {}}
-            local success, protected_func = pcall(sandbox.protect, codeBuffer, opt)
-            local result
-            if success then
-                -- Second pcall to execute the protected function
-                success, result = pcall(protected_func)
-            else
-                errors[#errors+1] = "Error executing code block at line " .. lineNo .. ": "
-                    .. tostring(result)
-            end
-            if success then
-                outputBuffer[#outputBuffer+1] =  tostring(result)
-            else
-                errors[#errors+1] = "Error executing code block at line " .. lineNo .. ": "
-                    .. tostring(result)
-            end
-            codeBuffer = ""
-        elseif inCodeBlock then
-            if line:match("^%-%-%-") or line:match("^%#%#%#") or line:match("^%/%/%/") then
-                codeBuffer = codeBuffer .. line:sub(4) .. "\n"
-            else
-                errors[#errors+1] = "Error parsing code block at line " .. lineNo
-                    .. ": line must start with \"---\". or \"###\" or \"///\". Aborting!"
+            if startStyle then
+                if inCodeBlock or inOutputBlock then
+                    errors[#errors+1] = "Code blocks cannot be nested(2) at line " .. lineNo
+                        .. "! Aborting!"
+                    return nil
+                end
+                inCodeBlock = true
+                blockStyle = startStyle
+            elseif line:match("^%-%-%-%]%]%]") or line:match("^%#%#%#%]%]%]")
+                 or line:match("^%/%/%/%]%]%]") or line:match("^%]%]%]%-%-%->") then
+                if not (inCodeBlock and not inOutputBlock) then
+                    errors[#errors+1] = "Code blocks cannot be nested(3) at line " .. lineNo
+                        .. "! Aborting!"
+                    return nil
+                end
+                inCodeBlock = false
+                inOutputBlock = true
+
+                -- Execute the code block, using th provided environment, "env"
+                local opt = {quota = 40000, env = env or {}}
+                local success, protected_func = pcall(sandbox.protect, codeBuffer, opt)
+                local result
+                if success then
+                    -- Second pcall to execute the protected function
+                    success, result = pcall(protected_func)
+                else
+                    errors[#errors+1] = "Error executing code block at line " .. lineNo .. ": "
+                        .. tostring(result)
+                end
+                if success then
+                    outputBuffer[#outputBuffer+1] =  tostring(result)
+                else
+                    errors[#errors+1] = "Error executing code block at line " .. lineNo .. ": "
+                        .. tostring(result)
+                end
+                codeBuffer = ""
+            elseif inCodeBlock then
+                if blockStyle == "html" then
+                    -- Block form: the code lives inside one HTML comment, so each line is raw
+                    -- Lua with no sigil to strip.
+                    codeBuffer = codeBuffer .. line .. "\n"
+                elseif line:match("^%-%-%-") or line:match("^%#%#%#") or line:match("^%/%/%/") then
+                    codeBuffer = codeBuffer .. line:sub(4) .. "\n"
+                else
+                    errors[#errors+1] = "Error parsing code block at line " .. lineNo
+                        .. ": line must start with \"---\". or \"###\" or \"///\". Aborting!"
+                end
             end
         end
     end
@@ -204,7 +239,8 @@ end
 local function needsCog(content)
     -- The [[[end]]] tag can never be on the first line, so we match with \n instead of ^
     return (content:match("\n%-%-%-%[%[%[end%]%]%]") or content:match("\n%#%#%#%[%[%[end%]%]%]")
-        or content:match("\n%/%/%/%[%[%[end%]%]%]")) ~= nil
+        or content:match("\n%/%/%/%[%[%[end%]%]%]")
+        or content:match("\n<!%-%-%-%[%[%[end%]%]%]%-%-%->")) ~= nil
 end
 
 -- Pure function to process content with COG.

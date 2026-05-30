@@ -392,4 +392,124 @@ describe("lua_cog", function()
       assert.matches("BV environment value", result)
     end)
   end)
+
+  -- The fourth, HTML-comment marker style (for Markdown / HTML files). The block form keeps the
+  -- code inside a single hidden HTML comment opened by "<!---[[[" and closed by "]]]--->", with the
+  -- replaced region ending at "<!---[[[end]]]--->". See cog_markdown.md Part 1.
+  describe("HTML comment marker style (Markdown)", function()
+    it("needsCog detects the HTML end marker", function()
+      local content = "# Title\n<!---[[[end]]]--->"
+      assert.is_true(lua_cog.needsCog(content))
+    end)
+
+    it("needsCog ignores an ordinary <!-- --> comment", function()
+      local content = "Before\n<!-- ordinary comment -->\nAfter"
+      assert.is_false(lua_cog.needsCog(content))
+    end)
+
+    it("expands a block-form HTML COG block (raw multi-line code, no per-line sigil)", function()
+      local lines = {
+        "# Item Reference",
+        "<!---[[[",
+        "local prefix = 'Generated'",
+        "local suffix = 'row'",
+        "return prefix .. ' ' .. suffix",
+        "]]]--->",
+        "old generated content",
+        "<!---[[[end]]]--->",
+      }
+      local errors = {}
+      local result = lua_cog.processLines(lines, {}, errors)
+      assert.is_not_nil(result)
+      assert.equals(0, #errors)
+      local output = table.concat(result, "\n")
+      assert.matches("Generated row", output)
+      assert.not_matches("old generated content", output)
+      -- The markers and code survive so the block stays re-runnable.
+      assert.matches("<!%-%-%-%[%[%[", output)
+      assert.matches("%]%]%]%-%-%->", output)
+      assert.matches("<!%-%-%-%[%[%[end%]%]%]%-%-%->", output)
+    end)
+
+    it("is idempotent: expanding twice yields the same output", function()
+      local content = table.concat({
+        "# Item Reference",
+        "<!---[[[",
+        "return 'Generated row'",
+        "]]]--->",
+        "old generated content",
+        "<!---[[[end]]]--->",
+      }, "\n")
+      local first = table.concat(lua_cog.processContent(content, {}, {}), "\n")
+      local second = table.concat(lua_cog.processContent(first, {}, {}), "\n")
+      assert.equals(first, second)
+      assert.matches("Generated row", second)
+      assert.not_matches("old generated content", second)
+    end)
+
+    it("leaves ordinary <!-- --> comments untouched", function()
+      local content = "Before\n<!-- ordinary comment -->\nAfter"
+      local result = lua_cog.processContent(content, {}, {})
+      local output = table.concat(result, "\n")
+      assert.matches("ordinary comment", output)
+      assert.matches("Before", output)
+      assert.matches("After", output)
+    end)
+
+    it("coexists with ---/###/// blocks in one file", function()
+      local content = table.concat({
+        "---[[[",
+        "---return 'Dash style'",
+        "---]]]",
+        "old-dash",
+        "---[[[end]]]",
+        "<!---[[[",
+        "return 'Html style'",
+        "]]]--->",
+        "old-html",
+        "<!---[[[end]]]--->",
+      }, "\n")
+      local errors = {}
+      local result = lua_cog.processContent(content, {}, errors)
+      assert.is_not_nil(result)
+      assert.equals(0, #errors)
+      local output = table.concat(result, "\n")
+      assert.matches("Dash style", output)
+      assert.matches("Html style", output)
+      assert.not_matches("old%-dash", output)
+      assert.not_matches("old%-html", output)
+    end)
+
+    it("still finds the ]]]---> code-end when code contains a literal -->", function()
+      -- The "-->"-in-code caveat (cog_markdown.md §1.3): a Markdown renderer would close the
+      -- HTML comment early, but the COG parser scans for the "]]]--->" line and is unaffected.
+      local lines = {
+        "<!---[[[",
+        "return 'arrow --> here'",
+        "]]]--->",
+        "old",
+        "<!---[[[end]]]--->",
+      }
+      local errors = {}
+      local result = lua_cog.processLines(lines, {}, errors)
+      assert.is_not_nil(result)
+      assert.equals(0, #errors)
+      local output = table.concat(result, "\n")
+      assert.matches("arrow %-%-> here", output)
+      assert.not_matches("\nold", output)
+    end)
+
+    it("does not mistake a YAML front-matter --- fence for a COG marker", function()
+      -- A bare "---" fence is not "---[[[", so it must be left alone (cog_markdown.md Part 4 Q6).
+      local content = "---\ntitle: Hello\n---\n\n# Body"
+      assert.is_false(lua_cog.needsCog(content))
+      local errors = {}
+      local result = lua_cog.processContent(content, {}, errors)
+      assert.is_not_nil(result)
+      assert.equals(0, #errors)
+      local output = table.concat(result, "\n")
+      assert.matches("title: Hello", output)
+      assert.matches("# Body", output)
+    end)
+  end)
 end)
