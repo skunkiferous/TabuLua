@@ -17,6 +17,10 @@ local lua_cog = require("lua_cog")
 local file_util = require("file_util")
 local unixEOL = file_util.unixEOL
 
+-- JSON -> TSV transcoder implementations (one function per layout). This module
+-- just registers them as stages; the conversion logic lives in json_transcoders.
+local json_transcoders = require("json_transcoders")
+
 -- Codec registry. The decode stage calls compression.decompress("gzip", …)
 -- lazily, so the libdeflate rock is only loaded if a .gz is actually processed
 -- (see compression.lua). Requiring this module has no side effects and pulls in
@@ -107,6 +111,18 @@ content_pipeline.register(NAME, {
         end
         return data, peeled
     end,
+})
+
+-- JSON "object-per-row" transcoder (Phase 3) — the first `transcode` stage and
+-- the first *explicitly selected* stage: it has an `id` and no auto-matcher, so
+-- it never fires by extension, only when a Files.tsv row names it
+-- (transcoder=json:objects). JSON has several tabular layouts that extension
+-- matching can't tell apart, so the author chooses per file. The conversion
+-- itself lives in json_transcoders.objectsToTSV.
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "json:objects",
+    transform = json_transcoders.objectsToTSV,
 })
 
 -- Snapshot now (built-in stages registered) and restore on global_reset,

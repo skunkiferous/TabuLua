@@ -134,13 +134,20 @@ local function validateSpec(moduleName, spec)
         error("content_pipeline.register: extensions must be an array for module '"
             .. moduleName .. "'", 3)
     end
-    -- A stage that supplies a (source) transform must be dispatchable: it needs
-    -- at least one matcher. A sink-only stage is matched the same way.
+    if spec.id ~= nil and (type(spec.id) ~= "string" or spec.id == "") then
+        error("content_pipeline.register: id must be a non-empty string for module '"
+            .. moduleName .. "'", 3)
+    end
+    -- A stage must be dispatchable. There are two ways: an auto-matcher (fires by
+    -- extension / glob / dir / magic / predicate), OR an `id` for explicit
+    -- selection by name (a transcoder named in Files.tsv — §3.2, content_pipeline.md
+    -- Phase 3). An id-only stage has no auto-matcher and never fires unless named,
+    -- which is exactly what ambiguous formats like JSON need.
     local hasMatcher = spec.matches ~= nil or spec.extensions ~= nil
         or spec.basenameGlob ~= nil or spec.directory ~= nil or spec.magic ~= nil
-    if not hasMatcher then
+    if not hasMatcher and spec.id == nil then
         error("content_pipeline.register: stage from module '" .. moduleName
-            .. "' has no matcher (extensions / basenameGlob / directory / magic / matches)", 3)
+            .. "' has no matcher and no id (extensions / basenameGlob / directory / magic / matches / id)", 3)
     end
 end
 
@@ -245,14 +252,27 @@ local function matchingStages(phase, name, content, kind, useSink)
 end
 
 -- Runs every matching stage of a non-looping phase in order, threading the
--- content and (optional) renamed effective name through each.
-local function runPhase(phase, name, content, kind, env, badVal)
+-- content and (optional) renamed effective name through each. `ctx` is the
+-- optional per-file context (transcoder id, typeName, …); stages that don't need
+-- it simply ignore the extra argument.
+local function runPhase(phase, name, content, kind, env, badVal, ctx)
     for _, m in ipairs(matchingStages(phase, name, content, kind)) do
-        local newContent, newName = m.spec.transform(name, content, env, badVal)
+        local newContent, newName = m.spec.transform(name, content, env, badVal, ctx)
         if newContent ~= nil then content = newContent end
         if newName ~= nil and newName ~= "" then name = newName end
     end
     return content, name
+end
+
+-- Finds a registered stage of `phase` by its explicit `id`, or nil. Used to
+-- select a transcoder named in Files.tsv (§3.2).
+local function findStageById(phase, id)
+    for _, entry in ipairs(STAGES) do
+        if entry.spec.phase == phase and entry.spec.id == id then
+            return entry.spec
+        end
+    end
+    return nil
 end
 
 -- decode: loop with extension peeling. Each iteration runs the highest-priority
@@ -270,12 +290,12 @@ end
 --
 -- Phase 1 registered no decode stages (this returned immediately); Phase 2 adds
 -- the gzip stage (builtin_content_stages.lua).
-local function runDecode(name, content, kind, env, badVal)
+local function runDecode(name, content, kind, env, badVal, ctx)
     while true do
         local stages = matchingStages("decode", name, content, kind)
         if #stages == 0 then break end
         local spec = stages[1].spec
-        local newContent, newName = spec.transform(name, content, env, badVal)
+        local newContent, newName = spec.transform(name, content, env, badVal, ctx)
         if newContent == nil then
             -- Matched stage failed (it has already reported via badVal). Abort.
             return nil, name, kind, true
@@ -308,20 +328,38 @@ local function runDecode(name, content, kind, env, badVal)
 end
 
 -- transcode: at most one stage per file (you don't transcode TSV into TSV).
--- Two matching stages is an ambiguity error. Phase 1 registers none.
-local function runTranscode(name, content, kind, env, badVal)
-    local stages = matchingStages("transcode", name, content, kind)
-    if #stages == 0 then return content, name, kind end
-    if #stages > 1 then
-        badVal(name, "content_pipeline: multiple transcode stages match '"
-            .. name .. "' (ambiguous)")
+-- Selection is either EXPLICIT — ctx.transcoder names a stage `id` (the Files.tsv
+-- `transcoder` column, the path used for ambiguous formats like JSON) — or
+-- AUTO by the usual matchers (none ship yet; reserved for unambiguous formats).
+-- Returns (content, name, kind, fatal); a transcode failure aborts the file
+-- (§3.7), as does naming an unknown transcoder.
+local function runTranscode(name, content, kind, env, badVal, ctx)
+    local spec
+    if ctx and ctx.transcoder then
+        spec = findStageById("transcode", ctx.transcoder)
+        if not spec then
+            badVal(name, "content_pipeline: unknown transcoder '"
+                .. tostring(ctx.transcoder) .. "' for '" .. name .. "'")
+            return nil, name, kind, true
+        end
+    else
+        local stages = matchingStages("transcode", name, content, kind)
+        if #stages == 0 then return content, name, kind, false end
+        if #stages > 1 then
+            badVal(name, "content_pipeline: multiple transcode stages match '"
+                .. name .. "' (ambiguous)")
+        end
+        spec = stages[1].spec
     end
-    local spec = stages[1].spec
-    local newContent, newName = spec.transform(name, content, env, badVal)
-    if newContent ~= nil then content = newContent end
+    local newContent, newName = spec.transform(name, content, env, badVal, ctx)
+    if newContent == nil then
+        -- Transcode failed (malformed input / bad schema; reported via badVal).
+        return nil, name, kind, true
+    end
+    content = newContent
     if newName ~= nil and newName ~= "" then name = newName end
     if spec.outputKind ~= nil then kind = spec.outputKind end
-    return content, name, kind
+    return content, name, kind, false
 end
 
 -- Core orchestration shared by run (in-memory) and readAndRun (reads first).
@@ -329,19 +367,20 @@ end
 -- The raw_files snapshot (keyed by the on-disk name, not the peeled effective
 -- name — §3.3) holds the normalised, pre-macro source: exactly what the
 -- pre-refactor pipeline stored. text-only phases are skipped on binary content.
-local function runPipeline(name, content, kind, env, badVal, raw_files, rawKey)
+local function runPipeline(name, content, kind, env, badVal, raw_files, rawKey, ctx)
     local fatal
-    content, name, kind, fatal = runDecode(name, content, kind, env, badVal)
+    content, name, kind, fatal = runDecode(name, content, kind, env, badVal, ctx)
     if fatal then return nil end
-    content, name, kind = runTranscode(name, content, kind, env, badVal)
+    content, name, kind, fatal = runTranscode(name, content, kind, env, badVal, ctx)
+    if fatal then return nil end
     if kind == "text" then
-        content, name = runPhase("normalize", name, content, kind, env, badVal)
+        content, name = runPhase("normalize", name, content, kind, env, badVal, ctx)
     end
     if raw_files ~= nil and rawKey ~= nil then
         raw_files[rawKey] = content
     end
     if kind == "text" then
-        content, name = runPhase("macro", name, content, kind, env, badVal)
+        content, name = runPhase("macro", name, content, kind, env, badVal, ctx)
     end
     return content, name
 end
@@ -351,8 +390,9 @@ end
 -- ============================================================
 
 -- Runs the pipeline on already-in-memory bytes (for tests / embedded sources).
--- Does not touch raw_files. Returns (text, effectiveName).
-local function run(file_name, bytes, env, badVal)
+-- Does not touch raw_files. opt_ctx is the optional per-file context
+-- ({transcoder=id, typeName=name}). Returns (text, effectiveName).
+local function run(file_name, bytes, env, badVal, opt_ctx)
     if type(file_name) ~= "string" then
         error("content_pipeline.run: file_name must be a string", 2)
     end
@@ -360,15 +400,16 @@ local function run(file_name, bytes, env, badVal)
         error("content_pipeline.run: bytes must be a string", 2)
     end
     local kind = classifyKind(file_name)
-    return runPipeline(file_name, bytes, kind, env, badVal, nil, nil)
+    return runPipeline(file_name, bytes, kind, env, badVal, nil, nil, opt_ctx)
 end
 
 -- Reads a file from disk (binary) and runs the full source pipeline on it.
 -- Populates raw_files[file_name] with the normalised, pre-macro source when a
--- raw_files table is given (it owns the read now — §5). Returns (text,
--- effectiveName), or nil on a fatal read/stage error (already reported via
--- badVal), so callers can `if not content then return end`.
-local function readAndRun(file_name, env, badVal, raw_files)
+-- raw_files table is given (it owns the read now — §5). opt_ctx is the optional
+-- per-file context ({transcoder=id, typeName=name}) the loader passes from
+-- Files.tsv. Returns (text, effectiveName), or nil on a fatal read/stage error
+-- (already reported via badVal), so callers can `if not content then return end`.
+local function readAndRun(file_name, env, badVal, raw_files, opt_ctx)
     if type(file_name) ~= "string" then
         error("content_pipeline.readAndRun: file_name must be a string", 2)
     end
@@ -378,7 +419,7 @@ local function readAndRun(file_name, env, badVal, raw_files)
         return nil
     end
     local kind = classifyKind(file_name)
-    return runPipeline(file_name, bytes, kind, env, badVal, raw_files, file_name)
+    return runPipeline(file_name, bytes, kind, env, badVal, raw_files, file_name, opt_ctx)
 end
 
 -- Runs the sink (export-side) pipeline on a file's content: the inverse phase

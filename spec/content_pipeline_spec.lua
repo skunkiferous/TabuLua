@@ -18,6 +18,11 @@ local raw_tsv = require("raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
 local rawTSVToString = raw_tsv.rawTSVToString
 local LibDeflate = require("libdeflate")
+local parsers = require("parsers")
+
+-- A record type used by the JSON transcoder tests; schema drives the typed header.
+parsers.registerAlias(require("error_reporting").nullBadVal,
+  "CpTestItem", "{name:identifier,price:integer,tag:string|nil}")
 
 -- A real gzip stream (produced by the system `gzip -cn`) of the exact bytes
 -- "id\tvalue\nitem1\t42\nitem2\t100\n" — used to prove we interoperate with
@@ -348,6 +353,78 @@ describe("content_pipeline", function()
       assert.is_nil(out)
       assert.is_true(#bv.messages > 0)
       assert.matches("maxOutputBytes", bv.messages[1])
+    end)
+  end)
+
+  describe("JSON transcode (Phase 3, explicit selection)", function()
+    local CTX = {transcoder = "json:objects", typeName = "CpTestItem"}
+
+    it("transcodes object-per-row JSON to a schema-typed TSV", function()
+      local json = '[{"name":"sword","price":100,"tag":"sharp"},{"name":"shield","price":50}]'
+      local bv = newBadVal()
+      local out = content_pipeline.run("items.json", json, {}, bv, CTX)
+      assert.equals(0, #bv.messages)
+      -- Header is typed, in schema (sorted) field order; missing tag -> empty cell.
+      -- rawTSVToString terminates every row (incl. the last) with \n.
+      local expected = table.concat({
+        "name:identifier\tprice:integer\ttag:string|nil",
+        "sword\t100\tsharp",
+        "shield\t50\t",
+        "",
+      }, "\n")
+      assert.equals(expected, out)
+    end)
+
+    it("maps a JSON null to an empty cell", function()
+      local json = '[{"name":"a","price":1,"tag":null}]'
+      local out = content_pipeline.run("x.json", json, {}, newBadVal(), CTX)
+      assert.equals("name:identifier\tprice:integer\ttag:string|nil\na\t1\t\n", out)
+    end)
+
+    it("is selected only explicitly: no auto-match on the .json extension", function()
+      -- Same JSON, but no transcoder in ctx -> no transcode runs; the raw JSON
+      -- text passes through (it is not a transcode source by extension).
+      local json = '[{"name":"a","price":1}]'
+      local out = content_pipeline.run("x.json", json, {}, newBadVal())
+      assert.equals(json, out)
+    end)
+
+    it("aborts on an unknown transcoder id", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", "[]", {}, bv,
+        {transcoder = "nope", typeName = "CpTestItem"})
+      assert.is_nil(out)
+      assert.matches("unknown transcoder", bv.messages[1])
+    end)
+
+    it("aborts when the typeName is not a known record type", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", "[]", {}, bv,
+        {transcoder = "json:objects", typeName = "NoSuchType"})
+      assert.is_nil(out)
+      assert.matches("not a known record type", bv.messages[1])
+    end)
+
+    it("aborts on malformed JSON", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", "{not json", {}, bv, CTX)
+      assert.is_nil(out)
+      assert.matches("invalid JSON", bv.messages[1])
+    end)
+
+    it("aborts when an element is not an object", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", '[{"name":"a","price":1}, 42]', {}, bv, CTX)
+      assert.is_nil(out)
+      assert.matches("not an object", bv.messages[1])
+    end)
+
+    it("composes after a decode stage (.json.gz)", function()
+      local inner = '[{"name":"a","price":7}]'
+      local gz = makeGzip(inner)
+      local out, name = content_pipeline.run("d.json.gz", gz, {}, newBadVal(), CTX)
+      assert.equals("d.json", name)   -- .gz peeled; transcoder then ran on the JSON
+      assert.equals("name:identifier\tprice:integer\ttag:string|nil\na\t7\t\n", out)
     end)
   end)
 end)

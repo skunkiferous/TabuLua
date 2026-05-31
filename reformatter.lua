@@ -55,6 +55,7 @@ local normalizePath = file_util.normalizePath
 local isDir = file_util.isDir
 local emptyDir = file_util.emptyDir
 local mkdir = file_util.mkdir
+local hasExtension = file_util.hasExtension
 
 local manifest_loader = require("manifest_loader")
 
@@ -358,11 +359,16 @@ end
 --- @side_effect Modifies files on disk if content changed
 local function reformat(tsv_files, raw_files, badVal)
     for file_name, tsv in pairs(tsv_files) do
-        -- Binary passthrough files (§3.5) are stored as descriptor tables, not
-        -- strings, and never have a tsv_files entry — so this loop should only
-        -- ever see string sources. Guard anyway: a non-string raw_files entry is
-        -- not a reformattable source.
-        if type(raw_files[file_name]) == "string" then
+        -- Only rewrite genuine TSV/CSV sources in place. A transcoded or decoded
+        -- file (e.g. items.json via the json:objects transcoder, or data.tsv.gz)
+        -- lives in tsv_files too, but its raw_files entry holds DERIVED text, not
+        -- the source — rewriting it would clobber the original with TSV. Its
+        -- non-.tsv/.csv extension is the reliable signal to leave it untouched
+        -- (content_pipeline.md §3.6). Binary passthrough files (§3.5) are stored
+        -- as descriptor tables, not strings, and never reach here anyway; the
+        -- string guard keeps that safe too.
+        if (hasExtension(file_name, "tsv") or hasExtension(file_name, "csv"))
+            and type(raw_files[file_name]) == "string" then
             -- Manifests are now reformatted too: user-defined fields are preserved
             -- in the tsv_model, and __comment placeholders restore comment lines
             local new_content = tostring(tsv)

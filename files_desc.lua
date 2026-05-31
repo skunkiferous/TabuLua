@@ -585,7 +585,8 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
     lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
-    raw_files, loadEnv, badVal, variants, lcSkippedFiles, lcFn2EdgesFor)
+    raw_files, loadEnv, badVal, variants, lcSkippedFiles, lcFn2EdgesFor,
+    lcFn2Transcoder)
     local desc_files = {}
     local max_prio = -math.huge
     local cur_mod = nil
@@ -614,6 +615,7 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2FileValidators = lcFn2FileValidators,
         lcFn2PreProcessors = lcFn2PreProcessors,
         lcFn2EdgesFor = lcFn2EdgesFor or {},  -- optional; old callers may omit
+        lcFn2Transcoder = lcFn2Transcoder or {},  -- optional; populated from the transcoder column
         lcFn2LineNo = lcFn2LineNo,
         fn2Idx = fn2Idx,
         log = log,

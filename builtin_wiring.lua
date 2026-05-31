@@ -286,6 +286,19 @@ type_wiring.registerModule("pre_processors", {
     },
 })
 
+-- Content-pipeline transcoder selection (see TODO/content_pipeline.md Phase 3).
+-- A non-data text/binary file (e.g. a .json) is normally copied through as an
+-- asset; setting `transcoder` to a registered transcoder id (e.g. json:objects)
+-- instead routes it through the content pipeline to be converted to TSV and
+-- parsed as data of its `typeName`. The value is a free-form id (it may contain
+-- ':'), so it is typed `string|nil` rather than `name|nil`.
+type_wiring.registerModule("content_pipeline", {
+    descriptorColumns = {
+        {name = "transcoder", type = "string|nil",
+         fieldOnMeta = "lcFn2Transcoder",     parse = nilIfEmpty},
+    },
+})
+
 -- ============================================================
 -- Graph wiring (Phase 2b)
 --

@@ -353,12 +353,17 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
     extends, raw_files, files_cache,
-    options_extractor, expr_eval, loadEnv, badVal)
+    options_extractor, expr_eval, loadEnv, badVal, opt_transcoder)
     badVal.source = file_name
+    local lcFNKey = computeFilenameKey(file_name, file2dir)
+    local fileType = lcFn2Type[lcFNKey]
     -- The content pipeline reads the file (binary), populates raw_files with the
     -- normalised pre-COG source, and runs the decode→transcode→normalise→COG
     -- stages. COG is no longer named here — it is the registered `macro` stage.
-    local content = content_pipeline.readAndRun(file_name, loadEnv, badVal, raw_files)
+    -- When a transcoder is assigned (Files.tsv), the ctx carries its id and the
+    -- file's typeName so the transcoder can build a typed header from the schema.
+    local ctx = opt_transcoder and {transcoder = opt_transcoder, typeName = fileType} or nil
+    local content = content_pipeline.readAndRun(file_name, loadEnv, badVal, raw_files, ctx)
     if not content then
         return
     end
@@ -370,10 +375,7 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
         return
     end
 
-    local lcFNKey = computeFilenameKey(file_name, file2dir)
     local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
-
-    local fileType = lcFn2Type[lcFNKey]
     logFile(file_name, fileType, extends, table_subscribers)
 
     -- Look up parent file's header for inheriting column defaults
@@ -457,26 +459,31 @@ end
 -- Load all the non-description files
 local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
-    extends, raw_files, loadEnv, badVal, lcSkippedFiles)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
+    lcFn2Transcoder = lcFn2Transcoder or {}
 
     -- Tracks types registered by registerFileType (as opposed to pre-existing/built-in types).
     -- Used to limit parent-child field validation to user-defined file record types only.
     local fileRegisteredTypes = {}
     for _, file_name in ipairs(files) do
+        local key = computeFilenameKey(file_name, file2dir)
         -- Skip files that were filtered out by variant selection
         if lcSkippedFiles and next(lcSkippedFiles) then
-            local key = computeFilenameKey(file_name, file2dir)
             if lcSkippedFiles[key] then
                 goto continue
             end
         end
-        if hasExtension(file_name, CSV) or hasExtension(file_name, TSV) then
+        -- A file is parsed as data if it's a TSV/CSV, OR if Files.tsv assigned it
+        -- a transcoder (e.g. a .json routed through the json:objects transcoder).
+        -- Everything else is copied/streamed through as an asset (unchanged).
+        if hasExtension(file_name, CSV) or hasExtension(file_name, TSV)
+            or lcFn2Transcoder[key] then
             processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts,
                 lcFn2Type, lcFn2Ctx, lcFn2Col,
                 lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
                 extends, raw_files, files_cache,
-                options_extractor, expr_eval, loadEnv, badVal)
+                options_extractor, expr_eval, loadEnv, badVal, lcFn2Transcoder[key])
         else
             processUnknownFile(file_name, raw_files, badVal)
         end
@@ -506,6 +513,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2PreProcessors = {}
     -- Graph edge-file map: lcfn of edge file -> lcfn of its target node file
     local lcFn2EdgesFor = {}
+    -- Content-pipeline transcoder selection: lcfn -> transcoder id (Files.tsv)
+    local lcFn2Transcoder = {}
     local lcFn2LineNo = {}
     -- Variant filtering: convert array to set if needed, collect skipped files
     local variantsSet = nil
@@ -520,7 +529,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
         lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
         lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
-        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles, lcFn2EdgesFor)
+        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles, lcFn2EdgesFor,
+        lcFn2Transcoder)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
         return
@@ -587,7 +597,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
-    extends, raw_files, loadEnv, badVal, lcSkippedFiles)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder)
     -- Note: graph wiring (completion pre-processors + structural file
     -- validators) is now applied per-file through type_wiring.applyWiring
     -- inside processSingleTSVFile — see builtin_wiring.lua's register()
@@ -605,6 +615,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         lcFn2PreProcessors = lcFn2PreProcessors,
         -- Graph edge-file metadata (Phase A5)
         lcFn2EdgesFor = lcFn2EdgesFor,
+        -- Content-pipeline transcoder selection metadata
+        lcFn2Transcoder = lcFn2Transcoder,
         -- Type metadata: lcfn -> typeName, and typeName -> superType chain.
         -- Exposed for the graph edge-file consistency validator and any
         -- future post-load passes that need the type lineage.
