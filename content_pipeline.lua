@@ -256,27 +256,55 @@ local function runPhase(phase, name, content, kind, env, badVal)
 end
 
 -- decode: loop with extension peeling. Each iteration runs the highest-priority
--- matching decode stage; the loop re-evaluates matchers against the new
--- effective name and stops when no decode stage matches or the name stops
--- changing (peeling must shorten/rename, else we'd loop forever — §3.3, §7).
--- Phase 1 registers no decode stages, so this returns immediately.
+-- matching decode stage, then re-evaluates matchers against the new effective
+-- name (so .tsv.gz.enc decrypts then gunzips). The loop stops when no decode
+-- stage matches or the effective name stops changing (peeling must rename, else
+-- the same stage would match forever — §3.3, §7).
+--
+-- Returns (content, name, kind, fatal). `fatal` is true when a matched decode
+-- stage could not produce output — a corrupt input, or a decompression bomb
+-- over its maxOutputBytes cap (§3.7). The stage reports the cause via badVal and
+-- returns nil content; runPipeline then drops the file. A decode stage that
+-- matches MUST return non-nil content on success, so nil unambiguously means
+-- "abort this file".
+--
+-- Phase 1 registered no decode stages (this returned immediately); Phase 2 adds
+-- the gzip stage (builtin_content_stages.lua).
 local function runDecode(name, content, kind, env, badVal)
     while true do
         local stages = matchingStages("decode", name, content, kind)
         if #stages == 0 then break end
         local spec = stages[1].spec
         local newContent, newName = spec.transform(name, content, env, badVal)
-        if newContent ~= nil then content = newContent end
-        if spec.outputKind ~= nil then kind = spec.outputKind end
+        if newContent == nil then
+            -- Matched stage failed (it has already reported via badVal). Abort.
+            return nil, name, kind, true
+        end
+        -- maxOutputBytes enforcement (defence in depth): even if a stage forgets
+        -- to self-check, a decode output over the declared cap aborts the file.
+        if spec.maxOutputBytes and #newContent > spec.maxOutputBytes then
+            badVal(name, "content_pipeline: decode output of '" .. name
+                .. "' exceeds maxOutputBytes (" .. tostring(spec.maxOutputBytes)
+                .. " bytes)")
+            return nil, name, kind, true
+        end
+        content = newContent
         if newName ~= nil and newName ~= "" and newName ~= name then
+            -- Peeled to a new effective name: re-derive the content kind from it
+            -- (gunzip of data.tsv.gz -> data.tsv is text; of img.png.gz -> binary)
+            -- unless the stage forced a specific outputKind.
             name = newName
+            kind = spec.outputKind or classifyKind(name)
         else
+            -- No rename (e.g. a magic-only match on a mislabelled file): we can't
+            -- peel further, so stop to avoid re-matching the same stage forever.
+            if spec.outputKind ~= nil then kind = spec.outputKind end
             logger:warn("decode stage did not change the effective name of '"
                 .. name .. "'; stopping decode loop to avoid a cycle")
             break
         end
     end
-    return content, name, kind
+    return content, name, kind, false
 end
 
 -- transcode: at most one stage per file (you don't transcode TSV into TSV).
@@ -302,7 +330,9 @@ end
 -- name — §3.3) holds the normalised, pre-macro source: exactly what the
 -- pre-refactor pipeline stored. text-only phases are skipped on binary content.
 local function runPipeline(name, content, kind, env, badVal, raw_files, rawKey)
-    content, name, kind = runDecode(name, content, kind, env, badVal)
+    local fatal
+    content, name, kind, fatal = runDecode(name, content, kind, env, badVal)
+    if fatal then return nil end
     content, name, kind = runTranscode(name, content, kind, env, badVal)
     if kind == "text" then
         content, name = runPhase("normalize", name, content, kind, env, badVal)

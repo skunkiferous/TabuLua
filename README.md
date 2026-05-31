@@ -55,6 +55,10 @@ luarocks install lua-sandbox
 luarocks install ltcn
 luarocks install semver
 
+# Optional: only needed to load gzip-compressed (.gz) data files.
+# Without it, the engine runs normally and reports gzip files as unsupported.
+luarocks install libdeflate
+
 # For running tests
 luarocks install busted
 luarocks install luassert
@@ -249,3 +253,4 @@ TabuLua was built with these excellent Lua libraries:
 - [tableshape](https://github.com/leafo/tableshape) - Table validation
 - [semver](https://github.com/kikito/semver.lua) - Semantic versioning
 - [dkjson](http://dkolf.de/src/dkjson-lua.fsl/) - JSON encoding/decoding
+- [LibDeflate](https://github.com/SafeteeWoW/LibDeflate) - Pure-Lua DEFLATE (gzip decompression)

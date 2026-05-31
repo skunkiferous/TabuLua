@@ -10,13 +10,36 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 
 local content_pipeline = require("content_pipeline")
--- Requiring the seed module registers the built-in stages (normalise-eol + COG)
--- and snapshots the registry, so restoreState() returns to exactly those two.
+-- Requiring the seed module registers the built-in stages (normalise-eol, COG,
+-- gzip) and snapshots the registry, so restoreState() returns to exactly those.
 require("builtin_content_stages")
 local file_util = require("file_util")
 local raw_tsv = require("raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
 local rawTSVToString = raw_tsv.rawTSVToString
+local LibDeflate = require("libdeflate")
+
+-- A real gzip stream (produced by the system `gzip -cn`) of the exact bytes
+-- "id\tvalue\nitem1\t42\nitem2\t100\n" — used to prove we interoperate with
+-- genuine gzip output, not just our own round-trip.
+local REAL_GZIP =
+  "\031\139\008\000\000\000\000\000\000\003\203\076\225\044\075\204\041\077" ..
+  "\229\202\044\073\205\053\228\052\049\002\051\140\056\013\013\012\184\000" ..
+  "\089\077\045\070\028\000\000\000"
+local REAL_GZIP_PLAIN = "id\tvalue\nitem1\t42\nitem2\t100\n"
+
+-- Builds a gzip envelope around arbitrary data using libdeflate for the deflate
+-- body. The CRC32 is left zero (our gunzip does not verify it). opt_isize
+-- overrides the trailing ISIZE field, which lets a test forge a "bomb" whose
+-- declared size is huge while the actual payload stays tiny.
+local function le32(n)
+  return string.char(n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff)
+end
+local function makeGzip(data, opt_isize)
+  local header = string.char(0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03)
+  local body = LibDeflate:CompressDeflate(data)
+  return header .. body .. le32(0) .. le32(opt_isize or #data)
+end
 
 local function path_join(...)
   return (table.concat({...}, "/"):gsub("//+", "/"))
@@ -135,27 +158,29 @@ describe("content_pipeline", function()
     end)
   end)
 
+  -- Generic peeling mechanics with a fake decoder on a private extension ("z9"),
+  -- so these stay independent of the real gzip stage (which owns ".gz").
   describe("decode peeling", function()
     it("peels one extension per matching decode stage and renames", function()
-      content_pipeline.register("test-gz", {phase = "decode", extensions = {"gz"},
+      content_pipeline.register("test-z9", {phase = "decode", extensions = {"z9"},
         outputKind = "text",
         transform = function(name, content)
-          return content .. "<gunzipped>", (name:gsub("%.gz$", ""))
+          return content .. "<decoded>", (name:gsub("%.z9$", ""))
         end})
-      local out, name = content_pipeline.run("data.tsv.gz", "COMPRESSED", {}, newBadVal())
+      local out, name = content_pipeline.run("data.tsv.z9", "COMPRESSED", {}, newBadVal())
       assert.equals("data.tsv", name)
-      assert.is_truthy(out:find("<gunzipped>"))
+      assert.is_truthy(out:find("<decoded>"))
     end)
 
-    it("loops for chained decoders (.gz.gz) and terminates", function()
-      content_pipeline.register("test-gz", {phase = "decode", extensions = {"gz"},
+    it("loops for chained decoders (.z9.z9) and terminates", function()
+      content_pipeline.register("test-z9", {phase = "decode", extensions = {"z9"},
         outputKind = "text",
         transform = function(name, content)
-          return content .. "<g>", (name:gsub("%.gz$", ""))
+          return content .. "<d>", (name:gsub("%.z9$", ""))
         end})
-      local out, name = content_pipeline.run("a.tsv.gz.gz", "C", {}, newBadVal())
+      local out, name = content_pipeline.run("a.tsv.z9.z9", "C", {}, newBadVal())
       assert.equals("a.tsv", name)
-      local _, count = out:gsub("<g>", "")
+      local _, count = out:gsub("<d>", "")
       assert.equals(2, count)
     end)
   end)
@@ -246,5 +271,83 @@ describe("content_pipeline", function()
         assert.equals(rawTSVToString(old_rawtsv), rawTSVToString(new_rawtsv))
       end)
     end
+  end)
+
+  describe("gzip decode (Phase 2)", function()
+    it("decodes a real gzip stream and peels the .gz extension", function()
+      -- run() exposes the effective name, so we can assert the peel directly.
+      local out, name = content_pipeline.run("data.tsv.gz", REAL_GZIP, {}, newBadVal())
+      assert.equals("data.tsv", name)
+      assert.equals(REAL_GZIP_PLAIN, out)
+    end)
+
+    it("loads data.tsv.gz identically to data.tsv (end to end)", function()
+      local gz_path = path_join(temp_dir, "data.tsv.gz")
+      do
+        local f = assert(io.open(gz_path, "wb"))
+        f:write(REAL_GZIP)
+        f:close()
+      end
+      local raw_files = {}
+      local bv = newBadVal()
+      local content = content_pipeline.readAndRun(gz_path, {}, bv, raw_files)
+      assert.equals(0, #bv.messages)
+      -- Same parsed rawtsv as the uncompressed bytes.
+      assert.equals(rawTSVToString(stringToRawTSV(REAL_GZIP_PLAIN)),
+                    rawTSVToString(stringToRawTSV(content)))
+      -- raw_files is keyed by the on-disk name (not the peeled name) and holds
+      -- the decoded source.
+      assert.is_string(raw_files[gz_path])
+      assert.is_nil(raw_files[gz_path .. ".peeled"])
+    end)
+
+    it("decodes chained .gz.gz, looping until no decoder matches", function()
+      local outer = makeGzip(makeGzip("hello tsv content\n"))
+      local out, name = content_pipeline.run("a.tsv.gz.gz", outer, {}, newBadVal())
+      assert.equals("a.tsv", name)
+      assert.equals("hello tsv content\n", out)
+    end)
+
+    it("matches by magic bytes when the .gz extension is absent (renamed .dat)", function()
+      local out, name = content_pipeline.run("blob.dat", REAL_GZIP, {}, newBadVal())
+      -- No extension to peel: the name is unchanged but the bytes are decoded.
+      assert.equals("blob.dat", name)
+      assert.equals(REAL_GZIP_PLAIN, out)
+    end)
+
+    it("trips badVal and drops the file on a decompression bomb (ISIZE over cap)", function()
+      -- A tiny payload whose forged ISIZE claims 200 MB — over the 64 MB cap.
+      -- The cheap ISIZE pre-check rejects it without inflating anything.
+      local bomb = makeGzip("tiny", 200 * 1024 * 1024)
+      local bv = newBadVal()
+      local out = content_pipeline.run("bomb.tsv.gz", bomb, {}, bv)
+      assert.is_nil(out)
+      assert.is_true(#bv.messages > 0)
+      assert.matches("exceeds", bv.messages[1])
+    end)
+
+    it("aborts the file on a corrupt gzip stream", function()
+      local bv = newBadVal()
+      -- Valid gzip magic + header length but garbage DEFLATE body.
+      local corrupt = string.char(0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03)
+        .. ("\255"):rep(20)
+      local out = content_pipeline.run("corrupt.tsv.gz", corrupt, {}, bv)
+      assert.is_nil(out)
+      assert.is_true(#bv.messages > 0)
+    end)
+
+    it("enforces a stage's maxOutputBytes generically in the dispatcher", function()
+      -- A decode stage whose transform returns more than its declared cap must
+      -- be aborted by the dispatcher even though the transform itself is happy.
+      content_pipeline.register("test-cap", {
+        phase = "decode", extensions = {"big"}, maxOutputBytes = 10,
+        transform = function(_n, _c) return ("x"):rep(50), "out.tsv" end,
+      })
+      local bv = newBadVal()
+      local out = content_pipeline.run("data.big", "anything", {}, bv)
+      assert.is_nil(out)
+      assert.is_true(#bv.messages > 0)
+      assert.matches("maxOutputBytes", bv.messages[1])
+    end)
   end)
 end)
