@@ -199,6 +199,32 @@ local function scanExtensions()
 end
 
 -- ============================================================
+-- Bootstrap API (Phase 4 — user packages register stages)
+-- ============================================================
+
+-- Returns (registerStage, seal): a sealed-checked wrapper around register that a
+-- package `bootstrap` function may call to add a content-pipeline stage (a
+-- sandboxed decode / transcode / macro), plus a seal() the engine calls once the
+-- bootstrap phase ends. The sealed check is at call time, so a handle captured
+-- and invoked later errors rather than silently registering — mirroring
+-- type_wiring.makeBootstrapAPI. Bootstrap-registered stages are cleared on
+-- global_reset (they are not in the built-in snapshot).
+local function makeBootstrapAPI()
+    local sealed = false
+    local function registerStage(moduleName, spec)
+        if sealed then
+            error("content_pipeline.registerContentStage: bootstrap phase has ended;"
+                .. " the api can no longer be used", 2)
+        end
+        return register(moduleName, spec)
+    end
+    local function seal()
+        sealed = true
+    end
+    return registerStage, seal
+end
+
+-- ============================================================
 -- Matching + dispatch
 -- ============================================================
 
@@ -537,6 +563,7 @@ local API = {
     registerScanExtensions = registerScanExtensions,
     isScanEligible = isScanEligible,
     scanExtensions = scanExtensions,
+    makeBootstrapAPI = makeBootstrapAPI,
     snapshotState = snapshotState,
     restoreState = restoreState,
     _getStages = _getStages,

@@ -357,6 +357,16 @@ end
 --- @param raw_files table Map of file paths to original raw content
 --- @param badVal table badVal instance for error reporting
 --- @side_effect Modifies files on disk if content changed
+---
+--- TODO (content_pipeline.md §3.6, Phase 4 Part B — deferred): honour reversible
+--- decode stages. Today every transcoded/decoded file is left untouched (the
+--- non-.tsv/.csv skip below). A decode stage that declares `reversible=true` and
+--- supplies a re-encoder should instead round-trip: reformat the derived TSV,
+--- re-encode it (e.g. re-gzip), and write the source back compressed. That needs
+--- (a) a gzip *compress* provider (CRC32 — not in libdeflate 1.0.2), (b) per-file
+--- decode-chain tracking threaded here so we know which re-encoder to apply, and
+--- (c) a reversible format reachable end-to-end (`.gz` isn't collected yet). Build
+--- it together with that real use case rather than speculatively.
 local function reformat(tsv_files, raw_files, badVal)
     for file_name, tsv in pairs(tsv_files) do
         -- Only rewrite genuine TSV/CSV sources in place. A transcoded or decoded

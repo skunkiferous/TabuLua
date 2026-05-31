@@ -997,9 +997,20 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     -- do NOT use this api — they go through the regular per-file onLoad
     -- pipeline and call type_wiring.register directly, so no seal is
     -- needed for them.
-    local bootstrapAPI, sealBootstrap = type_wiring.makeBootstrapAPI()
+    -- The bootstrap api combines the type-wiring registration surface with the
+    -- content-pipeline one, so a package `bootstrap` can register custom stages
+    -- (e.g. a transcoder) alongside type wiring. Each registry seals its own
+    -- half after the bootstrap phase.
+    local twAPI, sealTypeWiring = type_wiring.makeBootstrapAPI()
+    local registerContentStage, sealContentPipeline = content_pipeline.makeBootstrapAPI()
+    local bootstrapAPI = readOnly({
+        register = twAPI.register,
+        registerModule = twAPI.registerModule,
+        registerContentStage = registerContentStage,
+    })
     runPackageBootstraps(badVal, packages, package_order, loadEnv, bootstrapAPI)
-    sealBootstrap()
+    sealTypeWiring()
+    sealContentPipeline()
 
     local desc_files_order, desc_file2pkg_id = resolveFileDescriptors(files, packages, package_order)
     if not desc_files_order then

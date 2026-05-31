@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **User-registered content-pipeline stages —
+  [TODO/content_pipeline.md](TODO/content_pipeline.md) Phase 4.** A package
+  `bootstrap` function can now register custom content-pipeline stages (e.g. a
+  transcoder) via `api.registerContentStage(moduleName, stageSpec)`, alongside
+  the existing type-wiring `register`/`registerModule`. The api is sealed after
+  the bootstrap phase (a captured handle used later errors), and
+  bootstrap-registered stages are cleared on `global_reset`, mirroring the
+  type-wiring bootstrap surface. This lets a package ship, say, its own
+  `transcoder=mypkg:format` selected from `Files.tsv`.
+
 - **COG template discovery —
   [TODO/cog_markdown.md](TODO/cog_markdown.md) Part 2.** Non-data text files
   (`.md`, `.markdown`, `.html`, `.txt`) can carry COG blocks; the new
