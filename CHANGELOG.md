@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **COG template discovery —
+  [TODO/cog_markdown.md](TODO/cog_markdown.md) Part 2.** Non-data text files
+  (`.md`, `.markdown`, `.html`, `.txt`) can carry COG blocks; the new
+  `cog_discovery` module auto-scans the package roots for such files and keeps
+  only those that actually contain a COG block (`lua_cog.needsCog`), so a doc
+  template "just works" with no per-file registration. The eligible-extension
+  set lives in the content-pipeline registry
+  (`content_pipeline.registerScanExtensions` / `isScanEligible`) — adding a
+  format later is a one-line change — and `.tsv`/`.csv` are deliberately
+  excluded so data files are never double-processed. A `.cogignore` marker file
+  opts a directory subtree out. This is the discovery half; generating docs from
+  the templates lands with the exporter sink driver in a later phase.
+
 - **Content pipeline `transcode` phase + JSON data files —
   [TODO/content_pipeline.md](TODO/content_pipeline.md) Phase 3.** A non-TSV
   data file can now be converted to TSV and parsed as data by naming a

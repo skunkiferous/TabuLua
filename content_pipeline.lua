@@ -59,6 +59,15 @@ for _, p in ipairs(PHASES) do PHASE_SET[p] = true end
 local STAGES = {}
 local STAGES_SNAPSHOT = nil
 
+-- Extensions (lowercase, no dot) the macro-phase scan is eligible to process —
+-- i.e. non-data text files (`.md`, `.html`, …) a directory walk should check for
+-- COG blocks (cog_markdown.md §2.2-2.3). `.tsv`/`.csv` are deliberately NOT here:
+-- data files are already COG-processed on read, so the scan must not touch them.
+-- builtin_content_stages populates this when it registers the COG macro stage;
+-- cog_discovery reads it.
+local SCAN_EXTENSIONS = {}
+local SCAN_EXTENSIONS_SNAPSHOT = nil
+
 -- Known text extensions (lowercase, no dot). Content kind defaults to
 -- "binary"; a file is "text" only if its final extension is in this set or a
 -- stage claims it as text (§3.11).
@@ -159,6 +168,34 @@ local function register(moduleName, spec)
     validateSpec(moduleName, spec)
     STAGES[#STAGES + 1] = {moduleName = moduleName, spec = spec}
     logger:info("Registered " .. spec.phase .. " stage from " .. moduleName)
+end
+
+-- Registers one or more extensions (with or without a leading dot, any case) as
+-- eligible for the macro-phase COG scan (cog_markdown.md §2.2). Adding `.html`
+-- later is a one-line call here rather than an engine edit.
+local function registerScanExtensions(list)
+    if type(list) ~= "table" then
+        error("content_pipeline.registerScanExtensions: list must be an array of extensions", 2)
+    end
+    for _, e in ipairs(list) do
+        if type(e) == "string" and e ~= "" then
+            SCAN_EXTENSIONS[(e:lower():gsub("^%.", ""))] = true
+        end
+    end
+end
+
+-- True iff `file_name`'s final extension is registered as COG-scan eligible.
+local function isScanEligible(file_name)
+    local ext = finalExtension(file_name)
+    return ext ~= nil and SCAN_EXTENSIONS[ext] == true
+end
+
+-- Returns the COG-scan-eligible extensions as a sorted array (no dots).
+local function scanExtensions()
+    local out = {}
+    for e in pairs(SCAN_EXTENSIONS) do out[#out + 1] = e end
+    table.sort(out)
+    return out
 end
 
 -- ============================================================
@@ -456,12 +493,19 @@ local function snapshotState()
     local s = {}
     for i, e in ipairs(STAGES) do s[i] = e end
     STAGES_SNAPSHOT = s
+    local se = {}
+    for k in pairs(SCAN_EXTENSIONS) do se[k] = true end
+    SCAN_EXTENSIONS_SNAPSHOT = se
 end
 
 local function restoreState()
     for i in ipairs(STAGES) do STAGES[i] = nil end
     if STAGES_SNAPSHOT then
         for i, e in ipairs(STAGES_SNAPSHOT) do STAGES[i] = e end
+    end
+    for k in pairs(SCAN_EXTENSIONS) do SCAN_EXTENSIONS[k] = nil end
+    if SCAN_EXTENSIONS_SNAPSHOT then
+        for k in pairs(SCAN_EXTENSIONS_SNAPSHOT) do SCAN_EXTENSIONS[k] = true end
     end
 end
 
@@ -490,6 +534,9 @@ local API = {
     runSink = runSink,
     isTextFile = isTextFile,
     classifyKind = classifyKind,
+    registerScanExtensions = registerScanExtensions,
+    isScanEligible = isScanEligible,
+    scanExtensions = scanExtensions,
     snapshotState = snapshotState,
     restoreState = restoreState,
     _getStages = _getStages,

@@ -125,6 +125,12 @@ content_pipeline.register(NAME, {
     transform = json_transcoders.objectsToTSV,
 })
 
+-- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md
+-- §2.2-2.3). These are non-data text files that cog_discovery walks for COG
+-- blocks; `.tsv`/`.csv` are deliberately excluded (data files are COG-processed
+-- on read, so the scan must not double-process them). Add more here as needed.
+content_pipeline.registerScanExtensions({"md", "markdown", "html", "txt"})
+
 -- Snapshot now (built-in stages registered) and restore on global_reset,
 -- mirroring how builtin_wiring snapshots the type-wiring registry.
 content_pipeline.snapshotState()
