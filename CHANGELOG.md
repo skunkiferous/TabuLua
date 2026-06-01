@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Data-driven doc generation —
+  [TODO/content_pipeline.md](TODO/content_pipeline.md) §3.10,
+  [TODO/cog_markdown.md](TODO/cog_markdown.md) Part 2.** At export time, COG doc
+  templates (any scan-eligible text file containing a COG block, discovered by
+  `cog_discovery`) are expanded against the fully-loaded dataset and written to
+  the export dir, mirroring source layout — optionally with `stripCog` for a
+  clean published file. A template's COG block reads data through `files`, keyed
+  by **both** typeName (`files["Item"]`) and filename (`files["Item.tsv"]`).
+  Templates are generated, never copied verbatim: the per-format exporters skip
+  them, and a shared read cache (`file_util.newReadCache`) means each template is
+  read once across discovery and expansion. New `doc_generator` module; the
+  `reformatter` export flow drives it after the per-format exporters.
+
+- **COG-comment stripping on export (`stripCog`) —
+  [TODO/content_pipeline.md](TODO/content_pipeline.md) Phase 5, §3.9.** A new
+  `lua_cog.stripCog` removes the COG scaffolding (start/code/code-end/output-end
+  markers and the code lines) from content while keeping the generated output
+  inline — across all four comment styles, lossy and idempotent. It is wired as
+  the COG macro stage's `sinkTransform`, and the exporter gains an opt-in
+  `exportParams.stripCog` (default off) that routes raw-passthrough text through
+  the content pipeline's sink direction before writing, so a published copy can
+  be free of COG markers without touching the source.
+
 - **User-registered content-pipeline stages —
   [TODO/content_pipeline.md](TODO/content_pipeline.md) Phase 4.** A package
   `bootstrap` function can now register custom content-pipeline stages (e.g. a

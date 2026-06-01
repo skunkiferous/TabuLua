@@ -1056,6 +1056,10 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         packages = packages,
         joinMeta = joinMeta,
         file2dir = file2dir,
+        -- The COG/expression env, with loadEnv.files[typeName] populated for every
+        -- loaded dataset. Exposed so the export-time doc generator can expand COG
+        -- doc templates against the same data the load-time COG blocks saw.
+        loadEnv = loadEnv,
         -- `validationPassed` covers BOTH pre-processors and validators: true iff
         -- every error-level processor and every error-level validator succeeded.
         -- (Pre-processors run before validators in the pipeline, but for callers

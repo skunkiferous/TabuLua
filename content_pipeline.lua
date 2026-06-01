@@ -32,7 +32,7 @@ end
 -- into ordered phases:
 --
 --   decode     bytes -> bytes/text   (decompress, decrypt; loops with peeling)
---   transcode  structured -> TSV text (JSON/XML/SQLite/.mtx; single match)
+--   transcode  structured -> TSV text (JSON/XML/SQLite/.eav; single match)
 --   normalize  text -> text          (core EOL-normalisation; text only)
 --   macro      text -> text          (COG; text only)
 --   asset      bytes -> bytes        (image/audio/font; binary only — Phase 6)

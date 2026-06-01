@@ -81,6 +81,13 @@ content_pipeline.register(NAME, {
     transform = function(name, content, env, badVal)
         return lua_cog.processContentBV(name, content, env, badVal)
     end,
+    -- Sink (export) direction: strip the COG scaffolding so the published copy is
+    -- clean, keeping the generated output (content_pipeline.md §3.9). Runs only
+    -- when the exporter opts in (exportParams.stripCog); lossy, never written back
+    -- over source. needsCog makes it a no-op on files without COG blocks.
+    sinkTransform = function(_name, content, _env, _badVal)
+        return lua_cog.stripCog(content)
+    end,
 })
 
 -- gzip decompressor (Phase 2), the first `decode` stage. Matches by the .gz

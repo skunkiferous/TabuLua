@@ -243,6 +243,47 @@ local function needsCog(content)
         or content:match("\n<!%-%-%-%[%[%[end%]%]%]%-%-%->")) ~= nil
 end
 
+-- Strips the COG scaffolding from content, producing a clean export copy: every
+-- COG block's start marker, code lines, code-end marker, and output-end marker are
+-- removed, KEEPING the generated output inline as plain data (see
+-- content_pipeline.md §3.9). All four comment styles are recognised
+-- (---/###/// and the HTML <!--- block style). This is LOSSY — the code is
+-- discarded, so the result can no longer regenerate itself — hence it is used only
+-- for export, never written back over source. With no markers left it is
+-- idempotent: a second pass is a no-op (needsCog is then false).
+local function stripCog(content)
+    if type(content) ~= "string" then
+        error("stripCog: content not a string: " .. type(content))
+    end
+    if not needsCog(content) then
+        return content
+    end
+    local out = {}
+    local inCodeBlock = false
+    for _, line in ipairs(split(unixEOL(content), '\n')) do
+        -- Output-end must be tested first: "<!---[[[end]]]--->" and "---[[[end]]]"
+        -- are also prefix-matched by the start patterns below.
+        local isEnd = line:match("^%-%-%-%[%[%[end%]%]%]") or line:match("^%#%#%#%[%[%[end%]%]%]")
+            or line:match("^%/%/%/%[%[%[end%]%]%]") or line:match("^<!%-%-%-%[%[%[end%]%]%]%-%-%->")
+        local isStart = line:match("^<!%-%-%-%[%[%[") or line:match("^%-%-%-%[%[%[")
+            or line:match("^%#%#%#%[%[%[") or line:match("^%/%/%/%[%[%[")
+        local isCodeEnd = line:match("^%-%-%-%]%]%]") or line:match("^%#%#%#%]%]%]")
+            or line:match("^%/%/%/%]%]%]") or line:match("^%]%]%]%-%-%->")
+        if isEnd then
+            -- drop the output-end marker (generated output above it is already kept)
+        elseif isStart then
+            inCodeBlock = true   -- drop the start marker; the code lines follow
+        elseif isCodeEnd then
+            inCodeBlock = false  -- drop the code-end marker; generated output follows
+        elseif inCodeBlock then
+            -- drop a code line
+        else
+            out[#out + 1] = line  -- normal text, or generated output: keep
+        end
+    end
+    return table.concat(out, "\n")
+end
+
 -- Pure function to process content with COG.
 -- Returns: processed_content, error_message
 -- If content doesn't need COG processing, returns the original content with nil error.
@@ -316,6 +357,7 @@ else
         processFile=processFile,
         processLines=processLines,
         rewriteFile=rewriteFile,
+        stripCog=stripCog,
         tryProcessContent=tryProcessContent,
     }
     

@@ -512,4 +512,70 @@ describe("lua_cog", function()
       assert.matches("# Body", output)
     end)
   end)
+
+  -- stripCog: removes COG scaffolding for a clean export copy, keeping the
+  -- generated output (content_pipeline.md §3.9).
+  describe("stripCog", function()
+    it("removes the markers and code block but keeps generated output (--- style)", function()
+      local content = table.concat({
+        "Header",
+        "---[[[",
+        "---return 'GEN'",
+        "---]]]",
+        "GEN",
+        "---[[[end]]]",
+        "Footer",
+      }, "\n")
+      local out = lua_cog.stripCog(content)
+      assert.equals("Header\nGEN\nFooter", out)
+    end)
+
+    it("removes an HTML <!--- block but keeps the generated output", function()
+      local content = table.concat({
+        "# Doc",
+        "<!---[[[",
+        "return 'TABLE'",
+        "]]]--->",
+        "| a | b |",
+        "<!---[[[end]]]--->",
+        "tail",
+      }, "\n")
+      local out = lua_cog.stripCog(content)
+      assert.equals("# Doc\n| a | b |\ntail", out)
+    end)
+
+    it("leaves content without COG markers unchanged", function()
+      local content = "Just text\nno cog\n"
+      assert.equals(content, lua_cog.stripCog(content))
+    end)
+
+    it("is idempotent", function()
+      local content = "A\n###[[[\n###return 'x'\n###]]]\nx\n###[[[end]]]\nB"
+      local once = lua_cog.stripCog(content)
+      assert.equals(once, lua_cog.stripCog(once))
+      assert.equals("A\nx\nB", once)
+    end)
+
+    it("strips multiple blocks and coexisting styles", function()
+      local content = table.concat({
+        "---[[[",
+        "---return 'one'",
+        "---]]]",
+        "one",
+        "---[[[end]]]",
+        "middle",
+        "<!---[[[",
+        "return 'two'",
+        "]]]--->",
+        "two",
+        "<!---[[[end]]]--->",
+      }, "\n")
+      assert.equals("one\nmiddle\ntwo", lua_cog.stripCog(content))
+    end)
+
+    it("does not touch a YAML front-matter --- fence", function()
+      local content = "---\ntitle: Hello\n---\n\n# Body"
+      assert.equals(content, lua_cog.stripCog(content))
+    end)
+  end)
 end)

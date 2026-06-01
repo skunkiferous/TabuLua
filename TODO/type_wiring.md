@@ -1078,7 +1078,7 @@ matching glob X") and whose value is the raw string. When this was first
 written COG was the single member, so the note said to carve it out "only
 if a second stage appears — a decompressor, a macro pre-expander, a
 license-header stripper." Those stages are now wanted (decompression of
-`.gz`/`.zst` inputs; transcoders for XML/JSON/SQLite/`.mtx` → TSV), so
+`.gz`/`.zst` inputs; transcoders for XML/JSON/SQLite/`.eav` → TSV), so
 that registry **is now planned** — see [content_pipeline.md](content_pipeline.md).
 COG migrates into it as the first `macro`-phase stage. This section
 remains as the rationale for *why* COG does not belong in the type-wiring

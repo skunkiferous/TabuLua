@@ -344,6 +344,28 @@ local function readFileBinary(file_path)
     return content, nil
 end
 
+--- Creates a small memoizing binary file reader: an object with a single
+--- `read(path)` method that reads each path at most once (binary, verbatim) and
+--- caches the result, including a cached miss. Sharing one cache between two
+--- passes that both read the same files (e.g. COG-template discovery and the
+--- subsequent doc expansion) reads each file exactly once.
+--- @return table A cache object with a `read(path) -> string|nil` method
+local function newReadCache()
+    local cache = {}
+    return {
+        read = function(path)
+            local v = cache[path]
+            if v == nil then
+                v = readFileBinary(path)
+                if v == nil then v = false end   -- cache the miss too
+                cache[path] = v
+            end
+            if v == false then return nil end
+            return v
+        end,
+    }
+end
+
 --- Returns the size of a file in bytes, without reading its contents.
 --- Used by the content pipeline to record a passthrough binary's size in its
 --- raw_files descriptor (an O(1) stat, never a full read — see §3.5).
@@ -846,6 +868,7 @@ local API = {
     isRootDir = isRootDir,
     isSamePath = isSamePath,
     mkdir = mkdir,
+    newReadCache = newReadCache,
     normalizePath = normalizePath,
     pathJoin = pathJoin,
     readFile = readFile,

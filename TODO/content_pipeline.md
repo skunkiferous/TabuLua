@@ -15,9 +15,9 @@ Two such stages are now wanted, which is what triggered this plan:
 
 - **Decompressors** — a `.gz` / `.zst` / `.br` input is decompressed so the rest
   of the codebase reads it as ordinary text.
-- **Format transcoders** — a module that reads XML / JSON / SQLite (or Matrix
-  Market `.mtx`, see [matrix_market_coo.md](matrix_market_coo.md)) and emits TSV
-  text for further processing.
+- **Format transcoders** — a module that reads XML / JSON / SQLite (or the
+  Entity–Attribute–Value long format, see [eav_long_format.md](eav_long_format.md))
+  and emits TSV text for further processing.
 
 So the single-member case has become a multi-member pipeline, and the registry is
 worth building. This document plans it.
@@ -57,7 +57,7 @@ ever touching the text path.
 In scope:
 
 - Decompression (`.gz`, `.zst`, …) — bytes → bytes/text.
-- Transcoding structured formats (XML / JSON / SQLite / `.mtx`) → TSV text.
+- Transcoding structured formats (XML / JSON / SQLite / EAV long format) → TSV text.
 - Macro expansion — **COG**, which moves into this registry as its first member, in
   **both** directions and on **any** text format (§3.10), not only TSV.
 - Data-driven generation of non-data text files (e.g. `.md` docs from TSV data) at
@@ -213,7 +213,7 @@ Two composable ordering mechanisms.
 
 1. **`decode`** — bytes → bytes/text. Decompression, decryption. May run more than
    once (`.tsv.gz.enc` → decrypt → gunzip).
-2. **`transcode`** — structured → TSV text. JSON / XML / SQLite / `.mtx` → TSV.
+2. **`transcode`** — structured → TSV text. JSON / XML / SQLite / EAV → TSV.
    Runs at most once per file (you don't transcode TSV into TSV).
 3. **`macro`** — text → text template expansion. **COG.** Runs after decode/transcode,
    so a COG block can reference the decoded/transcoded content. The text need **not**
@@ -647,7 +647,7 @@ content stage is fundamentally a Lua function:
 
 A real constraint to call out: production decompression (zlib) and SQLite reading
 realistically need **C libraries / FFI**, which the sandbox does not expose. v1
-therefore ships only stages implementable in pure Lua (COG already is; `.mtx` and
+therefore ships only stages implementable in pure Lua (COG already is; EAV and
 JSON are; EOL-normalise is) and treats native-lib stages (gzip, SQLite, XML via a C
 parser) as **engine-provided** — registered by core or a trusted engine module, not
 by sandboxed bootstrap code. See §9 Q2.
@@ -761,13 +761,13 @@ The switch points appear inline below, each just before the phase it precedes.
 **Phase 3 — `transcode` phase + first transcoder.**
 
 - Dispatcher slot for the single matching `transcode` stage.
-- First transcoder: **Matrix Market `.mtx`** — [matrix_market_coo.md](matrix_market_coo.md)
-  is already specced, pure text, and the cleanest first case. Its reader becomes the
-  `transcode` stage's `transform` (the `raw_tsv` reader/writer that doc proposes can
-  be the implementation; the pipeline supplies the *dispatch*). Then JSON.
+- First transcoder: **EAV long format** — [eav_long_format.md](eav_long_format.md)
+  is already specced, pure Lua, and the cleanest first case. Its `raw_eav` reader
+  becomes the `transcode` stage's `transform` (the reader/writer that doc proposes
+  can be the implementation; the pipeline supplies the *dispatch*). Then JSON.
 - `reversible = false`; reformatter skips rewriting transcoded sources (§3.6).
-- Tests: `matrix.mtx` → expected TSV; malformed input aborts the file via `badVal`;
-  reformatter leaves the `.mtx` untouched.
+- Tests: `items.eav` → expected wide TSV; malformed input aborts the file via
+  `badVal`; reformatter leaves the EAV source untouched.
 
 **Phase 4 — user-extensibility + reformatter integration.**
 
@@ -863,10 +863,11 @@ as one.
   this one" **is the origin** of this plan. That section should now point here
   instead of saying "worth carving out only if a second stage appears" — the second
   (and third) stages have appeared.
-- [matrix_market_coo.md](matrix_market_coo.md) — its `.mtx` reader is the natural
-  **first transcoder** (Phase 3). That doc can keep the `raw_tsv` reader/writer as
-  the *implementation*; this registry provides the *extension-keyed dispatch* so the
-  reader fires automatically on `.mtx` inputs instead of being called by hand.
+- [eav_long_format.md](eav_long_format.md) — its `raw_eav` reader is the natural
+  **first transcoder** (Phase 3). That doc keeps the `raw_eav` reader/writer as the
+  *implementation*; this registry provides the *extension-keyed dispatch* so the
+  reader fires automatically on `.eav` inputs instead of being
+  called by hand.
 - [pre_processors.md](pre_processors.md) / [type_wiring.md](type_wiring.md) — the
   *parsed-file* siblings. Content stages run strictly **before** them; nothing here
   touches rows or cells.

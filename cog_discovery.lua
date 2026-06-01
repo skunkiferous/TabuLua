@@ -40,18 +40,9 @@ end
 -- `<!---[[[ … ]]]--->` block anywhere in a package "just works", with no
 -- per-file registration. A `.cogignore` marker file opts a directory subtree out.
 --
--- This is the discovery half only. The consumer (the exporter sink driver that
--- generates docs from the discovered templates) lands in content_pipeline.md
--- Phase 5.
---
--- TODO (Phase 5 — de-duplicate the read): discover() reads each candidate just
--- to check needsCog, then discards the content; the Phase 5 generator will read
--- the discovered templates again to expand them. When that consumer exists,
--- thread a shared single-read binary cache (or reuse raw_files — `.md`/`.txt`
--- are already loaded there, though `.html`/`.markdown` are not yet collected,
--- and .cogignore needs filesystem access that raw_files lacks) so each template
--- is read exactly once. Building the cache now would give it only one caller and
--- no actual saving, so it is intentionally deferred to where it has both users.
+-- To read each template only once, the caller may pass a shared read cache
+-- (file_util.newReadCache): discover() checks needsCog through it, and the
+-- doc generator later reads the same templates through the same cache (a hit).
 -- ============================================================
 
 -- Name of the opt-out marker. A directory that directly contains a file with
@@ -103,21 +94,23 @@ end
 -- eligible AND that contain a COG block, excluding anything under a .cogignore'd
 -- directory (or under opt_excludeDirs, e.g. the export dir). Returns a sorted
 -- list of file paths. `.tsv`/`.csv` are never eligible, so data files are never
--- double-processed.
-local function discover(directories, opt_excludeDirs)
+-- double-processed. `opt_cache` (file_util.newReadCache) lets the caller share
+-- the file reads with a later pass (the doc generator).
+local function discover(directories, opt_excludeDirs, opt_cache)
     if type(directories) ~= "table" then
         error("cog_discovery.discover: directories must be a table", 2)
     end
     local exts = content_pipeline.scanExtensions()
     if #exts == 0 then return {} end
 
+    local read = (opt_cache and opt_cache.read) or readFileBinary
     local files = collectFiles(directories, exts, nil, nil, opt_excludeDirs)
     local ignored = findIgnoredDirs(directories)
 
     local out = {}
     for _, f in ipairs(files) do
         if not isUnderIgnored(f, ignored) then
-            local content = readFileBinary(f)
+            local content = read(f)
             if content and lua_cog.needsCog(content) then
                 out[#out + 1] = f
             end

@@ -594,6 +594,33 @@ describe("exporter", function()
             local got = file_util.readFileBinary(exported)
             assert.equals(raw_bytes, got)
         end)
+
+        it("strips COG scaffolding from a passthrough file when stripCog is set", function()
+            local process_files = createProcessFiles(temp_dir)
+            local cogged = "Title\n---[[[\n---return 'GEN'\n---]]]\nGEN\n---[[[end]]]\nEnd"
+            process_files.raw_files["doc.md"] = cogged
+
+            local out_dir = path_join(temp_dir, "stripped")
+            assert.is_true(exporter.exportLuaTSV(process_files,
+                {exportDir = out_dir, stripCog = true}))
+
+            local exported = file_util.readFile(path_join(out_dir, "doc.md"))
+            assert.equals("Title\nGEN\nEnd", exported)
+            -- The in-memory source is not mutated.
+            assert.equals(cogged, process_files.raw_files["doc.md"])
+        end)
+
+        it("leaves a passthrough file untouched when stripCog is off", function()
+            local process_files = createProcessFiles(temp_dir)
+            local cogged = "Title\n---[[[\n---return 'GEN'\n---]]]\nGEN\n---[[[end]]]\nEnd"
+            process_files.raw_files["doc.md"] = cogged
+
+            local out_dir = path_join(temp_dir, "kept")
+            assert.is_true(exporter.exportLuaTSV(process_files, {exportDir = out_dir}))
+
+            local exported = file_util.readFile(path_join(out_dir, "doc.md"))
+            assert.equals(cogged, exported)
+        end)
     end)
 
     describe("edge cases", function()

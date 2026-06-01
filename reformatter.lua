@@ -64,6 +64,11 @@ local badValGen = error_reporting.badValGen
 
 local exporter = require("exporter")
 
+-- Export-time COG doc generation (content_pipeline.md §3.10): discover templates,
+-- then expand them after the per-format exporters (which skip them).
+local cog_discovery = require("cog_discovery")
+local doc_generator = require("doc_generator")
+
 local serialization = require("serialization")
 local serializeTableJSON = serialization.serializeTableJSON
 local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
@@ -474,6 +479,15 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
                     end
                 end
                 epCopy.exportDir = exportDir
+                -- Discover COG doc templates once. The per-format exporters skip
+                -- them (templates are generated, not copied — §3.10); doc_generator
+                -- expands them afterwards. The shared read cache means each
+                -- template is read once across discovery and expansion.
+                local docCache = file_util.newReadCache()
+                local templates = cog_discovery.discover(directories, excludeDirs, docCache)
+                local templateSet = {}
+                for _, t in ipairs(templates) do templateSet[t] = true end
+                epCopy.cogTemplates = templateSet
                 -- Register joined types before generating schema so they appear in it
                 local joinedTypeCount = exporter.registerJoinedTypes(result)
                 if joinedTypeCount > 0 then
@@ -497,6 +511,9 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
                         epCopy.tableSerializer = nil
                     end
                 end
+                -- Expand the discovered doc templates against the loaded data and
+                -- write them to the export dir (optional stripCog), mirroring layout.
+                doc_generator.generate(templates, docCache, result, directories, epCopy, badVal)
             end
         end
     else

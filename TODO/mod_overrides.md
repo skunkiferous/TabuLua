@@ -704,7 +704,7 @@ pre-processor effects and for COG-generated rows: derived data is not source-of-
 
 The same rule extends to **content-pipeline-derived files** (see
 [content_pipeline.md](content_pipeline.md)): if a parent or patch file is shipped
-compressed (`.gz`) or in a structured format (XML/JSON/SQLite/`.mtx`), the engine
+compressed (`.gz`) or in a structured format (XML/JSON/SQLite/`.eav`), the engine
 decodes/transcodes it to TSV *before* schema overlays and patches apply, but the
 reformatter writes back the **compressed/structured source**, not the derived TSV.
 Non-reversible transcodes (JSON→TSV has no automatic inverse) are read-only inputs the
@@ -1000,7 +1000,7 @@ expressiveness/observability/performance refinements.
   (or a tier-C cross-package processor) recomputes back-references across the merged graph.
 
 - [content_pipeline.md](content_pipeline.md) is the **sibling registry** that handles
-  file-name/extension-keyed text stages (decompression, XML/JSON/SQLite/`.mtx`
+  file-name/extension-keyed text stages (decompression, XML/JSON/SQLite/`.eav`
   transcoding, and COG itself). It is relevant here because a mod may ship its overlay,
   patch, or data files compressed or in a structured format: the content pipeline decodes
   and transcodes them to TSV **before** this document's overlay → parse → patch →
