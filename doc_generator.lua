@@ -120,6 +120,38 @@ local function generate(templates, cache, result, directories, exportParams, bad
     return ok
 end
 
+-- Refreshes COG doc templates IN PLACE: each template is expanded against the
+-- loaded data and written back over its own source file, KEEPING the COG markers
+-- so it stays re-runnable (cog_markdown.md §2.4 in-place mode — the classic `cog`
+-- use). Unlike generate(), this never strips and never writes to an export dir;
+-- it is the `--cog-docs` build/CI step that keeps a committed README.md current.
+-- Idempotent: COG regenerates the same output region, so re-running is a no-op.
+local function refreshInPlace(templates, cache, result, badVal)
+    if not templates or #templates == 0 then
+        return true
+    end
+    cache = cache or file_util.newReadCache()
+    local docEnv = buildDocEnv(result and result.loadEnv, result and result.tsv_files)
+    local ok = true
+    for _, tmpl in ipairs(templates) do
+        local content = cache.read(tmpl)
+        if content then
+            local expanded = content_pipeline.run(tmpl, content, docEnv, badVal)
+            if expanded ~= nil then
+                local wok, werr = writeFile(tmpl, expanded)
+                if wok then
+                    logger:info("Refreshed doc in place: " .. tmpl)
+                else
+                    logger:error("doc_generator: cannot rewrite " .. tmpl
+                        .. ": " .. tostring(werr))
+                    ok = false
+                end
+            end
+        end
+    end
+    return ok
+end
+
 -- ============================================================
 -- Public API
 -- ============================================================
@@ -131,6 +163,7 @@ end
 local API = {
     getVersion = getVersion,
     generate = generate,
+    refreshInPlace = refreshInPlace,
     buildDocEnv = buildDocEnv,
 }
 

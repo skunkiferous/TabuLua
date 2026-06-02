@@ -282,6 +282,10 @@ local function generateUsage()
         "  --clean               Empty the export directory before exporting",
         "                        Removes all existing files and subdirectories",
         "",
+        "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
+        "                        block) in place against the loaded data, keeping markers.",
+        "                        Independent of reformat/export; nothing is exported.",
+        "",
         "  --variant=<name>      Activate a named variant for conditional file inclusion",
         "                        Can be specified multiple times (e.g., --variant=en --variant=ios)",
         "                        Only Files.tsv rows whose variant matches are loaded",
@@ -521,6 +525,61 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
     end
 end
 
+--- Refreshes COG doc templates in place: loads the data, discovers templates,
+--- and rewrites each source template with its COG region regenerated (markers
+--- KEPT). The `--cog-docs` mode — independent of reformat/export
+--- (cog_markdown.md §2.4). Does not reformat data files or export anything.
+--- @param directories table Sequence of package directory paths
+--- @param opt_variants table|nil Optional sequence of variant names to activate
+--- @side_effect Rewrites COG doc template source files in place
+local function refreshDocs(directories, opt_variants)
+    local td = type(directories)
+    if td == "nil" or (td == "table" and #directories == 0) then
+        logger:error("No input directories specified")
+        return
+    end
+    if td ~= "table" then
+        error("refreshDocs: directories not a table: "..td)
+    end
+    for _, d in pairs(directories) do
+        if type(d) ~= "string" then
+            error("refreshDocs: directory not a string: "..type(d))
+        end
+        if not isDir(d) then
+            logger:error("refreshDocs: directory does not exist: "..d)
+            return
+        end
+    end
+    local badVal = badValGen()
+    badVal.logger = logger
+
+    -- Exclude the conventional export dir so generated copies aren't refreshed.
+    local excludeDirs = {}
+    for _, d in ipairs(directories) do
+        if d and d ~= "" then
+            local candidate = normalizePath(d .. "/" .. DEFAULT_EXPORT_DIR)
+            if candidate then excludeDirs[candidate] = true end
+        end
+    end
+
+    local result = manifest_loader.processFiles(directories, badVal, excludeDirs, opt_variants)
+    if not result then
+        logger:error("manifest_loader failed to process files in " .. table.concat(directories, ", "))
+        return
+    end
+
+    local cache = file_util.newReadCache()
+    local templates = cog_discovery.discover(directories, excludeDirs, cache)
+    if #templates == 0 then
+        logger:info("No COG doc templates found to refresh")
+        return
+    end
+    doc_generator.refreshInPlace(templates, cache, result, badVal)
+    if badVal.errors > 0 then
+        logger:error("Doc refresh errors: " .. badVal.errors)
+    end
+end
+
 local isMainScript = arg and arg[0] and arg[0]:match("reformatter")
 if isMainScript then
     -- Main execution
@@ -535,6 +594,7 @@ if isMainScript then
         local exportDir = DEFAULT_EXPORT_DIR
         local collapseExploded = false  -- --collapse-exploded flag
         local cleanExportDir = false    -- --clean flag
+        local cogDocs = false           -- --cog-docs flag (in-place doc refresh)
         local variants = {}             -- --variant=<name> values
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
@@ -617,6 +677,8 @@ if isMainScript then
                 require("parsers.state").suppressUnquotedStringWarning = true
             elseif arg_i == "--clean" then
                 cleanExportDir = true
+            elseif arg_i == "--cog-docs" then
+                cogDocs = true
             elseif arg_i:match("^%-%-variant=") then
                 local variantName = arg_i:match("^%-%-variant=(.+)$")
                 if variantName then
@@ -644,17 +706,23 @@ if isMainScript then
             os.exit(1)
         end
 
-        exportDir = normalizePath(exportDir)
-        exportParams.exportDir = exportDir
-        -- Set exportExploded=false when --collapse-exploded is specified
-        if collapseExploded then
-            exportParams.exportExploded = false
+        if cogDocs then
+            -- In-place doc refresh mode: rewrite COG templates in their source
+            -- files, independent of reformat/export.
+            refreshDocs(directories, #variants > 0 and variants or nil)
+        else
+            exportDir = normalizePath(exportDir)
+            exportParams.exportDir = exportDir
+            -- Set exportExploded=false when --collapse-exploded is specified
+            if collapseExploded then
+                exportParams.exportExploded = false
+            end
+            -- Set cleanExportDir=true when --clean is specified
+            if cleanExportDir then
+                exportParams.cleanExportDir = true
+            end
+            processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
         end
-        -- Set cleanExportDir=true when --clean is specified
-        if cleanExportDir then
-            exportParams.cleanExportDir = true
-        end
-        processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
     end
 else
     logger:info("reformatter loaded as a module")
@@ -669,6 +737,7 @@ end
 local API = {
     getVersion = getVersion,
     processFiles = processFiles,
+    refreshDocs = refreshDocs,
 }
 
 -- Enables the module to be called as a function

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **In-place COG doc refresh (`--cog-docs`) —
+  [TODO/cog_markdown.md](TODO/cog_markdown.md) Part 2.4.** A new reformatter mode
+  that loads the data, discovers COG doc templates, and rewrites each one **in
+  place** with its generated region refreshed — markers KEPT so it stays
+  re-runnable. This is the classic `cog` use for keeping a committed `README.md`
+  current with the data, suitable for a build/CI step; it is independent of
+  reformat/export and writes nothing to the export dir. Exposed as
+  `reformatter.refreshDocs(directories)` and the `--cog-docs` CLI flag.
+  Idempotent.
+
 - **Data-driven doc generation —
   [TODO/content_pipeline.md](TODO/content_pipeline.md) §3.10,
   [TODO/cog_markdown.md](TODO/cog_markdown.md) Part 2.** At export time, COG doc
