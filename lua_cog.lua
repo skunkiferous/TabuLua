@@ -31,6 +31,7 @@ local readFile = file_util.readFile
 local writeFile = file_util.writeFile
 local unixEOL = file_util.unixEOL
 local isSamePath = file_util.isSamePath
+local hasExtension = file_util.hasExtension
 
 -- This module implements a functionality similar to Cog: https://nedbatchelder.com/code/cog/
 -- Basically, it scans text files for a "comment pattern" and executes a code block when it finds it,
@@ -284,6 +285,38 @@ local function stripCog(content)
     return table.concat(out, "\n")
 end
 
+-- Scans content for HTML-style COG code blocks (<!---[[[ … ]]]--->) whose code
+-- lines contain "--". XML forbids "--" inside a comment (and "-->" would close it
+-- early), so such a block makes the *source* file invalid XML, even though COG
+-- still expands it correctly. Returns a list of {lineNo, text} for each offending
+-- code line. Only the HTML/XML comment style is affected; the ---/###/// styles
+-- are not comments in XML. The markers themselves (<!---[[[, ]]]--->) are valid.
+-- True if the file is in the XML family (.xml / .xhtml) — formats whose comments
+-- are XML comments, so the "no -- inside a comment" rule applies. (.html is NOT
+-- here: HTML tolerates -- in comments.)
+local function isXmlFamily(file_name)
+    return hasExtension(file_name, "xml") or hasExtension(file_name, "xhtml")
+end
+
+local function xmlDoubleDashIssues(content)
+    local issues = {}
+    local inHtmlCode = false
+    local lineNo = 0
+    for _, line in ipairs(split(unixEOL(content), '\n')) do
+        lineNo = lineNo + 1
+        if inHtmlCode then
+            if line:match("^%]%]%]%-%-%->") then
+                inHtmlCode = false   -- code-end marker line; the marker itself is fine
+            elseif line:find("%-%-") then
+                issues[#issues + 1] = {lineNo = lineNo, text = line}
+            end
+        elseif line:match("^<!%-%-%-%[%[%[") and not line:match("^<!%-%-%-%[%[%[end") then
+            inHtmlCode = true        -- entered an HTML-style code block (not the end marker)
+        end
+    end
+    return issues
+end
+
 -- Pure function to process content with COG.
 -- Returns: processed_content, error_message
 -- If content doesn't need COG processing, returns the original content with nil error.
@@ -312,6 +345,16 @@ end
 local function processContentBV(file_name, content, cog_env, badVal)
     if needsCog(content) then
         logger:info("Processing file " .. file_name .. " with COG")
+        -- For XML, a COG code line with "--" makes the source invalid XML. Report
+        -- it now (with the line number) so the user is alerted at processing time,
+        -- not when an XML parser later chokes on the file.
+        if isXmlFamily(file_name) then
+            for _, issue in ipairs(xmlDoubleDashIssues(content)) do
+                badVal(nil, "COG block in XML/XHTML file '" .. file_name .. "' has \"--\" on line "
+                    .. issue.lineNo .. ": XML comments may not contain \"--\", which would make "
+                    .. file_name .. " invalid XML. Rewrite the code to avoid \"--\".")
+            end
+        end
     end
 
     local result, err = tryProcessContent(content, cog_env)
@@ -359,6 +402,7 @@ else
         rewriteFile=rewriteFile,
         stripCog=stripCog,
         tryProcessContent=tryProcessContent,
+        xmlDoubleDashIssues=xmlDoubleDashIssues,
     }
     
     -- Enables the module to be called as a function

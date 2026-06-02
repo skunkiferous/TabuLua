@@ -92,13 +92,16 @@ describe("cog_discovery", function()
             assert.is_true(content_pipeline.isScanEligible("a.markdown"))
             assert.is_true(content_pipeline.isScanEligible("a.html"))
             assert.is_true(content_pipeline.isScanEligible("a.txt"))
+            assert.is_true(content_pipeline.isScanEligible("a.xml"))
+            assert.is_true(content_pipeline.isScanEligible("a.xhtml"))
             assert.is_false(content_pipeline.isScanEligible("a.tsv"))
             assert.is_false(content_pipeline.isScanEligible("a.csv"))
             assert.is_false(content_pipeline.isScanEligible("a.json"))
         end)
 
         it("exposes the eligible extensions sorted", function()
-            assert.same({"html", "markdown", "md", "txt"}, content_pipeline.scanExtensions())
+            assert.same({"html", "markdown", "md", "txt", "xhtml", "xml"},
+                content_pipeline.scanExtensions())
         end)
     end)
 

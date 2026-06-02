@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **COG support for `.xml` and `.xhtml` templates.** `.xml` and `.xhtml` are now
+  COG-scan-eligible extensions, so XML-family files can carry COG blocks (via the
+  shared HTML-comment marker style `<!---[[[ … ]]]--->`) and be discovered /
+  generated / refreshed like Markdown and HTML. Because XML (and therefore XHTML)
+  forbids `--` inside a comment, `lua_cog.processContentBV` now reports an
+  **error** (with the line number) when an HTML-style COG code line in an
+  `.xml`/`.xhtml` file contains `--`, alerting the author at processing time
+  instead of when an XML parser later rejects the file.
+
 - **In-place COG doc refresh (`--cog-docs`) —
   [TODO/cog_markdown.md](TODO/cog_markdown.md) Part 2.4.** A new reformatter mode
   that loads the data, discovers COG doc templates, and rewrites each one **in

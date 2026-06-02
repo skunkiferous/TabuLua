@@ -578,4 +578,68 @@ describe("lua_cog", function()
       assert.equals(content, lua_cog.stripCog(content))
     end)
   end)
+
+  -- XML comments may not contain "--"; flag it in HTML-style COG code so the user
+  -- is alerted at processing time rather than when an XML parser later chokes.
+  describe("XML double-dash check", function()
+    local XML_WITH_DASHES = table.concat({
+      "<root>",
+      "<!---[[[",
+      "return 1 -- a lua comment",
+      "]]]--->",
+      "OLD",
+      "<!---[[[end]]]--->",
+      "</root>",
+    }, "\n")
+
+    it("xmlDoubleDashIssues reports the offending code line", function()
+      local issues = lua_cog.xmlDoubleDashIssues(XML_WITH_DASHES)
+      assert.equals(1, #issues)
+      assert.equals(3, issues[1].lineNo)
+      assert.matches("lua comment", issues[1].text)
+    end)
+
+    it("xmlDoubleDashIssues ignores the markers themselves", function()
+      -- Clean code: only the <!--- and ]]]---> markers carry dashes, and those
+      -- are valid XML comment delimiters.
+      local clean = "<root>\n<!---[[[\nreturn 1 + 2\n]]]--->\nOLD\n<!---[[[end]]]--->\n</root>"
+      assert.equals(0, #lua_cog.xmlDoubleDashIssues(clean))
+    end)
+
+    it("processContentBV reports the issue via badVal for an .xml file", function()
+      local msgs = {}
+      local bv = function(_, m) msgs[#msgs + 1] = m end
+      local out = lua_cog.processContentBV("doc.xml", XML_WITH_DASHES, {}, bv)
+      assert.is_true(#msgs > 0)
+      assert.matches("invalid XML", msgs[1])
+      assert.matches("line 3", msgs[1])
+      -- COG still expands (the doc is produced regardless).
+      assert.matches("1", out)
+      assert.not_matches("OLD", out)
+    end)
+
+    it("processContentBV does NOT flag '--' in a non-XML file", function()
+      local md = "<!---[[[\nreturn 1 -- a lua comment\n]]]--->\nOLD\n<!---[[[end]]]--->"
+      local msgs = {}
+      local bv = function(_, m) msgs[#msgs + 1] = m end
+      lua_cog.processContentBV("doc.md", md, {}, bv)
+      assert.equals(0, #msgs)
+    end)
+
+    it("processContentBV applies the same check to .xhtml (XML family)", function()
+      local msgs = {}
+      local bv = function(_, m) msgs[#msgs + 1] = m end
+      lua_cog.processContentBV("page.xhtml", XML_WITH_DASHES, {}, bv)
+      assert.is_true(#msgs > 0)
+      assert.matches("line 3", msgs[1])
+    end)
+
+    it("processContentBV does not flag a clean .xml COG block", function()
+      local clean = "<root>\n<!---[[[\nreturn 1 + 2\n]]]--->\nOLD\n<!---[[[end]]]--->\n</root>"
+      local msgs = {}
+      local bv = function(_, m) msgs[#msgs + 1] = m end
+      lua_cog.processContentBV("clean.xml", clean, {}, bv)
+      assert.equals(0, #msgs)
+    end)
+  end)
 end)
