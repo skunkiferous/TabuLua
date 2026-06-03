@@ -34,9 +34,10 @@ end
 -- is not supported" error for that file (logged once), instead of a hard
 -- require failure at startup.
 --
--- direction is "decompress" or "compress". Today gzip/decompress (gunzip) ships;
--- gzip/compress and other formats (zstd, brotli, …) are simply pairs with no
--- provider yet — isSupported() reports false and the operation returns an error.
+-- direction is "decompress" or "compress". Today gzip ships in BOTH directions
+-- (gunzip and gzip), both built on the pure-Lua libdeflate rock; other formats
+-- (zstd, brotli, …) are simply pairs with no provider yet — isSupported()
+-- reports false and the operation returns an error.
 -- ============================================================
 
 local DECOMPRESS = "decompress"
@@ -112,9 +113,11 @@ local function decompress(format, bytes, maxBytes)
     return impl(bytes, maxBytes)
 end
 
--- Compresses `bytes` using `format`. opts (optional) is codec-specific. Returns
--- (data) or (nil, reason). No compress provider ships yet, so this currently
--- reports every format as unsupported until one is registered (Phase 4+).
+-- Compresses `bytes` using `format`. opts (optional) is codec-specific (gzip
+-- accepts `{level = 1..9}`, passed through to libdeflate). Returns (data) or
+-- (nil, reason) — including when the format is unsupported, so callers have one
+-- error path. gzip/compress ships; other formats report unsupported until a
+-- provider is registered.
 local function compress(format, bytes, opts)
     local impl, err = resolve(format, COMPRESS)
     if not impl then
@@ -200,6 +203,76 @@ registerProvider("gzip", DECOMPRESS, function()
                 :format(#data, maxBytes)
         end
         return data
+    end
+end)
+
+-- CRC-32 (IEEE 802.3, reflected polynomial 0xEDB88320) in pure Lua, for the gzip
+-- trailer. libdeflate computes Adler-32 (for the zlib wrapper) but never exposes
+-- CRC-32, and the gzip envelope's integrity field is specifically CRC-32 — so a
+-- small, dependency-free implementation lives here. The 256-entry lookup table is
+-- built once, lazily on the first compression, so merely requiring this module
+-- (or only ever decompressing) costs nothing.
+local CRC32_TABLE
+local function crc32(s)
+    local t = CRC32_TABLE
+    if not t then
+        t = {}
+        for i = 0, 255 do
+            local c = i
+            for _ = 1, 8 do
+                if (c & 1) ~= 0 then
+                    c = 0xEDB88320 ~ (c >> 1)
+                else
+                    c = c >> 1
+                end
+            end
+            t[i] = c
+        end
+        CRC32_TABLE = t
+    end
+    local crc = 0xFFFFFFFF
+    for i = 1, #s do
+        crc = (crc >> 8) ~ t[(crc ~ s:byte(i)) & 0xFF]
+    end
+    return crc ~ 0xFFFFFFFF
+end
+
+-- Encodes a number as 4 little-endian bytes — the format of the gzip trailer's
+-- CRC32 and ISIZE fields — taking it modulo 2^32 as the format requires.
+local function u32le(n)
+    n = n & 0xFFFFFFFF
+    return string.char(n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF)
+end
+
+-- The fixed 10-byte gzip header (RFC 1952): magic 1f 8b, CM=8 (deflate), FLG=0
+-- (no name/comment/extra/hcrc), MTIME=0, XFL=0, OS=255 (unknown). A header this
+-- plain is what gzipFraming (above) parses on the way back in.
+local GZIP_HEADER = string.char(0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xff)
+
+-- gzip compression, the inverse of the decompress provider above. libdeflate
+-- produces the raw DEFLATE body; we wrap it in the RFC 1952 envelope ourselves
+-- (the fixed header, then a CRC32 + ISIZE trailer computed in pure Lua). The
+-- output round-trips through our own gunzip provider AND standard `gunzip`/zcat.
+-- `opts.level` (1..9) is forwarded to libdeflate's deflate level. The loader
+-- degrades gracefully — (nil, reason) — when libdeflate is absent.
+registerProvider("gzip", COMPRESS, function()
+    local ok, LibDeflate = pcall(require, "libdeflate")
+    if not ok or type(LibDeflate) ~= "table" then
+        return nil, "libdeflate rock is not installed"
+    end
+    return function(s, opts)
+        if type(s) ~= "string" then
+            return nil, "gzip compress expects a string"
+        end
+        local configs
+        if type(opts) == "table" and opts.level then
+            configs = {level = opts.level}
+        end
+        local body = LibDeflate:CompressDeflate(s, configs)
+        if type(body) ~= "string" then
+            return nil, "libdeflate CompressDeflate failed"
+        end
+        return GZIP_HEADER .. body .. u32le(crc32(s)) .. u32le(#s)
     end
 end)
 

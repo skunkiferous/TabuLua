@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Pure-Lua gzip compression (`compression.compress("gzip", …)`).** The
+  `gzip/compress` provider now ships, completing gzip in both directions with no
+  new dependency and nothing for the user to install beyond Lua + luarocks. No
+  native-free luarocks rock offers gzip *compression* (every one that does — lzlib,
+  lua-zlib — binds C zlib), so this is built on the already-used pure-Lua
+  `libdeflate` (which produces the raw DEFLATE body) plus a small in-module RFC 1952
+  envelope writer: the fixed 10-byte header, and a **pure-Lua CRC32** + ISIZE
+  trailer (libdeflate exposes only Adler-32, never the CRC-32 the gzip envelope
+  requires). Accepts `opts.level` (1..9). The output round-trips through the
+  existing gunzip provider and is verified standards-compliant against a real gzip
+  decoder (.NET `GZipStream`, which checks the CRC32). The CRC32 lookup table is
+  built lazily on first use, so merely requiring the module — or only ever
+  decompressing — costs nothing. Tests in `spec/compression_spec.lua` (+8).
+
 - **COG support for `.xml` and `.xhtml` templates.** `.xml` and `.xhtml` are now
   COG-scan-eligible extensions, so XML-family files can carry COG blocks (via the
   shared HTML-comment marker style `<!---[[[ … ]]]--->`) and be discovered /

@@ -27,8 +27,8 @@ describe("compression", function()
       assert.is_true(compression.isSupported("gzip", "decompress"))
     end)
 
-    it("reports gzip compression as unsupported (no provider yet)", function()
-      assert.is_false(compression.isSupported("gzip", "compress"))
+    it("reports gzip compression as supported (libdeflate installed)", function()
+      assert.is_true(compression.isSupported("gzip", "compress"))
     end)
 
     it("reports an unknown format as unsupported", function()
@@ -70,9 +70,57 @@ describe("compression", function()
     end)
   end)
 
-  describe("compress", function()
-    it("reports gzip compression as unsupported for now", function()
-      local data, err = compression.compress("gzip", "hello")
+  describe("compress (gzip)", function()
+    it("produces a stream with the gzip magic and deflate method", function()
+      local gz = compression.compress("gzip", REAL_GZIP_PLAIN)
+      assert.is_string(gz)
+      assert.equals(0x1f, gz:byte(1))
+      assert.equals(0x8b, gz:byte(2))
+      assert.equals(0x08, gz:byte(3))   -- CM = deflate
+    end)
+
+    it("round-trips through our own gunzip provider", function()
+      local original = "id\tvalue\nitem1\t42\nitem2\t100\n"
+      local gz = compression.compress("gzip", original)
+      local back, err = compression.decompress("gzip", gz)
+      assert.is_nil(err)
+      assert.equals(original, back)
+    end)
+
+    it("round-trips an empty string", function()
+      local gz = compression.compress("gzip", "")
+      assert.equals("", compression.decompress("gzip", gz))
+    end)
+
+    it("round-trips binary data containing NULs and high bytes", function()
+      local original = string.char(0, 255, 10, 13, 0, 1, 2, 254):rep(500)
+      local gz = compression.compress("gzip", original)
+      assert.equals(original, compression.decompress("gzip", gz))
+    end)
+
+    it("writes the correct ISIZE (original length mod 2^32) in the trailer", function()
+      local original = ("x"):rep(1234)
+      local gz = compression.compress("gzip", original)
+      local n = #gz
+      local isize = gz:byte(n - 3) + gz:byte(n - 2) * 256
+        + gz:byte(n - 1) * 65536 + gz:byte(n) * 16777216
+      assert.equals(1234, isize)
+    end)
+
+    it("honours the deflate level option", function()
+      local original = ("ab"):rep(2000)
+      local back = compression.decompress("gzip", compression.compress("gzip", original, {level = 9}))
+      assert.equals(original, back)
+    end)
+
+    it("rejects a non-string input", function()
+      local data, err = compression.compress("gzip", 42)
+      assert.is_nil(data)
+      assert.is_string(err)
+    end)
+
+    it("returns an error for an unknown format", function()
+      local data, err = compression.compress("brotli", "whatever")
       assert.is_nil(data)
       assert.matches("no compress provider", err)
     end)
