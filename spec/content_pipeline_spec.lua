@@ -18,6 +18,7 @@ local raw_tsv = require("raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
 local rawTSVToString = raw_tsv.rawTSVToString
 local LibDeflate = require("libdeflate")
+local compression = require("compression")
 local parsers = require("parsers")
 
 -- A record type used by the JSON transcoder tests; schema drives the typed header.
@@ -472,5 +473,54 @@ describe("content_pipeline", function()
       assert.matches("expected 3 column", bv.messages[1])
     end)
 
+  end)
+
+  -- Name-only decode-extension peeling, used by the loader (routing) and the
+  -- reformatter (reversible round-trip). The gzip stage (reversible) is the one
+  -- registered decode stage via builtin_content_stages.
+  describe("peeledName / reversibleDecode", function()
+    it("peeledName strips a .gz decode extension", function()
+      assert.equals("data.tsv", content_pipeline.peeledName("data.tsv.gz"))
+    end)
+
+    it("peeledName strips chained decode extensions", function()
+      assert.equals("data.tsv", content_pipeline.peeledName("data.tsv.gz.gz"))
+    end)
+
+    it("peeledName leaves a plain name unchanged", function()
+      assert.equals("data.tsv", content_pipeline.peeledName("data.tsv"))
+      assert.equals("items.json", content_pipeline.peeledName("items.json"))
+    end)
+
+    it("reversibleDecode reports the peeled name for a reversible source", function()
+      local rd = content_pipeline.reversibleDecode("data.tsv.gz")
+      assert.is_not_nil(rd)
+      assert.equals("data.tsv", rd.peeledName)
+    end)
+
+    it("reversibleDecode returns nil for a name with no decode extension", function()
+      assert.is_nil(content_pipeline.reversibleDecode("data.tsv"))
+      assert.is_nil(content_pipeline.reversibleDecode("items.json"))
+    end)
+
+    it("reversibleDecode.encode re-gzips so the bytes gunzip back to the input", function()
+      local rd = content_pipeline.reversibleDecode("data.tsv.gz")
+      local tsv = "id:string\tvalue:integer\nitem1\t42\n"
+      local bytes = rd.encode(tsv, nil, function() end)
+      assert.is_string(bytes)
+      assert.equals(0x1f, bytes:byte(1))            -- gzip magic
+      assert.equals(0x8b, bytes:byte(2))
+      assert.equals(tsv, compression.decompress("gzip", bytes))
+    end)
+
+    it("reversibleDecode.encode re-applies a chained .gz.gz inside-out", function()
+      local rd = content_pipeline.reversibleDecode("data.tsv.gz.gz")
+      local tsv = "id:string\tvalue:integer\nitem1\t42\n"
+      local outer = rd.encode(tsv, nil, function() end)
+      -- Two gzip layers: gunzip once -> a gzip stream, gunzip twice -> the TSV.
+      local once = compression.decompress("gzip", outer)
+      assert.equals(0x1f, once:byte(1))
+      assert.equals(tsv, compression.decompress("gzip", once))
+    end)
   end)
 end)

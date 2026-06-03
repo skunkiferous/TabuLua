@@ -104,6 +104,15 @@ content_pipeline.register(NAME, {
     extensions = {"gz"},
     magic = "\031\139",                     -- 0x1f 0x8b
     maxOutputBytes = GZIP_MAX_OUTPUT_BYTES,
+    -- Reversible (§3.6): the reformatter can rewrite a compressed data source
+    -- (data.tsv.gz) by reformatting the decoded TSV and re-gzipping it. `encode`
+    -- is the inverse of the gunzip transform — it re-compresses the bytes via the
+    -- compression module's gzip/compress provider (pure-Lua, no new dependency).
+    -- The reformatter writes the returned bytes back over the original on-disk name.
+    reversible = true,
+    encode = function(content, _env, _badVal)
+        return compression.compress("gzip", content)
+    end,
     transform = function(name, content, _env, badVal)
         local data, err = compression.decompress("gzip", content, GZIP_MAX_OUTPUT_BYTES)
         if not data then

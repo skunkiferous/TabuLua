@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Reversible gzip data files (`data.tsv.gz`) — end-to-end load + reformat
+  round-trip ([TODO/content_pipeline.md](TODO/content_pipeline.md) §3.6, Phase 4
+  Part B).** Compressed TSV/CSV data files are now first-class: `.gz` is collected,
+  and a file whose name peels (by the content pipeline's decode extensions) to a
+  `.tsv`/`.csv` is decoded and parsed as data, while other `.gz` files stay on the
+  stream/passthrough path. The reformatter no longer leaves such a source
+  untouched — it reformats the **decoded** TSV and **re-compresses** it through the
+  decode stage's new `encode` re-encoder (gzip is marked `reversible = true`),
+  writing the bytes back in binary. It never clobbers the `.gz` with plaintext TSV.
+  This builds directly on the pure-Lua gzip compressor below. New surface:
+  `content_pipeline.peeledName` / `reversibleDecode` (name-only decode-extension
+  peeling), a stage `encode` field, and `file_util.writeFileBinary` /
+  `safeReplaceFileBinary`. Tests: `spec/content_pipeline_spec.lua` (+7) and
+  `spec/gzip_reversible_integration_spec.lua` (+4, full load + reformat round-trip).
+
 - **Pure-Lua gzip compression (`compression.compress("gzip", …)`).** The
   `gzip/compress` provider now ships, completing gzip in both directions with no
   new dependency and nothing for the user to install beyond Lua + luarocks. No

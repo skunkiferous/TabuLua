@@ -428,14 +428,14 @@ end
 --- @return boolean|nil True on success, nil on error
 --- @return string|nil Error message if write failed, nil on success
 --- @side_effect Creates or overwrites the file
-local function writeFile(file_path, content)
+local function writeFileWithMode(file_path, content, mode)
     if type(file_path) ~= "string" then
         return nil, "file_path not a string: "..type(file_path)
     end
     if type(content) ~= "string" then
         return nil, "content not a string: "..type(content)
     end
-    local success, file, err = pcall(io.open, file_path, "w")
+    local success, file, err = pcall(io.open, file_path, mode)
     if not success then return nil, file end
     if not file then return nil, err end
     local ok
@@ -445,14 +445,24 @@ local function writeFile(file_path, content)
     return true
 end
 
---- Safely replaces a file's content using atomic rename pattern.
---- Writes to .new file, renames original to .old, renames .new to original, removes .old.
---- @param file_path string The path to the file to replace
---- @param new_content string The new content
+local function writeFile(file_path, content)
+    return writeFileWithMode(file_path, content, "w")
+end
+
+--- Writes content to a file in BINARY mode (no CRLF translation), overwriting if
+--- it exists. Use for bytes that must survive verbatim — e.g. a re-compressed
+--- gzip stream the reformatter writes back (text mode would corrupt it on Windows).
+--- @param file_path string The path to the file to write
+--- @param content string The raw bytes to write
 --- @return boolean|nil True on success, nil on error
---- @return string|nil Error message if operation failed, nil on success
---- @side_effect Creates temporary files, modifies filesystem
-local function safeReplaceFile(file_path, new_content)
+--- @return string|nil Error message if write failed, nil on success
+local function writeFileBinary(file_path, content)
+    return writeFileWithMode(file_path, content, "wb")
+end
+
+-- Shared atomic-rename core for safeReplaceFile / safeReplaceFileBinary; `writer`
+-- selects text vs binary mode for the temporary .new file.
+local function safeReplaceFileImpl(file_path, new_content, writer)
     if type(file_path) ~= "string" then
         return nil, "file_path not a string: "..type(file_path)
     end
@@ -462,8 +472,8 @@ local function safeReplaceFile(file_path, new_content)
     local new_file = file_path .. ".new"
     local old_file = file_path .. ".old"
     
-    -- Write new content to .new file
-    local ok, err = writeFile(new_file, new_content)
+    -- Write new content to .new file (text or binary, per the chosen writer)
+    local ok, err = writer(new_file, new_content)
     if not ok then
         return nil, string.format("Unable to write to %s: %s", new_file, err)
     end
@@ -488,8 +498,30 @@ local function safeReplaceFile(file_path, new_content)
     if not ok then
         return nil, string.format("Unable to remove %s: %s", old_file, err)
     end
-    
+
     return true
+end
+
+--- Safely replaces a file's content (text mode) using an atomic rename pattern.
+--- Writes to .new file, renames original to .old, renames .new to original, removes .old.
+--- @param file_path string The path to the file to replace
+--- @param new_content string The new content
+--- @return boolean|nil True on success, nil on error
+--- @return string|nil Error message if operation failed, nil on success
+--- @side_effect Creates temporary files, modifies filesystem
+local function safeReplaceFile(file_path, new_content)
+    return safeReplaceFileImpl(file_path, new_content, writeFile)
+end
+
+--- Safely replaces a file's content in BINARY mode (no CRLF translation) using the
+--- same atomic rename pattern. Use when the new content is raw bytes that must not
+--- be altered — e.g. a re-compressed gzip stream (§3.6).
+--- @param file_path string The path to the file to replace
+--- @param new_content string The new raw bytes
+--- @return boolean|nil True on success, nil on error
+--- @return string|nil Error message if operation failed, nil on success
+local function safeReplaceFileBinary(file_path, new_content)
+    return safeReplaceFileImpl(file_path, new_content, writeFileBinary)
 end
 
 --- Converts all line endings to Unix style (\n).
@@ -874,11 +906,13 @@ local API = {
     readFile = readFile,
     safeDir = safeDir,
     safeReplaceFile = safeReplaceFile,
+    safeReplaceFileBinary = safeReplaceFileBinary,
     sortFilesBreadthFirst = sortFilesBreadthFirst,
     splitPath = splitPath,
     toOSPath = toOSPath,
     unixEOL = unixEOL,
     writeFile = writeFile,
+    writeFileBinary = writeFileBinary,
 }
 
 -- Enables the module to be called as a function

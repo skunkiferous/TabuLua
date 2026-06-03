@@ -131,6 +131,10 @@ local function validateSpec(moduleName, spec)
         error("content_pipeline.register: sinkTransform must be a function for module '"
             .. moduleName .. "'", 3)
     end
+    if spec.encode ~= nil and type(spec.encode) ~= "function" then
+        error("content_pipeline.register: encode must be a function for module '"
+            .. moduleName .. "'", 3)
+    end
     if spec.transform == nil and spec.sinkTransform == nil then
         error("content_pipeline.register: stage from module '" .. moduleName
             .. "' must supply a transform and/or a sinkTransform", 3)
@@ -336,6 +340,97 @@ local function findStageById(phase, id)
         end
     end
     return nil
+end
+
+-- ============================================================
+-- Name-only decode-extension peeling (loader routing + reformatter round-trip)
+--
+-- These reason about a file's NAME alone — no content, no magic. The point is to
+-- answer two pre-read questions: "is data.tsv.gz really TSV data to parse?"
+-- (routing) and "can I rewrite data.tsv.gz by reformatting its TSV and
+-- re-compressing?" (reformat round-trip, §3.6). Only EXTENSION-matched decode
+-- stages participate: a magic-only match on a mislabelled file has no extension
+-- to strip or restore, so it is deliberately outside this path.
+-- ============================================================
+
+-- The highest-priority decode stage whose `extensions` list includes `ext`
+-- (lowercase, no dot), or nil. Same ordering as matchingStages (ascending
+-- priority, then registration order), matched on the extension only.
+local function decodeStageForExt(ext)
+    local best, bestPri, bestOrder
+    for i, entry in ipairs(STAGES) do
+        local spec = entry.spec
+        if spec.phase == "decode" and spec.transform and spec.extensions then
+            for _, e in ipairs(spec.extensions) do
+                if type(e) == "string" and e:lower() == ext then
+                    local pri = spec.priority or 100
+                    if not best or pri < bestPri or (pri == bestPri and i < bestOrder) then
+                        best, bestPri, bestOrder = spec, pri, i
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- Strips every decode-extension layer a name implies, returning the innermost
+-- effective name (data.tsv.gz -> data.tsv; data.tsv -> data.tsv unchanged). The
+-- loader uses this to decide whether a collected file is TSV/CSV data to parse
+-- rather than an opaque asset to stream.
+local function peeledName(name)
+    if type(name) ~= "string" then return name end
+    local cur = name
+    while true do
+        local ext = finalExtension(cur)
+        if not ext or not decodeStageForExt(ext) then break end
+        cur = cur:sub(1, #cur - #ext - 1)   -- drop the trailing ".<ext>"
+    end
+    return cur
+end
+
+-- Reconstructs, from a name alone, the decode chain that would run and whether it
+-- can be fully reversed. Returns { peeledName, encode } when EVERY decode layer
+-- the name implies is reversible (declares `reversible` + an `encode`); returns
+-- nil otherwise — covering both "no decode extension" (an ordinary source) and
+-- "a layer that cannot be re-encoded" (leave it read-only, §3.6).
+--   encode(content, env, badVal) -> (bytes) | (nil, reason)
+-- re-applies the chain's encoders inside-out, so reformatting a data.tsv.gz is
+-- "reformat the decoded TSV, then re-gzip". The reformatter writes the returned
+-- bytes back over the original on-disk name.
+local function reversibleDecode(name)
+    if type(name) ~= "string" then return nil end
+    local chain = {}
+    local cur = name
+    while true do
+        local ext = finalExtension(cur)
+        if not ext then break end
+        local spec = decodeStageForExt(ext)
+        if not spec then break end
+        if not (spec.reversible and spec.encode) then
+            return nil                       -- a decode layer that cannot be reversed
+        end
+        chain[#chain + 1] = spec
+        cur = cur:sub(1, #cur - #ext - 1)
+    end
+    if #chain == 0 then return nil end       -- no decode extension: an ordinary source
+    local peeled = cur
+    return {
+        peeledName = peeled,
+        encode = function(content, env, badVal)
+            -- chain[1] is the OUTERMOST layer (peeled first), so re-apply from the
+            -- innermost (chain[#chain]) outward to rebuild the on-disk bytes.
+            for i = #chain, 1, -1 do
+                local bytes, reason = chain[i].encode(content, env, badVal)
+                if bytes == nil then
+                    return nil, reason or "re-encode failed"
+                end
+                content = bytes
+            end
+            return content
+        end,
+    }
 end
 
 -- decode: loop with extension peeling. Each iteration runs the highest-priority
@@ -560,6 +655,8 @@ local API = {
     runSink = runSink,
     isTextFile = isTextFile,
     classifyKind = classifyKind,
+    peeledName = peeledName,
+    reversibleDecode = reversibleDecode,
     registerScanExtensions = registerScanExtensions,
     isScanEligible = isScanEligible,
     scanExtensions = scanExtensions,

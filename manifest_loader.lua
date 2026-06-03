@@ -88,8 +88,12 @@ local CSV = "csv"
 -- TSV file extension
 local TSV = "tsv"
 
--- Supported text formats (manifest files use .transposed.tsv which is covered by TSV)
-local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua"}
+-- Supported file extensions the loader collects. `gz` lets compressed data files
+-- (data.tsv.gz) be picked up so the content pipeline can decode them; whether a
+-- given .gz is parsed as data or streamed as an asset is decided per file by its
+-- peeled name (see isCompressedDataFile / loadOtherFiles). Manifest files use
+-- .transposed.tsv, which is covered by TSV.
+local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz"}
 
 -- Find the priority of the file
 local function findPriority(priorities, file, missingPriority)
@@ -444,6 +448,18 @@ local function storeRawFile(file_name, raw_files, opt_badVal)
     end
 end
 
+-- True iff a collected file is TSV/CSV data only AFTER the content pipeline peels
+-- its decode extensions — i.e. a compressed data file like data.tsv.gz. A .gz
+-- that peels to a non-TSV name (notes.txt.gz, image.png.gz) is NOT data and stays
+-- on the stream/passthrough path. Plain .tsv/.csv peel to themselves, so this is
+-- false for them (they are matched directly by the caller's hasExtension checks).
+local function isCompressedDataFile(file_name)
+    local peeled = content_pipeline.peeledName(file_name)
+    if peeled == file_name then return false end
+    local lower = peeled:lower()
+    return lower:sub(-4) == ".tsv" or lower:sub(-4) == ".csv"
+end
+
 -- Reads a non-TSV/CSV file and stores its content (or a passthrough descriptor).
 local function processUnknownFile(file_name, raw_files, badVal)
     if hasExtension(file_name, "lua") then
@@ -474,11 +490,12 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
                 goto continue
             end
         end
-        -- A file is parsed as data if it's a TSV/CSV, OR if Files.tsv assigned it
-        -- a transcoder (e.g. a .json routed through the json:objects transcoder).
+        -- A file is parsed as data if it's a TSV/CSV, a compressed TSV/CSV the
+        -- pipeline can decode (data.tsv.gz), OR if Files.tsv assigned it a
+        -- transcoder (e.g. a .json routed through the json:objects transcoder).
         -- Everything else is copied/streamed through as an asset (unchanged).
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV)
-            or lcFn2Transcoder[key] then
+            or lcFn2Transcoder[key] or isCompressedDataFile(file_name) then
             processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts,
                 lcFn2Type, lcFn2Ctx, lcFn2Col,
                 lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,

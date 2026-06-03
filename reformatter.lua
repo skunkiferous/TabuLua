@@ -51,6 +51,7 @@ local readOnly = read_only.readOnly
 
 local file_util = require("file_util")
 local safeReplaceFile = file_util.safeReplaceFile
+local safeReplaceFileBinary = file_util.safeReplaceFileBinary
 local normalizePath = file_util.normalizePath
 local isDir = file_util.isDir
 local emptyDir = file_util.emptyDir
@@ -58,6 +59,10 @@ local mkdir = file_util.mkdir
 local hasExtension = file_util.hasExtension
 
 local manifest_loader = require("manifest_loader")
+
+-- Reversible decode round-trip (§3.6): lets reformat rewrite a compressed data
+-- source (data.tsv.gz) by reformatting its decoded TSV and re-compressing it.
+local content_pipeline = require("content_pipeline")
 
 local error_reporting = require("error_reporting")
 local badValGen = error_reporting.badValGen
@@ -361,43 +366,45 @@ local function generateUsage()
     return table.concat(lines, "\n")
 end
 
+--- Logs that a reformatted file's content changed (or only its trailing EOL did).
+local function logContentChange(file_name, new_content, old_content)
+    if (new_content .. '\n') == old_content then
+        logger:info("Last EOL of " .. file_name .. " has changed")
+    else
+        logger:warn("Content of " .. file_name .. " has changed")
+    end
+end
+
 --- Re-formats TSV files in-place, updating files whose content has changed after parsing.
 --- @param tsv_files table Map of file paths to parsed TSV data
 --- @param raw_files table Map of file paths to original raw content
 --- @param badVal table badVal instance for error reporting
 --- @side_effect Modifies files on disk if content changed
 ---
---- TODO (content_pipeline.md §3.6, Phase 4 Part B — deferred): honour reversible
---- decode stages. Today every transcoded/decoded file is left untouched (the
---- non-.tsv/.csv skip below). A decode stage that declares `reversible=true` and
---- supplies a re-encoder should instead round-trip: reformat the derived TSV,
---- re-encode it (e.g. re-gzip), and write the source back compressed. That needs
---- (a) a gzip *compress* provider (CRC32 — not in libdeflate 1.0.2), (b) per-file
---- decode-chain tracking threaded here so we know which re-encoder to apply, and
---- (c) a reversible format reachable end-to-end (`.gz` isn't collected yet). Build
---- it together with that real use case rather than speculatively.
+--- Three cases per file (content_pipeline.md §3.6):
+---   * Plain .tsv/.csv      — rewrite the reformatted TSV in place (text mode).
+---   * Reversible decode     — a compressed data source (data.tsv.gz). raw_files
+---     (e.g. data.tsv.gz)      holds the DECODED TSV; rewrite by reformatting that
+---                             TSV and re-compressing through the decode stage's
+---                             re-encoder, then writing the bytes back (binary).
+---   * Everything else       — transcoded sources (items.json) and non-reversible
+---                             decodes are read-only: derived TSV must NOT clobber
+---                             the original, so they are left untouched.
 local function reformat(tsv_files, raw_files, badVal)
     for file_name, tsv in pairs(tsv_files) do
-        -- Only rewrite genuine TSV/CSV sources in place. A transcoded or decoded
-        -- file (e.g. items.json via the json:objects transcoder, or data.tsv.gz)
-        -- lives in tsv_files too, but its raw_files entry holds DERIVED text, not
-        -- the source — rewriting it would clobber the original with TSV. Its
-        -- non-.tsv/.csv extension is the reliable signal to leave it untouched
-        -- (content_pipeline.md §3.6). Binary passthrough files (§3.5) are stored
-        -- as descriptor tables, not strings, and never reach here anyway; the
-        -- string guard keeps that safe too.
-        if (hasExtension(file_name, "tsv") or hasExtension(file_name, "csv"))
-            and type(raw_files[file_name]) == "string" then
-            -- Manifests are now reformatted too: user-defined fields are preserved
-            -- in the tsv_model, and __comment placeholders restore comment lines
-            local new_content = tostring(tsv)
-            local old_content = raw_files[file_name]
+        local old_content = raw_files[file_name]
+        if type(old_content) ~= "string" then
+            -- Binary passthrough files (§3.5) are descriptor tables, not strings,
+            -- and shouldn't be in tsv_files at all; guard defensively.
+            logger:warn("Content of " .. file_name .. " missing in raw_files")
+            goto continue
+        end
+        local new_content = tostring(tsv)
+        if hasExtension(file_name, "tsv") or hasExtension(file_name, "csv") then
+            -- Manifests are reformatted too: user-defined fields are preserved in
+            -- the tsv_model, and __comment placeholders restore comment lines.
             if new_content ~= old_content then
-                if (new_content .. '\n') == old_content then
-                    logger:info("Last EOL of " .. file_name .. " has changed")
-                else
-                    logger:warn("Content of " .. file_name .. " has changed")
-                end
+                logContentChange(file_name, new_content, old_content)
                 if safeReplaceFile(file_name, new_content) then
                     logger:info("Updated: " .. file_name)
                 else
@@ -405,8 +412,31 @@ local function reformat(tsv_files, raw_files, badVal)
                 end
             end
         else
-            logger:warn("Content of " .. file_name .. " missing in raw_files")
+            -- Not a plain TSV/CSV. If it's a reversible compressed data source
+            -- (data.tsv.gz), round-trip it: reformat the decoded TSV, re-compress,
+            -- write the bytes back. old_content here is the DECODED TSV, so the
+            -- change check compares like with like.
+            local rd = content_pipeline.reversibleDecode(file_name)
+            local peeled = rd and rd.peeledName:lower()
+            local isReversibleData = rd and peeled
+                and (peeled:sub(-4) == ".tsv" or peeled:sub(-4) == ".csv")
+            if isReversibleData then
+                if new_content ~= old_content then
+                    logContentChange(file_name, new_content, old_content)
+                    local bytes, err = rd.encode(new_content, nil, badVal)
+                    if bytes and safeReplaceFileBinary(file_name, bytes) then
+                        logger:info("Updated (re-compressed): " .. file_name)
+                    else
+                        badVal(file_name, "Failed to re-encode/update: " .. tostring(err))
+                    end
+                end
+            else
+                -- Transcoded or non-reversible decoded source: derived data is not
+                -- source of truth, so leave the original untouched (§3.6).
+                logger:debug("Leaving derived source untouched: " .. file_name)
+            end
         end
+        ::continue::
     end
 end
 
