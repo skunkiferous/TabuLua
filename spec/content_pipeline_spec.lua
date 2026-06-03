@@ -426,5 +426,51 @@ describe("content_pipeline", function()
       assert.equals("d.json", name)   -- .gz peeled; transcoder then ran on the JSON
       assert.equals("name:identifier\tprice:integer\ttag:string|nil\na\t7\t\n", out)
     end)
+
+    -- The same data in all three layouts must yield identical TSV. Schema field
+    -- order is sorted: name, price, tag.
+    local EXPECTED = table.concat({
+      "name:identifier\tprice:integer\ttag:string|nil",
+      "sword\t100\tsharp",
+      "shield\t50\t",
+      "",
+    }, "\n")
+
+    it("json:rows transcodes array-per-row (positional, schema field order)", function()
+      local json = '[["sword",100,"sharp"],["shield",50]]'   -- shield omits trailing tag
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", json, {}, bv,
+        {transcoder = "json:rows", typeName = "CpTestItem"})
+      assert.equals(0, #bv.messages)
+      assert.equals(EXPECTED, out)
+    end)
+
+    it("json:columns transcodes array-per-column, null-padding a short column", function()
+      -- Transpose of the rows form; the tag column's null (shield) becomes empty,
+      -- and the row count comes from the longer columns (dkjson drops the null).
+      local json = '[["sword","shield"],[100,50],["sharp",null]]'
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", json, {}, bv,
+        {transcoder = "json:columns", typeName = "CpTestItem"})
+      assert.equals(0, #bv.messages)
+      assert.equals(EXPECTED, out)
+    end)
+
+    it("json:rows aborts a row with more values than schema fields", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", '[["a",1,2,3]]', {}, bv,
+        {transcoder = "json:rows", typeName = "CpTestItem"})
+      assert.is_nil(out)
+      assert.matches("values but the schema has", bv.messages[1])
+    end)
+
+    it("json:columns aborts on the wrong number of columns", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("x.json", '[["a"],[1]]', {}, bv,
+        {transcoder = "json:columns", typeName = "CpTestItem"})
+      assert.is_nil(out)
+      assert.matches("expected 3 column", bv.messages[1])
+    end)
+
   end)
 end)

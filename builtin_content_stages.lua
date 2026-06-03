@@ -132,6 +132,20 @@ content_pipeline.register(NAME, {
     transform = json_transcoders.objectsToTSV,
 })
 
+-- json:rows (array-per-row) and json:columns (array-per-column) — the same data
+-- in array form, values positional to the schema's sorted field order.
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "json:rows",
+    transform = json_transcoders.rowsToTSV,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "json:columns",
+    transform = json_transcoders.columnsToTSV,
+})
+
 -- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md
 -- §2.2-2.3). These are non-data text files that cog_discovery walks for COG
 -- blocks; `.tsv`/`.csv` are deliberately excluded (data files are COG-processed

@@ -34,13 +34,17 @@ end
 -- (name, content, env, badVal, ctx); builtin_content_stages.lua registers them
 -- as id-selected `transcode` stages.
 --
--- In every layout the column NAMES and TYPES come from the file's typeName
--- schema (ctx.typeName), NOT from the JSON, so the emitted TSV carries a
--- correctly typed `name:type` header and the existing type/validation machinery
--- applies unchanged. The schema-resolution, value->cell and serialisation
--- helpers below are shared across the layouts.
+-- In every layout the column NAMES, TYPES and ORDER come from the file's typeName
+-- schema (ctx.typeName, in sorted field order), NOT from the JSON, so the emitted
+-- TSV carries a correctly typed `name:type` header and the existing
+-- type/validation machinery applies unchanged. The array layouts are therefore
+-- positional: each value aligns to the schema's sorted field order. The
+-- schema-resolution, value->cell and serialisation helpers below are shared.
 --
--- Only `objectsToTSV` ships today; rowsToTSV / columnsToTSV will join it.
+-- The three id-selected transcoders:
+--   json:objects  [ {name:…, price:…}, … ]   one object per row (self-describing)
+--   json:rows     [ [v, v, …], … ]           one array per row  (values in field order)
+--   json:columns  [ [v, v, …], … ]           one array per column (transpose of rows)
 -- ============================================================
 
 -- Resolves ctx.typeName to the ordered schema field names and a typed TSV header
@@ -96,15 +100,21 @@ local function serialize(rows)
     return tsvText
 end
 
+-- Returns a `fail(msg)` closure that reports via badVal and returns nil, so each
+-- transcoder can `return fail("…")`. Shared message prefix across the layouts.
+local function failer(name, badVal)
+    return function(msg)
+        badVal(name, "json transcoder: " .. msg .. " in '" .. name .. "'")
+        return nil
+    end
+end
+
 -- json:objects — a top-level JSON array of objects, one object per row. Fields
 -- are pulled by name in schema order; a missing/null field becomes an empty
 -- cell. An unknown typeName, malformed JSON, a non-object element, or a
 -- composite field value all abort the file via badVal.
 local function objectsToTSV(name, content, _env, badVal, ctx)
-    local function fail(msg)
-        badVal(name, "json transcoder: " .. msg .. " in '" .. name .. "'")
-        return nil
-    end
+    local fail = failer(name, badVal)
 
     local fieldNames, header = schemaHeader(ctx)
     if not fieldNames then return fail(header) end   -- `header` holds the error message
@@ -133,6 +143,98 @@ local function objectsToTSV(name, content, _env, badVal, ctx)
     return tsvText
 end
 
+-- json:rows — a top-level JSON array of arrays, one inner array per row. Values
+-- are positional, aligning to the schema's sorted field order; a missing trailing
+-- value becomes an empty cell, and more values than fields is an error. A
+-- non-array element, composite value, etc. abort via badVal.
+local function rowsToTSV(name, content, _env, badVal, ctx)
+    local fail = failer(name, badVal)
+
+    local fieldNames, header = schemaHeader(ctx)
+    if not fieldNames then return fail(header) end
+
+    local parsed, err = decodeArray(content)
+    if not parsed then return fail(err) end
+
+    local rows = {header}
+    for idx, arr in ipairs(parsed) do
+        if type(arr) ~= "table" then
+            return fail("element " .. idx .. " is not an array")
+        end
+        if #arr > #fieldNames then
+            return fail("row " .. idx .. " has " .. #arr .. " values but the schema has "
+                .. #fieldNames .. " field(s)")
+        end
+        local row = {}
+        for i = 1, #fieldNames do
+            local cell, cellErr = valueToCell(arr[i])
+            if cellErr then
+                return fail("value " .. i .. " of row " .. idx .. " is a " .. cellErr)
+            end
+            row[i] = cell
+        end
+        rows[#rows + 1] = row
+    end
+
+    local tsvText, serr = serialize(rows)
+    if not tsvText then return fail(serr) end
+    return tsvText
+end
+
+-- json:columns — a top-level JSON array of arrays, one inner array per column,
+-- in the schema's sorted field order (the transpose of json:rows). There must be
+-- exactly one column per schema field. A missing/null cell becomes empty.
+--
+-- Row count is the highest index present across the columns, NOT Lua's `#`: a
+-- JSON null decodes (via dkjson) to nil, a hole that makes `#` unreliable, so a
+-- column with nulls would otherwise look short. Consequently columns may differ
+-- in apparent length (the shorter ones are null-padded), and a trailing row that
+-- is null in EVERY column cannot be represented (anchor length with a non-null
+-- column such as the PK).
+local function columnsToTSV(name, content, _env, badVal, ctx)
+    local fail = failer(name, badVal)
+
+    local fieldNames, header = schemaHeader(ctx)
+    if not fieldNames then return fail(header) end
+
+    local parsed, err = decodeArray(content)
+    if not parsed then return fail(err) end
+
+    if #parsed ~= #fieldNames then
+        return fail("expected " .. #fieldNames .. " column(s) (one per schema field) but got "
+            .. #parsed)
+    end
+    for c = 1, #fieldNames do
+        if type(parsed[c]) ~= "table" then
+            return fail("column " .. c .. " is not an array")
+        end
+    end
+
+    local nRows = 0
+    for c = 1, #fieldNames do
+        for k in pairs(parsed[c]) do
+            if type(k) == "number" and k > nRows then nRows = k end
+        end
+    end
+
+    local rows = {header}
+    for r = 1, nRows do
+        local row = {}
+        for c = 1, #fieldNames do
+            local cell, cellErr = valueToCell(parsed[c][r])
+            if cellErr then
+                return fail("value " .. r .. " of column " .. c .. " is a " .. cellErr)
+            end
+            row[c] = cell
+        end
+        rows[#rows + 1] = row
+    end
+
+    local tsvText, serr = serialize(rows)
+    if not tsvText then return fail(serr) end
+    return tsvText
+end
+
 -- ============================================================
 -- Public API
 -- ============================================================
@@ -144,6 +246,8 @@ end
 local API = {
     getVersion = getVersion,
     objectsToTSV = objectsToTSV,
+    rowsToTSV = rowsToTSV,
+    columnsToTSV = columnsToTSV,
 }
 
 local function apiCall(_, operation, ...)

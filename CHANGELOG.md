@@ -77,17 +77,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - **Content pipeline `transcode` phase + JSON data files —
   [TODO/content_pipeline.md](TODO/content_pipeline.md) Phase 3.** A non-TSV
   data file can now be converted to TSV and parsed as data by naming a
-  transcoder in a new optional `Files.tsv` column, `transcoder`. The first
-  transcoder is `json:objects`: a top-level JSON array of objects, one object
-  per row, whose column **names and types come from the file's `typeName`
-  schema** (not inferred), so the existing type/validation machinery applies
-  unchanged. Selection is explicit per file — transcoders register with an
+  transcoder in a new optional `Files.tsv` column, `transcoder`. Three JSON
+  layouts ship — `json:objects` (array of objects, one per row), `json:rows`
+  (array of arrays, one per row, positional), and `json:columns` (array of
+  arrays, one per column, the transpose) — all taking column **names, types and
+  order from the file's `typeName` schema** (not inferred), so the existing
+  type/validation machinery applies unchanged. Selection is explicit per file — transcoders register with an
   `id` and never fire by extension — because a format like JSON has several
   tabular layouts. A file with no `transcoder` keeps today's passthrough-asset
   behaviour. The reformatter now rewrites only `.tsv`/`.csv` sources, so a
   transcoded (or gzip-decoded) file is never clobbered with its derived TSV.
-  Other layouts (`json:rows`, `json:columns`) and formats (e.g. XML) can be
-  added as further `id`-selected transcoders.
+  Further formats (e.g. XML) can be added as more `id`-selected transcoders.
 
 ### Changed
 
