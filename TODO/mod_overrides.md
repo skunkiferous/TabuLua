@@ -704,11 +704,27 @@ pre-processor effects and for COG-generated rows: derived data is not source-of-
 
 The same rule extends to **content-pipeline-derived files** (see
 [content_pipeline.md](content_pipeline.md)): if a parent or patch file is shipped
-compressed (`.gz`) or in a structured format (XML/JSON/SQLite/`.eav`), the engine
-decodes/transcodes it to TSV *before* schema overlays and patches apply, but the
-reformatter writes back the **compressed/structured source**, not the derived TSV.
-Non-reversible transcodes (JSON→TSV has no automatic inverse) are read-only inputs the
-reformatter leaves untouched.
+compressed (`.gz`) or in a structured format, the engine decodes/transcodes it to TSV
+*before* schema overlays and patches apply, but the reformatter writes back the
+**compressed/structured source**, not the derived TSV.
+
+As actually implemented (content_pipeline.md §3.6, §11), the two directions differ in
+reversibility and in how they are selected — which constrains how a mod ships files:
+
+- **Compression (`.gz`) is reversible and automatic.** An `Item.tsv.gz` overlay /
+  patch / data file is gunzipped on load and the reformatter **re-compresses it on
+  write** (pure-Lua gzip, both directions, landed), so any mod file may be gzipped
+  transparently with no extra declaration — selection is by extension / magic.
+- **Transcoding is non-reversible and explicitly selected.** Structured → TSV has no
+  automatic inverse, so a transcoded source (e.g. a JSON data file) is a **read-only**
+  input the reformatter leaves untouched. It is **not** triggered by extension — the
+  file must name a transcoder in its `Files.tsv` `transcoder` column — and the emitted
+  TSV header is typed from the file's **`typeName` schema**. Two consequences for mods:
+  (a) only JSON ships today (three layouts); XML / SQLite are deferred (§11); (b) because
+  the header is built from a *record-type* schema, the structured form is available for
+  **data files**, not for **patch / overlay files** — those use the `patch` /
+  `SchemaOverlay` typeName keywords, which are not record types, so a mod ships its
+  patch/overlay files as TSV (optionally `.gz`), not as JSON/XML.
 
 A potential addition for tooling: a `--export-merged` flag that writes a copy of each
 parent file with patches applied, separately from the source layout. Useful for "show me
@@ -999,10 +1015,16 @@ expressiveness/observability/performance refinements.
   graph file), and a parent node-completion processor flagged `rerunAfterPatches: true`
   (or a tier-C cross-package processor) recomputes back-references across the merged graph.
 
-- [content_pipeline.md](content_pipeline.md) is the **sibling registry** that handles
-  file-name/extension-keyed text stages (decompression, XML/JSON/SQLite/`.eav`
-  transcoding, and COG itself). It is relevant here because a mod may ship its overlay,
-  patch, or data files compressed or in a structured format: the content pipeline decodes
-  and transcodes them to TSV **before** this document's overlay → parse → patch →
-  cross-package-processor pipeline (§7) begins. The reformatter's "derived data is not
-  baked back" rule (§7.1) now also covers content-pipeline-derived files.
+- [content_pipeline.md](content_pipeline.md) is the **sibling registry** (now **largely
+  landed** — Phases 1–5) that handles file-name/extension-keyed stages: decompression,
+  structured-format transcoding, and COG itself. It is relevant here because a mod may
+  ship its overlay, patch, or data files compressed or in a structured format, which the
+  content pipeline decodes/transcodes to TSV **before** this document's overlay → parse →
+  patch → cross-package-processor pipeline (§7) begins. Two **implemented** constraints
+  shape how a mod uses it (detail in §7.1): compression (`.gz`) is reversible and
+  automatic, so any mod file may be gzipped transparently; transcoding is non-reversible,
+  explicitly selected via the `transcoder` Files.tsv column, and schema-typed from a
+  record `typeName` — so the structured form is available for **data files** (JSON today;
+  XML/SQLite deferred) but not for `patch`/`SchemaOverlay` files, which a mod ships as TSV
+  (optionally gzipped). The reformatter's "derived data is not baked back" rule (§7.1)
+  covers content-pipeline-derived files.
