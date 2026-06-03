@@ -2,7 +2,14 @@
 
 ## Status
 
-Research and plan. This is the **second registry** foreseen by
+**Largely implemented** — Phases 1–5 (plus Phase 4 Part B, reversible gzip) and the
+woven [cog_markdown.md](cog_markdown.md) Phases 1–3 have shipped. Only the *optional*
+Phase 6 remains, deferred until a concrete need appears. **See [§11
+"Implementation status: what remains"](#11-implementation-status-what-remains) at
+the end of this file for the authoritative done/TODO list.** The rest of this
+document is the original research and plan.
+
+This is the **second registry** foreseen by
 [type_wiring.md §"COG processing — a different registry, not this one"](type_wiring.md):
 that section concluded COG cannot live in the type-wiring registry and that the
 right home is *"a separate registry — a content pipeline or text-stage registry
@@ -962,3 +969,66 @@ as one.
 - **Performance.** One extra pass over each file's bytes per matching stage. For
   files with no registered stage beyond COG, the cost is identical to today. Decode
   and transcode are O(file size) and run once per load.
+
+---
+
+## 11. Implementation status: what remains
+
+This section is the authoritative done/TODO list and supersedes the
+"independently shippable" framing in §6 now that most of it has shipped.
+
+### Done (shipped)
+
+- **Phase 1** — `content_pipeline.lua` registry + dispatcher, content-kind plumbing,
+  binary-read switch + explicit EOL-normalise stage, binary passthrough descriptors
+  (`copyFileStreamed`), the three read-side call sites collapsed to `readAndRun`, and
+  COG migrated to the `macro` stage.
+- **Phase 2** — `decode` phase with extension peeling + magic sniffing; gzip
+  decompression via the pure-Lua `libdeflate` rock, behind the lazily-loaded
+  `compression.lua` provider registry.
+- **Phase 3** — `transcode` phase; JSON transcoders in three layouts
+  (`json:objects`, `json:rows`, `json:columns`), selected per file by the Files.tsv
+  `transcoder` column, typed from the file's `typeName` schema.
+- **Phase 4** — bootstrap user-extensibility (Part A); **reversible round-trip
+  (Part B)**: `.gz` is collected and a `.tsv.gz`/`.csv.gz` is decoded and parsed as
+  data, and the reformatter rewrites it by reformatting the decoded TSV and
+  re-compressing (pure-Lua gzip **compression** added — CRC32 + RFC 1952 envelope,
+  still no native dependency). It never clobbers a `.gz` with plaintext.
+- **Phase 5** — sink direction: `runSink`, COG-comment `stripCog`, and data-driven
+  doc generation; absorbed cog_markdown Phase 4.
+- **Woven [cog_markdown.md](cog_markdown.md) Phases 1–3** — the HTML-comment marker
+  style, eligible-extension auto-scan + discovery, and the in-place `--cog-docs`
+  refresh. All complete (that document needs no further work).
+
+### Remaining — all OPTIONAL, deferred until a concrete need appears (Phase 6)
+
+Build each **with** its real use case rather than speculatively; the hooks are
+already in place, so none of these is a refit.
+
+1. **The `asset` phase + binary asset stages (§3.11).** The binary-terminal phase
+   for non-data files a package carries — images, audio, fonts, models, shaders. An
+   asset stage processes bytes→bytes at build/export time (PNG re-encode/resize,
+   atlas packing, audio transcode, font subsetting) and the result is written, never
+   parsed. Deferred because it has **no data-loading consumer today** — assets are
+   not loaded as engine *data*, so it is purely an export/build concern with nothing
+   to drive it yet. The content-kind tracking and the streamed passthrough descriptor
+   from Phase 1 mean this adds a phase, not a rewrite; a matched asset stage simply
+   opts back into loading the bytes. Needs trusted/engine code (C codecs the sandbox
+   can't expose), same as gzip/SQLite.
+
+2. **Structured reverse-transcoders: TSV → JSON / XML / SQLite (§3.6, §9 Q3).** The
+   `transcode`-phase inverse, as a `sinkTransform`, so a structured source can be
+   **round-tripped** rather than being read-only. Today forward transcoding has no
+   automatic inverse, so transcoded sources are `reversible = false` and the
+   reformatter *skips* rewriting them (it must never overwrite `items.json` with
+   derived TSV). Deferred because a reverse-transcoder doubles every format's surface
+   (a reader *and* a writer per format). Note this is distinct from what
+   [exporter.lua](../exporter.lua) already does — the exporter bulk-serialises the
+   parsed model to JSON/XML/SQLite *export artifacts*; the deferred work is the
+   symmetric, per-file, name-dispatched **sink stage** that writes the structured
+   *source* back. (The `decode` reverse is already done for gzip — Phase 4 Part B.)
+
+3. **XML and SQLite forward transcoders (§9 Q2).** Structured → TSV readers for XML
+   and SQLite. Deferred / possibly skipped: both realistically need native parsers
+   (engine-provided, not sandboxed bootstrap), and neither has been requested. JSON
+   already covers the common structured-input case.
