@@ -437,9 +437,28 @@ local function reformat(tsv_files, raw_files, badVal)
                     end
                 end
             else
-                -- Transcoded or non-reversible decoded source: derived data is not
-                -- source of truth, so leave the original untouched (§3.6).
-                logger:debug("Leaving derived source untouched: " .. file_name)
+                -- A reversible transcoded source (an .eav): rewrite it from the
+                -- reformatted wide TSV via the transcode stage's re-encoder
+                -- (content_pipeline.md §3.6). old_content / new_content are both the
+                -- derived wide TSV, so the change check compares like with like; the
+                -- EAV output is text, so write it text-mode (unlike the binary gzip
+                -- case above).
+                local rt = content_pipeline.reversibleTranscode(file_name)
+                if rt then
+                    if new_content ~= old_content then
+                        logContentChange(file_name, new_content, old_content)
+                        local bytes, err = rt.encode(new_content, nil, badVal)
+                        if bytes and safeReplaceFile(file_name, bytes) then
+                            logger:info("Updated (re-encoded): " .. file_name)
+                        else
+                            badVal(file_name, "Failed to re-encode/update: " .. tostring(err))
+                        end
+                    end
+                else
+                    -- Transcoded (non-reversible) or non-reversible decoded source:
+                    -- derived data is not source of truth, so leave it untouched (§3.6).
+                    logger:debug("Leaving derived source untouched: " .. file_name)
+                end
             end
         end
         ::continue::

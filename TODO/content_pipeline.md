@@ -988,7 +988,13 @@ This section is the authoritative done/TODO list and supersedes the
   `compression.lua` provider registry.
 - **Phase 3** — `transcode` phase; JSON transcoders in three layouts
   (`json:objects`, `json:rows`, `json:columns`), selected per file by the Files.tsv
-  `transcoder` column, typed from the file's `typeName` schema.
+  `transcoder` column, typed from the file's `typeName` schema. **Also the EAV
+  (long-format) transcoder** (`eav_transcoder`): the first **extension-auto-matched**
+  transcoder (matches `.eav` directly — no `transcoder` column — since EAV is
+  unambiguous by extension) and the first **reversible** transcoder (the reformatter
+  rewrites an `.eav` source via `content_pipeline.reversibleTranscode`, the transcode
+  analog of `reversibleDecode`). Routing learns about it via
+  `content_pipeline.autoTranscodes` in the loader's data-vs-asset gate.
 - **Phase 4** — bootstrap user-extensibility (Part A); **reversible round-trip
   (Part B)**: `.gz` is collected and a `.tsv.gz`/`.csv.gz` is decoded and parsed as
   data, and the reformatter rewrites it by reformatting the decoded TSV and

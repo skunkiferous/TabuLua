@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`raw_eav` — Entity–Attribute–Value (long-format) table support.** New
+  low-level module that pivots between the 3-column `(entity, attribute,
+  value)` layout (row/column identifiers are domain keys, not indices) and
+  the normal wide table layout. `eavToTable`/`stringToTable`/`fileToTable`
+  rebuild a wide table from triples; `tableToEav`/`tableToString` compress
+  a wide table to triples; `isEav` validates the long shape. First-seen
+  row/column ordering, configurable duplicate-pair policy (`onConflict`,
+  default error), sparse-table aware (`skipEmpty`). Cells stay strings.
+
+- **`.eav` files load as data — the first extension-keyed, round-trippable
+  transcoder.** New `eav_transcoder` registers as a content-pipeline `transcode`
+  stage that **auto-matches the `.eav` extension** (no `Files.tsv` `transcoder`
+  column needed, unlike the JSON transcoders), so an `.eav` listed in `Files.tsv`
+  loads as an ordinary wide, typed table. The rebuilt header is typed from the
+  file's `typeName` schema (schema field order; the key column is the schema's
+  first field). Unlike JSON the stage is **reversible**: the reformatter rewrites
+  an `.eav` source from the reformatted wide TSV (`content_pipeline` gains
+  `autoTranscodes` / `reversibleTranscode`; `eav` joins the loader's collected
+  extensions and the pipeline's text extensions).
+
 ### Changed
 
 ### Removed

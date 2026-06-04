@@ -410,15 +410,76 @@ New spec [spec/raw_eav_spec.lua](../spec/raw_eav_spec.lua), mirroring
   the index-based use case ever resurfaces it should be its own module (e.g.
   `raw_coo`), not folded into `raw_eav`.
 
-## After It's Done
+## After It's Done — Full `.eav` integration (the extension-keyed transcoder)
 
-- Decide whether [files_desc.lua](../files_desc.lua) /
-  [content_pipeline](content_pipeline.md) should recognise an EAV-layout source
-  (by the `.eav` extension, or by a manifest declaration) and route it
-  through `fileToTable` so EAV files load as ordinary wide tables in the normal
-  order. This is the natural follow-up that realises "read files in different
-  layouts as long as they represent the same data." It is a load-order /
-  recognition change, so handle it as a separate task.
+The `raw_eav` module above is the low-level reader/writer. The follow-up that
+realises "read files in different layouts as long as they represent the same data"
+is to wire it into the **already-shipped content pipeline**
+([content_pipeline.md](content_pipeline.md)) as the **first auto-matched
+`transcode` stage**, so an `.eav` file listed in `Files.tsv` loads as an ordinary
+wide, typed data file with **no manual call and no `transcoder=` column**. EAV is
+*unambiguous by extension* (unlike JSON's three layouts), so it dispatches on the
+`.eav` extension directly — exactly the "canonical extension a dispatcher matches
+on" stance of the File Format section above.
+
+Two settled decisions distinguish it from the JSON transcoders:
+
+- **Schema-typed headers.** The rebuilt wide table is projected onto the file's
+  `typeName` schema (reusing `parsers.recordFieldNames` / `recordFieldTypes`, as
+  `json_transcoders` does), emitting typed `name:type` headers in schema field
+  order so the existing type/validation machinery applies unchanged. The key
+  column is the schema's first field (its name/type); an EAV attribute not in the
+  schema is an error; a schema field absent from the data becomes an empty
+  (sparse) cell.
+- **Round-trippable.** Unlike JSON, EAV has a clean inverse
+  (`raw_eav.tableToEav` / `tableToString`), so reformatting an `.eav` source
+  rewrites it back to EAV rather than leaving it read-only. This needs a small
+  **transcode-reverse** path mirroring the existing decode `reversible`/`encode`
+  mechanism.
+
+### Implementation outline
+
+1. **New `eav_transcoder.lua`** (mirrors [json_transcoders.lua](../json_transcoders.lua)),
+   deps `raw_eav`, `raw_tsv`, `parsers`, `read_only`:
+   - `eavToTSV(name, content, env, badVal, ctx)` — forward source `transform`:
+     resolve `ctx.typeName` → typed schema header; `raw_eav.stringToTable` (under
+     `pcall`, keyColumn = schema's first field); project entity rows onto the
+     schema header (missing attr → `""`, unknown attr → `badVal`);
+     `raw_tsv.rawTSVToString`. No/unknown typeName aborts via `badVal`, same as
+     the JSON path.
+   - `tsvToEav(content, env, badVal)` — reverse `encode`: `stringToRawTSV` the
+     reformatted wide TSV, strip `:type` from header cells, `raw_eav.tableToEav`
+     (`skipEmpty=true`), `rawTSVToString`.
+2. **Register the stage** in [builtin_content_stages.lua](../builtin_content_stages.lua)
+   alongside the JSON transcoders: `phase="transcode"`, `extensions={"eav"}`
+   (auto-match), `id="eav"` (explicit override on a non-`.eav` file),
+   `outputKind="text"`, `reversible=true`, `encode=eav_transcoder.tsvToEav`,
+   `transform=eav_transcoder.eavToTSV`.
+3. **[content_pipeline.lua](../content_pipeline.lua):** add `eav` to
+   `TEXT_EXTENSIONS`; add exported helpers `autoTranscodes(file_name)` (a
+   `transcode` stage auto-matches by extension — the loader's data-routing test)
+   and `reversibleTranscode(file_name)` (the transcode analog of
+   `reversibleDecode` — the reformatter's round-trip hook).
+4. **[manifest_loader.lua](../manifest_loader.lua):** route `.eav` to the data
+   path by adding `or content_pipeline.autoTranscodes(file_name)` to the
+   `loadOtherFiles` gate; **always** build `ctx = {transcoder, typeName}` in
+   `processSingleTSVFile` so the auto-matched EAV transform still receives the
+   schema's `typeName`.
+5. **[reformatter.lua](../reformatter.lua):** in `reformat`'s else-branch, add a
+   `reversibleTranscode` round-trip (write EAV text back via `safeReplaceFile`,
+   text mode) after the existing `reversibleDecode` branch.
+6. **Tests:** `spec/eav_transcoder_spec.lua` (unit) and
+   `spec/eav_transcode_integration_spec.lua` (end-to-end, mirroring
+   [spec/json_transcode_integration_spec.lua](../spec/json_transcode_integration_spec.lua),
+   but with **no** `transcoder` column and asserting the reformatter **rewrites**
+   the `.eav`); `autoTranscodes` / `reversibleTranscode` cases in
+   `spec/content_pipeline_spec.lua`.
+7. **Docs:** `MODULES.md` (`eav_transcoder` entry), `CHANGELOG.md`, and a
+   content_pipeline.md §11 / Phase 3 note that EAV shipped as the first
+   auto-matched, round-trippable transcoder.
+
+### Other follow-ups
+
 - Consider an `expand`/`preserveComments` option pair if either sparsity
   defaults or comment loss turn out to matter in practice.
 

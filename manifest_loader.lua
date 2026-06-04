@@ -93,7 +93,7 @@ local TSV = "tsv"
 -- given .gz is parsed as data or streamed as an asset is decided per file by its
 -- peeled name (see isCompressedDataFile / loadOtherFiles). Manifest files use
 -- .transposed.tsv, which is covered by TSV.
-local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz"}
+local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav"}
 
 -- Find the priority of the file
 local function findPriority(priorities, file, missingPriority)
@@ -364,9 +364,11 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     -- The content pipeline reads the file (binary), populates raw_files with the
     -- normalised pre-COG source, and runs the decode→transcode→normalise→COG
     -- stages. COG is no longer named here — it is the registered `macro` stage.
-    -- When a transcoder is assigned (Files.tsv), the ctx carries its id and the
-    -- file's typeName so the transcoder can build a typed header from the schema.
-    local ctx = opt_transcoder and {transcoder = opt_transcoder, typeName = fileType} or nil
+    -- The ctx always carries the file's typeName so a transcoder can build a typed
+    -- header from the schema; transcoder is the explicit Files.tsv id, or nil for an
+    -- extension-auto-matched transcoder (e.g. .eav), which runTranscode resolves by
+    -- extension. For a plain .tsv (no transcode stage matches) the ctx is inert.
+    local ctx = {transcoder = opt_transcoder, typeName = fileType}
     local content = content_pipeline.readAndRun(file_name, loadEnv, badVal, raw_files, ctx)
     if not content then
         return
@@ -491,11 +493,13 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
             end
         end
         -- A file is parsed as data if it's a TSV/CSV, a compressed TSV/CSV the
-        -- pipeline can decode (data.tsv.gz), OR if Files.tsv assigned it a
-        -- transcoder (e.g. a .json routed through the json:objects transcoder).
-        -- Everything else is copied/streamed through as an asset (unchanged).
+        -- pipeline can decode (data.tsv.gz), if Files.tsv assigned it a transcoder
+        -- (e.g. a .json routed through json:objects), OR if its extension
+        -- auto-matches a transcoder (e.g. .eav). Everything else is copied/streamed
+        -- through as an asset (unchanged).
         if hasExtension(file_name, CSV) or hasExtension(file_name, TSV)
-            or lcFn2Transcoder[key] or isCompressedDataFile(file_name) then
+            or lcFn2Transcoder[key] or isCompressedDataFile(file_name)
+            or content_pipeline.autoTranscodes(file_name) then
             processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts,
                 lcFn2Type, lcFn2Ctx, lcFn2Col,
                 lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,

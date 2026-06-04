@@ -74,7 +74,7 @@ local SCAN_EXTENSIONS_SNAPSHOT = nil
 local TEXT_EXTENSIONS = {
     tsv = true, csv = true, txt = true, text = true, md = true, markdown = true,
     html = true, htm = true, json = true, xml = true, lua = true, mtx = true,
-    yaml = true, yml = true, ini = true, cfg = true, svg = true,
+    yaml = true, yml = true, ini = true, cfg = true, svg = true, eav = true,
 }
 
 -- ============================================================
@@ -438,6 +438,56 @@ local function reversibleDecode(name)
     }
 end
 
+-- True iff some `transcode` stage auto-matches `file_name` by its final
+-- extension. This is the loader's "parse as data?" test for an extension-keyed
+-- transcoder (e.g. .eav): such a file has no `transcoder` column yet must still
+-- be routed through the pipeline and parsed, not streamed as an asset.
+local function autoTranscodes(file_name)
+    if type(file_name) ~= "string" then return false end
+    local ext = finalExtension(file_name)
+    if not ext then return false end
+    for _, entry in ipairs(STAGES) do
+        local spec = entry.spec
+        if spec.phase == "transcode" and spec.transform and spec.extensions then
+            for _, e in ipairs(spec.extensions) do
+                if type(e) == "string" and e:lower() == ext then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- The transcode analog of reversibleDecode: returns { encode } when the
+-- highest-priority transcode stage matching `file_name`'s extension declares
+-- `reversible` + an `encode`, else nil. The reformatter uses it to rewrite a
+-- reversible transcoded source (an .eav) from the reformatted wide TSV
+-- (content_pipeline.md §3.6); matched by extension only, like reversibleDecode.
+--   encode(content, env, badVal) -> (text) | (nil, reason)
+local function reversibleTranscode(file_name)
+    if type(file_name) ~= "string" then return nil end
+    local ext = finalExtension(file_name)
+    if not ext then return nil end
+    local best, bestPri, bestOrder
+    for i, entry in ipairs(STAGES) do
+        local spec = entry.spec
+        if spec.phase == "transcode" and spec.transform and spec.extensions then
+            for _, e in ipairs(spec.extensions) do
+                if type(e) == "string" and e:lower() == ext then
+                    local pri = spec.priority or 100
+                    if not best or pri < bestPri or (pri == bestPri and i < bestOrder) then
+                        best, bestPri, bestOrder = spec, pri, i
+                    end
+                    break
+                end
+            end
+        end
+    end
+    if not best or not (best.reversible and best.encode) then return nil end
+    return {encode = best.encode}
+end
+
 -- decode: loop with extension peeling. Each iteration runs the highest-priority
 -- matching decode stage, then re-evaluates matchers against the new effective
 -- name (so .tsv.gz.enc decrypts then gunzips). The loop stops when no decode
@@ -662,6 +712,8 @@ local API = {
     classifyKind = classifyKind,
     peeledName = peeledName,
     reversibleDecode = reversibleDecode,
+    autoTranscodes = autoTranscodes,
+    reversibleTranscode = reversibleTranscode,
     registerScanExtensions = registerScanExtensions,
     isScanEligible = isScanEligible,
     scanExtensions = scanExtensions,

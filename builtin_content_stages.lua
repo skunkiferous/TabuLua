@@ -21,6 +21,10 @@ local unixEOL = file_util.unixEOL
 -- just registers them as stages; the conversion logic lives in json_transcoders.
 local json_transcoders = require("json_transcoders")
 
+-- EAV (long-format) -> TSV transcoder. Unlike JSON it is auto-matched by the
+-- .eav extension and reversible (see eav_transcoder.lua).
+local eav_transcoder = require("eav_transcoder")
+
 -- Codec registry. The decode stage calls compression.decompress("gzip", …)
 -- lazily, so the libdeflate rock is only loaded if a .gz is actually processed
 -- (see compression.lua). Requiring this module has no side effects and pulls in
@@ -153,6 +157,22 @@ content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:columns",
     transform = json_transcoders.columnsToTSV,
+})
+
+-- EAV (long-format) transcoder (eav_long_format.md). Unlike the JSON layouts, EAV
+-- is unambiguous by extension, so it AUTO-matches `.eav` (no Files.tsv `transcoder`
+-- column needed); the `id` lets it also be selected explicitly on a non-.eav file.
+-- It is reversible: the reformatter rewrites an .eav source from the reformatted
+-- wide TSV via `encode` (content_pipeline.md §3.6). The forward transform types
+-- the rebuilt header from the file's typeName schema (eav_transcoder.eavToTSV).
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "eav",
+    extensions = {"eav"},
+    outputKind = "text",
+    reversible = true,
+    encode = eav_transcoder.tsvToEav,
+    transform = eav_transcoder.eavToTSV,
 })
 
 -- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md

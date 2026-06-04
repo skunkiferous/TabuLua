@@ -7,21 +7,29 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
+| [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only |
 | [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
+| [cog_discovery](#cog_discovery) | Auto-scans package roots for COG-eligible doc/template files (extension + `needsCog`-gated), with `.cogignore` opt-out | content_pipeline, file_util, lua_cog, read_only |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
+| [compression](#compression) | Lazy compression-codec registry (gzip via libdeflate); registers per-`(format, direction)` loaders pulled in only on first use | named_logger, read_only |
+| [content_pipeline](#content_pipeline) | Content-stage registry: dispatches decode/transcode/normalize/macro/asset stages by file name/extension/magic before parsing | file_util, named_logger, read_only |
 | [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
 | [deserialization](#deserialization) | Data deserialization (Lua, JSON, XML, MessagePack) | read_only |
+| [doc_generator](#doc_generator) | Export-time data-driven doc generation: expands COG doc templates against the loaded dataset and writes them to the export dir (never TSV-parsed) | builtin_content_stages, content_pipeline, file_util, named_logger, read_only |
+| [eav_transcoder](#eav_transcoder) | Content-pipeline transcoder pivoting `.eav` (long-format) files to/from a schema-typed wide TSV; auto-matched by extension and reversible | parsers, raw_eav, raw_tsv, read_only |
 | [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization |
 | [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
 | [exploded_columns](#exploded_columns) | Handles exploded/collapsed column structures | read_only, table_utils |
 | [file_joining](#file_joining) | Joins related TSV files by key columns | read_only, table_utils |
 | [global_reset](#global_reset) | Registry for resetting all module-level mutable state | *(none)* |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
+| [extract_test_errors](#extract_test_errors) | Standalone CLI script: extracts failed-test info from TAP test output | file_util, named_logger, read_only *(standalone CLI script)* |
 | [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
 | [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
 | [graph_wiring](#graph_wiring) | Family detection helpers for graph-shaped record types (`detectFamily`, `detectRole`, `detectEdgeFamily`). After Phase 2b the dispatch / validation entry points moved into the type-wiring registry | read_only |
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
+| [json_transcoders](#json_transcoders) | Content-pipeline JSON→TSV transcoders in three layouts (`json:objects` / `json:rows` / `json:columns`), id-selected via the `Files.tsv` `transcoder` column | parsers, raw_tsv, read_only |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
@@ -42,6 +50,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [parsers.utils](#parsersutils) | Utility functions for parsers module | parsers.state, serialization, table_parsing |
 | [predicates](#predicates) | Type checking predicate functions | read_only, string_utils, table_parsing, table_utils |
 | [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, type_wiring, validator_executor, validator_helpers |
+| [raw_eav](#raw_eav) | Low-level reader/writer for the Entity–Attribute–Value (EAV / "long") 3-column table layout | raw_tsv, read_only |
 | [raw_tsv](#raw_tsv) | Low-level TSV file parsing and writing | file_util, predicates, read_only, string_utils |
 | [read_only](#read_only) | Read-only table proxy wrappers | table_utils |
 | [reformatter](#reformatter) | TSV file reformatting and multi-format export | error_reporting, exporter, file_util, manifest_info, manifest_loader, named_logger, read_only, serialization |
@@ -73,6 +82,15 @@ Pure-Lua RFC 4648 Base64 encode/decode. Provides `encode()`, `decode()`, and `is
 
 ---
 
+### builtin_content_stages
+**File:** [builtin_content_stages.lua](builtin_content_stages.lua)
+
+Seeds the [content_pipeline](#content_pipeline) registry with the built-in content stages (the content-pipeline analog of [builtin_wiring](#builtin_wiring) for the type-wiring registry). Registers: a core `normalize`-phase EOL-normalise stage; the `macro`-phase COG stage (`transform` = `lua_cog.processContentBV`, `sinkTransform` = `lua_cog.stripCog`); a `decode`-phase gzip stage (delegating to [compression](#compression), reversible); and the `transcode`-phase stages — the three JSON layouts from [json_transcoders](#json_transcoders) (id-selected) and the auto-matched, reversible `.eav` stage from [eav_transcoder](#eav_transcoder). Also declares the COG-scan-eligible extension set. Snapshots the registry and restores it via `global_reset`.
+
+**Dependencies:** compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only
+
+---
+
 ### builtin_wiring
 **File:** [builtin_wiring.lua](builtin_wiring.lua)
 
@@ -82,12 +100,39 @@ Seeds the [type_wiring](#type_wiring) registry with the built-in `Type` / `enum`
 
 ---
 
+### cog_discovery
+**File:** [cog_discovery.lua](cog_discovery.lua)
+
+COG template discovery (cog_markdown.md Part 2). Data files are listed in `Files.tsv`, but doc/templating files are not, so this module auto-scans the same package roots for non-data text files whose extension is COG-scan-eligible (per [content_pipeline](#content_pipeline)'s `isScanEligible` set) **and** that actually contain a COG block (`lua_cog.needsCog`). The `needsCog` gate keeps the broad scan cheap — a file with no COG block is a one-substring no-op — so dropping a `.md` with a COG block anywhere in a package "just works" with no per-file registration. A `.cogignore` marker opts a directory subtree out. An optional shared read cache lets `discover()` and the later [doc_generator](#doc_generator) read each template only once.
+
+**Dependencies:** content_pipeline, file_util, lua_cog, read_only
+
+---
+
 ### comparators
 **File:** [comparators.lua](comparators.lua)
 
 Value comparison and equality functions for tables and primitive types. Provides custom comparators for sorting and deep equality testing.
 
 **Dependencies:** read_only, sparse_sequence, table_utils
+
+---
+
+### compression
+**File:** [compression.lua](compression.lua)
+
+Compression-codec registry (content_pipeline.md §3.7, §9 Q2). Each `(format, direction)` pair — e.g. `("gzip", "decompress")` — is an independently and optionally supported codec. A provider registers a **loader** for a pair; the loader runs lazily the first time that pair is used, pulling in whatever rock/native lib the codec needs (or returning `nil` + reason if missing). The laziness matters: registering the gzip decode stage does not require `libdeflate` — only inflating a real `.gz` does, so a pipeline that never touches a compressed file works without it, and one that does without it gets a clear per-file "gzip decompression is not supported" error instead of a hard startup failure. gzip ships in both directions (built on pure-Lua `libdeflate`); other formats (zstd, brotli, …) are pairs with no provider yet.
+
+**Dependencies:** named_logger, read_only
+
+---
+
+### content_pipeline
+**File:** [content_pipeline.lua](content_pipeline.lua)
+
+The content-stage registry — the sibling of the [type_wiring](#type_wiring) registry. type-wiring dispatches on a file's *parsed* record type; this registry dispatches on a file's *name* (extension / basename glob / directory / magic bytes) **before** any parsing, operating on raw bytes/text. Stages are grouped into ordered phases — `decode` (decompress; loops with extension peeling), `transcode` (structured→TSV; single match, id- or extension-selected), `normalize` (core EOL), `macro` (COG), `asset` (binary→binary) — and each file carries a `text`/`binary` content kind so text-only phases never touch binary. `readAndRun` (read + source pipeline) and `runSink` (export/inverse direction) are the entry points; `register` adds stages (built-ins via [builtin_content_stages](#builtin_content_stages), user stages via the bootstrap api). Helpers `peeledName` / `reversibleDecode` (decode round-trip) and `autoTranscodes` / `reversibleTranscode` (transcode routing + round-trip) support the loader and reformatter. Snapshots/restores via `global_reset`.
+
+**Dependencies:** file_util, named_logger, read_only
 
 ---
 
@@ -106,6 +151,24 @@ Mutable in-memory representation of multiple TSV files for the migration tool. S
 Data deserialization from multiple formats back to Lua values. Supports Lua literals, typed JSON, natural JSON, XML, MessagePack, and SQL BLOBs. Inverse of the serialization module.
 
 **Dependencies:** read_only
+
+---
+
+### doc_generator
+**File:** [doc_generator.lua](doc_generator.lua)
+
+Data-driven doc generation (content_pipeline.md §3.10, cog_markdown.md §2.4). At export time, COG doc templates (found by [cog_discovery](#cog_discovery)) are expanded against the fully-loaded dataset and written to the export dir, mirroring the source layout. Each template runs through the content pipeline's `macro` stage (COG) with the load-time env extended so `files` exposes each dataset under **both** its typeName and its filename, so a COG block can read any dataset; the COG scaffolding is optionally stripped (`exportParams.stripCog`) for a clean published file. Templates are produced, **never** TSV-parsed.
+
+**Dependencies:** builtin_content_stages, content_pipeline, file_util, named_logger, read_only
+
+---
+
+### eav_transcoder
+**File:** [eav_transcoder.lua](eav_transcoder.lua)
+
+Content-pipeline transcoder for the EAV (long-format) layout. Registered by [builtin_content_stages](#builtin_content_stages) as a `transcode` stage that **auto-matches the `.eav` extension** (no `Files.tsv` `transcoder` column needed, since EAV is unambiguous by extension) and is **reversible**. `eavToTSV` (forward) pivots the header-less triples via [raw_eav](#raw_eav) and projects them onto the file's `typeName` schema — typed `name:type` headers in schema field order, the key column being the schema's first field, absent fields becoming empty cells, unknown attributes an error. `tsvToEav` (reverse `encode`) de-types the header and compresses the reformatted wide TSV back to sparse triples, so the reformatter can rewrite an `.eav` source. Cells stay strings.
+
+**Dependencies:** parsers, raw_eav, raw_tsv, read_only
 
 ---
 
@@ -152,6 +215,15 @@ Central registry for resetting module-level mutable state. Modules with internal
 Tests exported files by re-importing them and comparing against original source data. Validates that export/import round-trips preserve data correctly across all supported formats.
 
 **Dependencies:** error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip
+
+---
+
+### extract_test_errors
+**File:** [extract_test_errors.lua](extract_test_errors.lua)
+
+Standalone CLI script for the test runner ([run_tests.sh](run_tests.sh)). Parses TAP-format test output and extracts the failed-test information into a summary file, exiting non-zero when any test failed. Applies a `--log-level` argument early (before other modules load) so their loggers start at the requested level. Invoked as `lua54 extract_test_errors.lua <test_results.txt> <test_errors.txt>`; not part of the engine's `require` graph.
+
+**Dependencies:** file_util, named_logger, read_only *(standalone CLI script)*
 
 ---
 
@@ -216,6 +288,15 @@ Detects graph-family files in a manifest and auto-attaches their completion pre-
 File import system that reads exported data files back into Lua. Supports Lua files, JSON (typed and natural), TSV with various cell formats, XML, MessagePack, and SQL. Auto-detects format from file extension.
 
 **Dependencies:** deserialization, file_util, named_logger, read_only, string_utils
+
+---
+
+### json_transcoders
+**File:** [json_transcoders.lua](json_transcoders.lua)
+
+Content-pipeline JSON→TSV transcoders. Several JSON layouts encode the same tabular data — `json:objects` (one object per row, self-describing), `json:rows` (one array per row, positional), `json:columns` (one array per column, the transpose) — so they can't be told apart by extension; the author selects one per file via the `Files.tsv` `transcoder` column. In every layout the column names, types and order come from the file's `typeName` schema (in sorted field order), **not** the JSON, so the emitted TSV carries a typed `name:type` header and the normal type/validation machinery applies. Registered as id-selected `transcode` stages by [builtin_content_stages](#builtin_content_stages).
+
+**Dependencies:** parsers, raw_tsv, read_only *(also uses external `dkjson`)*
 
 ---
 
@@ -408,6 +489,15 @@ reformatter preserves the original on-disk text. See [DATA_FORMAT_README §Pre-P
 **Wrapped row arrays preserve the dataset's PK index.** `wrapRowsForProcessor` returns a plain Lua array that also mirrors the dataset's column-1 PK index, so `wrappedRows[someName]` returns the wrapped row for that PK in O(1). The `rowByKey` helper delegates to this index; processor authors should reach for `rowByKey` (or the index directly) rather than scanning rows manually.
 
 **Dependencies:** error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers
+
+---
+
+### raw_eav
+**File:** [raw_eav.lua](raw_eav.lua)
+
+Low-level reader/writer for the Entity–Attribute–Value (EAV / "long") table layout: a header-less, tab-separated, 3-column `(entity, attribute, value)` file (canonical extension `.eav`) whose row and column identifiers are domain keys / column names (not indices). `eavToTable` rebuilds the wide table (header + PK rows) from the triples; `tableToEav` compresses a wide table back to triples. EAV files carry no header — it is synthesized on read (key column defaults to `"name"`, overridable via `keyColumn`) and dropped on write. Cells stay strings.
+
+**Dependencies:** raw_tsv, read_only
 
 ---
 
@@ -626,9 +716,18 @@ data_set
     └── migration
 
 raw_tsv
+    └── raw_eav
+        └── eav_transcoder
+    └── json_transcoders
     └── tsv_diff
     └── ollama_batch
 
+content_pipeline (text-stage registry)
+    └── cog_discovery
+    └── builtin_content_stages   (also ← compression, json_transcoders, eav_transcoder)
+        └── doc_generator
+
+compression (lazy codec registry, standalone)
 schema_validator (standalone)
 ```
 
