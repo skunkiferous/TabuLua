@@ -4,7 +4,7 @@
 
 -- Module versioning
 local semver = require("semver")
-local VERSION = semver(0, 21, 0)
+local VERSION = semver(0, 22, 0)
 local NAME = "migration"
 
 local named_logger = require("named_logger")

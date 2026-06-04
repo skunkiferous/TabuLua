@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.22.0] - 2026-06-04
+
+### Added
+
 - **Reversible gzip data files (`data.tsv.gz`) — end-to-end load + reformat
   round-trip ([TODO/content_pipeline.md](TODO/content_pipeline.md) §3.6, Phase 4
   Part B).** Compressed TSV/CSV data files are now first-class: `.gz` is collected,
@@ -164,10 +174,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   contract on `manifest_loader`, `validator_executor`,
   `processor_executor`, and `validator_helpers` in
   [MODULES.md](MODULES.md) to prevent regression.
-
-### Removed
-
-### Fixed
 
 ## [0.21.0] - 2026-05-26
 

@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 21, 0)
+local VERSION = semver(0, 22, 0)
 
 -- Module name
 local NAME = "exporter"
