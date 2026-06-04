@@ -283,18 +283,13 @@ end
 -- @field lcFileNames table: Map of lowercase filename to list of descriptor files
 -- @field lcTypeNames table: Map of lowercase type name to list of descriptor files
 -- @field lcFn2Type table: Map of lowercase filename to type name
--- @field lcFn2Ctx table: Map of lowercase filename to publish context
--- @field lcFn2Col table: Map of lowercase filename to publish column
--- @field lcFn2JoinInto table: Map of lowercase filename to join target filename
--- @field lcFn2JoinColumn table: Map of lowercase filename to join column name
--- @field lcFn2Export table: Map of lowercase filename to export flag (boolean|nil)
--- @field lcFn2JoinedTypeName table: Map of lowercase filename to joined type name
--- @field lcFn2RowValidators table: Map of lowercase filename to row validators list
--- @field lcFn2FileValidators table: Map of lowercase filename to file validators list
--- @field lcFn2PreProcessors table: Map of lowercase filename to pre-processors list
 -- @field lcFn2LineNo table: Map of lowercase filename to line number in descriptor file
 -- @field fn2Idx table: Map of descriptor file to column indices
 -- @field log logger: Logger instance
+-- In addition, opts carries one map per registered descriptor column, keyed by
+-- the column's `fieldOnMeta` (e.g. lcFn2JoinInto, lcFn2RowValidators). These are
+-- copied in from `metaMaps` (see loadDescriptorFiles) so the row loop can reach
+-- a column's target via opts[decl.fieldOnMeta] without naming any column here.
 
 -- Process the content of a descriptor file
 -- @param file_name string: Path to the descriptor file
@@ -579,14 +574,18 @@ local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
 end
 
 -- Load all descriptor files, in the order of priority.
--- `lcFn2EdgesFor` is optional (appended last) so existing callers that
--- don't care about graph edge files still work.
+--
+-- `metaMaps` is a single table that owns every registered descriptor-column
+-- map, keyed by the column's `fieldOnMeta` (e.g. metaMaps.lcFn2JoinInto). The
+-- loader auto-creates one empty map per registered column before the load
+-- loop, so a caller can pass an empty table and read the populated maps back
+-- afterwards. Core/derived maps (`lcFn2Type`, `lcFn2LineNo`, `extends`,
+-- `post_proc_files`) stay explicit because they are not registered columns.
+-- This signature is internal: the only in-tree callers are manifest_loader
+-- and the files_desc specs.
 local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
-    post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
-    lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-    lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
-    raw_files, loadEnv, badVal, variants, lcSkippedFiles, lcFn2EdgesFor,
-    lcFn2Transcoder)
+    post_proc_files, extends, lcFn2Type, lcFn2LineNo, metaMaps,
+    raw_files, loadEnv, badVal, variants, lcSkippedFiles)
     local desc_files = {}
     local max_prio = -math.huge
     local cur_mod = nil
@@ -597,7 +596,17 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     local log = badVal.logger
     local fn2Idx = {}
 
-    -- Options object for processFilesDesc
+    -- Drive the map lifecycle from the registry: one empty map per registered
+    -- descriptor column. The row loop reads its target via opts[fieldOnMeta]
+    -- (see processFilesDesc), so every registered column needs a pre-allocated
+    -- map whether or not this particular Files.tsv uses it.
+    for _, decl in pairs(descriptorColumnsByName()) do
+        metaMaps[decl.fieldOnMeta] = metaMaps[decl.fieldOnMeta] or {}
+    end
+
+    -- Options object for processFilesDesc. Core/derived maps are set
+    -- explicitly; the registered descriptor-column maps are pulled from
+    -- metaMaps so adding a feature column needs no edit here.
     local opts = {
         prios = prios,
         prio_offset = 0,
@@ -605,23 +614,15 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFileNames = lcFileNames,
         lcTypeNames = lcTypeNames,
         lcFn2Type = lcFn2Type,
-        lcFn2Ctx = lcFn2Ctx,
-        lcFn2Col = lcFn2Col,
-        lcFn2JoinInto = lcFn2JoinInto,
-        lcFn2JoinColumn = lcFn2JoinColumn,
-        lcFn2Export = lcFn2Export,
-        lcFn2JoinedTypeName = lcFn2JoinedTypeName,
-        lcFn2RowValidators = lcFn2RowValidators,
-        lcFn2FileValidators = lcFn2FileValidators,
-        lcFn2PreProcessors = lcFn2PreProcessors,
-        lcFn2EdgesFor = lcFn2EdgesFor or {},  -- optional; old callers may omit
-        lcFn2Transcoder = lcFn2Transcoder or {},  -- optional; populated from the transcoder column
         lcFn2LineNo = lcFn2LineNo,
         fn2Idx = fn2Idx,
         log = log,
         variants = variants,
         lcSkippedFiles = lcSkippedFiles,
     }
+    for field, map in pairs(metaMaps) do
+        opts[field] = map
+    end
 
     for _, file_name in ipairs(desc_files_order) do
         local file = loadDescriptorFile(file_name, raw_files, loadEnv, badVal)
@@ -650,8 +651,8 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     end
     validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     validateSiblingFieldTypes(extends, lcTypeNames, badVal)
-    validateJoinTargetsExist(lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo, fn2Idx)
-    validateFileJoins(lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo, fn2Idx)
+    validateJoinTargetsExist(metaMaps.lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo, fn2Idx)
+    validateFileJoins(metaMaps.lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo, fn2Idx)
     if fail then
         return nil
     end

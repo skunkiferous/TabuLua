@@ -89,31 +89,23 @@ describe("files_desc L4 ablation", function()
         local post_proc_files = {}
         local extends = {}
         local lcFn2Type = {}
-        local lcFn2Ctx = {}
-        local lcFn2Col = {}
-        local lcFn2JoinInto = {}
-        local lcFn2JoinColumn = {}
-        local lcFn2Export = {}
-        local lcFn2JoinedTypeName = {}
-        local lcFn2RowValidators = {}
-        local lcFn2FileValidators = {}
-        local lcFn2PreProcessors = {}
         local lcFn2LineNo = {}
-        local lcFn2EdgesFor = {}
+        -- metaMaps now owns every registered descriptor-column map; the loader
+        -- auto-allocates one per registered fieldOnMeta, so we pass it empty and
+        -- read the populated maps back afterwards.
+        local metaMaps = {}
         local raw_files = {}
         local result = files_desc.loadDescriptorFiles(
             {file_path}, prios, {[file_path] = "test"},
-            post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
-            lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-            lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors,
-            lcFn2LineNo, raw_files, {}, badVal, nil, {}, lcFn2EdgesFor)
+            post_proc_files, extends, lcFn2Type, lcFn2LineNo, metaMaps,
+            raw_files, {}, badVal, nil, {})
         return {
             result = result,
             lcFn2Type = lcFn2Type,
-            lcFn2Ctx = lcFn2Ctx,
-            lcFn2Col = lcFn2Col,
-            lcFn2JoinInto = lcFn2JoinInto,
-            lcFn2EdgesFor = lcFn2EdgesFor,
+            lcFn2Ctx = metaMaps.lcFn2Ctx,
+            lcFn2Col = metaMaps.lcFn2Col,
+            lcFn2JoinInto = metaMaps.lcFn2JoinInto,
+            lcFn2EdgesFor = metaMaps.lcFn2EdgesFor,
             badVal = badVal,
             log_messages = log_messages,
         }

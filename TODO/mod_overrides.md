@@ -163,7 +163,12 @@ ItemSchema.tsv           SchemaOverlay        Item.tsv                       ...
 > - The `schemaOverlayOf` / `patchOf` / `bulkPatchOf` **Files.tsv columns** are
 >   contributed through `type_wiring.registerModule(moduleName, {descriptorColumns=…})`,
 >   not by editing `files_desc.lua`'s core schema — which deliberately shrank to its six
->   intrinsic columns precisely so features add their own columns this way.
+>   intrinsic columns precisely so features add their own columns this way. Since
+>   [descriptor_map_lifecycle.md](descriptor_map_lifecycle.md) landed this is **fully**
+>   registry-driven: the loader auto-allocates each registered column's backing map and
+>   assembles it into `joinMeta` (keyed by the column's `fieldOnMeta`) from the registry,
+>   so a new descriptor column needs *zero* edits to `files_desc.lua` / `manifest_loader.lua`
+>   — its map shows up on `joinMeta` for the consuming `enginePostPass` to read.
 > - The `SchemaOverlay` row type's load-time behaviour is a per-typeName
 >   `type_wiring.register(...)` `onLoad` contribution (the same cascade that dispatches
 >   `Type`, `enum`, `custom_type_def`, and the graph-node families).

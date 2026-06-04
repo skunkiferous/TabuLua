@@ -120,6 +120,31 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **Registry-driven descriptor-column map lifecycle —
+  [TODO/descriptor_map_lifecycle.md](TODO/descriptor_map_lifecycle.md).**
+  Finished the type-wiring generalization for optional `Files.tsv` columns: the
+  registry already drove column recognition, parsing, and storing, but each
+  `lcFn2*` backing map was still allocated, threaded, and re-assembled into
+  `joinMeta` by hardcoded name in `files_desc.lua` and `manifest_loader.lua`.
+  The map *lifecycle* is now registry-driven too. `loadDescriptorFiles` takes a
+  single `metaMaps` table (replacing ~11 per-column positional params) and
+  auto-creates one empty map per registered `fieldOnMeta` from
+  `descriptorColumnsByName()`; `joinMeta` is assembled from `metaMaps` plus the
+  core/derived entries instead of a hand-written field list. The export-only
+  columns no core module reads (`edgesFor`, `joinColumn`, `export`,
+  `joinedTypeName`) now appear **nowhere** in the two loader modules — the
+  litmus test holds: a feature module that declares a column and consumes it via
+  its own `joinMeta` key (graphs being the motivating example) needs **zero**
+  core edits. Maps still consumed inside core (`lcFn2Ctx`/`lcFn2Col`,
+  validators/processors, `lcFn2Transcoder`) keep local aliases pulled from
+  `metaMaps` but are no longer allocated or assembled by hand. No behaviour
+  change; `joinMeta` gains the previously-absent `lcFn2Ctx`/`lcFn2Col`/
+  `lcFn2Variant` keys as a harmless side effect. **Breaking (internal API):**
+  `files_desc.loadDescriptorFiles` has a new signature — the only in-tree
+  callers are `manifest_loader` and the `files_desc` specs. Tests:
+  `spec/files_desc_spec.lua` and `spec/files_desc_ablation_spec.lua` updated to
+  the `metaMaps` shape (full suite green).
+
 - **PK-lookup audit — [TODO/pk_lookup_audit.md](TODO/pk_lookup_audit.md).**
   Eliminated redundant row scans in code paths that had a PK-indexed
   parsed dataset (or wrapped row array) available but were still

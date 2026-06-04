@@ -515,24 +515,15 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local priorities = {}
     local post_proc_files = {}
     local extends = {}
+    -- Core/derived maps (not registered descriptor columns).
     local lcFn2Type = {}
-    local lcFn2Ctx = {}
-    local lcFn2Col = {}
-    -- File joining metadata
-    local lcFn2JoinInto = {}
-    local lcFn2JoinColumn = {}
-    local lcFn2Export = {}
-    local lcFn2JoinedTypeName = {}
-    -- Validator maps
-    local lcFn2RowValidators = {}
-    local lcFn2FileValidators = {}
-    -- Pre-processor map
-    local lcFn2PreProcessors = {}
-    -- Graph edge-file map: lcfn of edge file -> lcfn of its target node file
-    local lcFn2EdgesFor = {}
-    -- Content-pipeline transcoder selection: lcfn -> transcoder id (Files.tsv)
-    local lcFn2Transcoder = {}
     local lcFn2LineNo = {}
+    -- metaMaps owns every registered descriptor-column map. loadDescriptorFiles
+    -- auto-allocates one empty map per registered fieldOnMeta and populates them
+    -- during the load; it becomes joinMeta below (plus the core entries). No
+    -- per-column map is named here, so a feature column (e.g. graph edgesFor)
+    -- flows through purely via its registry declaration.
+    local metaMaps = {}
     -- Variant filtering: convert array to set if needed, collect skipped files
     local variantsSet = nil
     if opt_variants then
@@ -543,15 +534,24 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     end
     local lcSkippedFiles = {}
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
-        post_proc_files, extends, lcFn2Type, lcFn2Ctx, lcFn2Col,
-        lcFn2JoinInto, lcFn2JoinColumn, lcFn2Export, lcFn2JoinedTypeName,
-        lcFn2RowValidators, lcFn2FileValidators, lcFn2PreProcessors, lcFn2LineNo,
-        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles, lcFn2EdgesFor,
-        lcFn2Transcoder)
+        post_proc_files, extends, lcFn2Type, lcFn2LineNo, metaMaps,
+        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
         return
     end
+    -- Local aliases for the maps still consumed inside this module (context/
+    -- column publishing, validator/processor execution, transcoder routing).
+    -- These are core engine behaviours, not addable features, so naming them
+    -- here is deliberate — but they are allocated and populated via metaMaps,
+    -- not by hand. validators/processors are mutated in place during the load
+    -- loop (ensureList), so the aliases and metaMaps share the same tables.
+    local lcFn2Ctx = metaMaps.lcFn2Ctx
+    local lcFn2Col = metaMaps.lcFn2Col
+    local lcFn2RowValidators = metaMaps.lcFn2RowValidators
+    local lcFn2FileValidators = metaMaps.lcFn2FileValidators
+    local lcFn2PreProcessors = metaMaps.lcFn2PreProcessors
+    local lcFn2Transcoder = metaMaps.lcFn2Transcoder
     -- Note: the type-wiring registry replaces the former typesSet / enumsSet /
     -- customTypesSet precomputation. Each wired onLoad fires from the per-file
     -- load loop via type_wiring.applyWiring, walking the file's extends chain.
@@ -619,29 +619,19 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- validators) is now applied per-file through type_wiring.applyWiring
     -- inside processSingleTSVFile — see builtin_wiring.lua's register()
     -- calls for basic_graph_node / graph_node / tree_node.
-    -- Build join metadata for exporter
-    local joinMeta = {
-        lcFn2JoinInto = lcFn2JoinInto,
-        lcFn2JoinColumn = lcFn2JoinColumn,
-        lcFn2Export = lcFn2Export,
-        lcFn2JoinedTypeName = lcFn2JoinedTypeName,
-        -- Validator metadata
-        lcFn2RowValidators = lcFn2RowValidators,
-        lcFn2FileValidators = lcFn2FileValidators,
-        -- Pre-processor metadata
-        lcFn2PreProcessors = lcFn2PreProcessors,
-        -- Graph edge-file metadata (Phase A5)
-        lcFn2EdgesFor = lcFn2EdgesFor,
-        -- Content-pipeline transcoder selection metadata
-        lcFn2Transcoder = lcFn2Transcoder,
-        -- Type metadata: lcfn -> typeName, and typeName -> superType chain.
-        -- Exposed for the graph edge-file consistency validator and any
-        -- future post-load passes that need the type lineage.
-        lcFn2Type = lcFn2Type,
-        extends = extends,
-        -- Variant metadata
-        lcSkippedFiles = lcSkippedFiles,
-    }
+    -- Build join metadata for exporter. Every registered descriptor-column map
+    -- is already in metaMaps (allocated by loadDescriptorFiles, populated during
+    -- the load and per-file processing), so joinMeta IS that table plus the
+    -- core/derived entries. Feature columns (e.g. graph edgesFor) therefore
+    -- appear here automatically with no edit.
+    local joinMeta = metaMaps
+    -- Type metadata: lcfn -> typeName, and typeName -> superType chain. Exposed
+    -- for the graph edge-file consistency validator and any future post-load
+    -- passes that need the type lineage.
+    joinMeta.lcFn2Type = lcFn2Type
+    joinMeta.extends = extends
+    -- Variant metadata
+    joinMeta.lcSkippedFiles = lcSkippedFiles
     return tsv_files, joinMeta
 end
 

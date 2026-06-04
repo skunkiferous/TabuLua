@@ -96,7 +96,7 @@ grep-point for "which behaviours fire on which type".
 | [manifest_loader.lua:531-563](../manifest_loader.lua#L531-L563) | Three walkers `isType`, `isEnum`, `isCustomTypeDef` plus `findAllTypes` and `buildCustomTypesSet` | Three near-identical implementations of "is `T` in the ancestor chain of this typeName?" |
 | [graph_wiring.lua:40-44](../graph_wiring.lua#L40-L44) (`ROLE_OF`) + [graph_wiring.lua:209-236](../graph_wiring.lua#L209-L236) (`applyAutoWiring`) | A `typeName` whose `extends` chain leads to `basic_graph_node` / `graph_node` / `tree_node` | Prepends a completion `processor_spec` to `lcFn2PreProcessors`, appends `graphRefsExist` / `graphAcyclic` / `graphTreeShape` `validator_spec`s to `lcFn2FileValidators`. The contributions are bundled per role (not decomposed along the extends chain). |
 | [graph_wiring.lua:88-100](../graph_wiring.lua#L88-L100) (`detectEdgeFamily`) | Edge files declaring `edgesFor` | Engine-managed cross-file validator [`validateEdgeFiles`](../graph_wiring.lua#L277-L416) invoked from [manifest_loader.lua:1094-1098](../manifest_loader.lua#L1094-L1098), *after* the per-file validator phase. Needs `lcFn2EdgesFor`, `lcFn2Type`, `extends`, and the full `tsv_files` map. |
-| [files_desc.lua:66](../files_desc.lua#L66) + [:223](../files_desc.lua#L223) + [:452-457](../files_desc.lua#L452-L457) | `edgesFor:filepath\|nil` column | A Files.tsv column dedicated to graph wiring, plumbed through to `joinMeta.lcFn2EdgesFor` for `validateEdgeFiles` to consume. |
+| [files_desc.lua:66](../files_desc.lua#L66) + [:223](../files_desc.lua#L223) + [:452-457](../files_desc.lua#L452-L457) | `edgesFor:filepath\|nil` column | A Files.tsv column dedicated to graph wiring, plumbed through to `joinMeta.lcFn2EdgesFor` for `validateEdgeFiles` to consume. **(Resolved — see [descriptor_map_lifecycle.md](descriptor_map_lifecycle.md): the map lifecycle is now registry-driven; `edgesFor` is no longer named in either loader module — only declared by `graph_wiring`. `lcFn2EdgesFor` still lands on `joinMeta` automatically via the shared `metaMaps`.)** |
 | [processor_executor.lua:378-383](../processor_executor.lua#L378-L383) + [validator_executor.lua:46-48](../validator_executor.lua#L46-L48) | n/a | The five graph helpers (`completeBasicGraph`, `completeDirectedGraph`, `graphRefsExist`, `graphAcyclic`, `graphTreeShape`) are hard-coded into the processor / validator sandbox envs so the auto-wired expressions can resolve them. |
 
 After graph_types Layer A landed:
@@ -112,7 +112,8 @@ After graph_types Layer A landed:
   edge consistency pass)
 - **Five hard-coded sandbox helpers** that the wired expressions depend on
 - **One bespoke Files.tsv column** (`edgesFor`) that exists solely so wiring
-  has the metadata it needs
+  has the metadata it needs (the column's *lifecycle* is now registry-driven —
+  see [descriptor_map_lifecycle.md](descriptor_map_lifecycle.md))
 
 ### What we lose by leaving it
 
@@ -1219,12 +1220,12 @@ duplicated `sandboxHelpers`/`enginePostPasses` across three families
 collapse into a single `registerModule("graph_wiring", ...)` call.
 
 - **One `registerModule("graph_wiring", ...)` call** that owns:
-  - The `edgesFor` `descriptorColumn`
-    ([files_desc.lua:66](../files_desc.lua#L66) plus the header parser
-    and row loop wiring at
-    [:223](../files_desc.lua#L223) and
-    [:452-457](../files_desc.lua#L452-L457)). The map continues to land
-    at `joinMeta.lcFn2EdgesFor`.
+  - The `edgesFor` `descriptorColumn` (declared by `graph_wiring`; the
+    header parser and row loop read it generically from the registry).
+    The map continues to land at `joinMeta.lcFn2EdgesFor` — now allocated
+    and assembled automatically via the shared `metaMaps`, with no
+    per-column plumbing left in `files_desc.lua` / `manifest_loader.lua`
+    (see [descriptor_map_lifecycle.md](descriptor_map_lifecycle.md)).
   - The five `sandboxHelpers` entries
     ([processor_executor.lua:378-383](../processor_executor.lua#L378-L383)
     and
