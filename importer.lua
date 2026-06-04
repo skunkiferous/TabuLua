@@ -5,7 +5,7 @@ local NAME = "importer"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 22, 0)
+local VERSION = semver(0, 23, 0)
 
 -- Dependencies
 local read_only = require("read_only")
