@@ -15,6 +15,51 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.23.0] - 2026-06-04
+
+### Added
+
+- **`--strip-cog` reformatter flag.** Exposes the existing `exportParams.stripCog`
+  option on the CLI: when exporting, COG doc templates have their scaffolding
+  (markers + code lines) stripped, leaving only the generated output in the
+  published copy. Default off (markers kept). Documented in
+  [REFORMATTER.md](REFORMATTER.md) alongside `--cog-docs` (which was also added to
+  that options table). The tutorial now demonstrates it on
+  `tutorial/expansion/SkillTree.md`.
+
+### Changed
+
+- **Updated the tutorial.**
+
+- **COG / cell-expression sandbox unified with the code-library sandbox.**
+  `sandbox_env.cogGlobals()` — the `__index` surface backing cell expressions and
+  COG scripts (`manifest_loader` `loadEnv`) — now returns exactly the same set as
+  `sandbox_env.new()`, additionally exposing the pure TabuLua helper block
+  (`predicates`, `stringUtils`, `tableUtils`, `equals`). Previously COG/cell
+  expressions had `math` plus the curated `string`/`table` libraries (including
+  `table.concat`) but not those helpers; now a COG doc block and any code library
+  it calls see an identical safe API. The helpers are side-effect-free, so this
+  widens convenience without weakening the sandbox. Test updated in
+  `spec/sandbox_env_spec.lua`.
+
+- **`--cog-docs` now errors when combined with export options.** `--cog-docs` is an
+  in-place doc-refresh mode that exports nothing; previously pairing it with
+  `--file=`, `--data=`, `--strip-cog`, `--clean`, `--collapse-exploded`, or
+  `--export-dir=` silently ignored those flags and left the export dir empty. The
+  reformatter CLI now reports the conflicting flags and exits non-zero instead of
+  swallowing them.
+
+### Fixed
+
+- **Sink pipeline no longer crashes when a source-only stage matches
+  (`content_pipeline.matchingStages`).** With `useSink=true` the dispatcher used the
+  `useSink and sinkTransform or transform` idiom, which falls through to `transform`
+  when a matched stage has no `sinkTransform` — so a decode stage (e.g. reversible
+  gzip) got selected in the sink direction and `runSink` then called its nil
+  `sinkTransform`. This surfaced when a `.tsv.gz` data file was present and a
+  `--strip-cog` / `stripCog` export ran. Fixed to pick the direction's function
+  explicitly; regression test in `spec/content_pipeline_spec.lua`.
+
 ## [0.22.0] - 2026-06-04
 
 ### Added

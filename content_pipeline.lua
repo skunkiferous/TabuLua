@@ -305,7 +305,12 @@ local function matchingStages(phase, name, content, kind, useSink)
         local spec = entry.spec
         -- Pick the function for the direction we're dispatching; a nil here
         -- means this stage doesn't participate in this direction, so skip it.
-        local fn = useSink and spec.sinkTransform or spec.transform
+        -- NB: don't fold this into `useSink and X or Y` — when useSink is true
+        -- but sinkTransform is nil, that idiom wrongly falls through to
+        -- spec.transform, selecting a source-only stage (e.g. a decode stage)
+        -- for the sink direction and then calling its nil sinkTransform.
+        local fn
+        if useSink then fn = spec.sinkTransform else fn = spec.transform end
         if spec.phase == phase and fn and specMatches(spec, name, content, kind) then
             out[#out + 1] = {spec = spec, order = i, priority = spec.priority or 100}
         end

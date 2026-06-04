@@ -122,12 +122,23 @@ describe("sandbox_env", function()
             assert.is_function(env.string.upper)
         end)
 
-        it("does NOT expose the TabuLua helper block", function()
+        it("exposes the TabuLua helper block (unified with code libraries, v0.22.0)", function()
             local env = sandbox_env.cogGlobals()
-            assert.is_nil(env.predicates)
-            assert.is_nil(env.stringUtils)
-            assert.is_nil(env.tableUtils)
-            assert.is_nil(env.equals)
+            assert.is_table(env.predicates)
+            assert.is_table(env.stringUtils)
+            assert.is_table(env.tableUtils)
+            assert.is_function(env.equals)
+        end)
+
+        it("provides the same safe surface as new()", function()
+            local cog = sandbox_env.cogGlobals()
+            local lib = sandbox_env.new()
+            for k in pairs(lib) do
+                assert.is_not_nil(cog[k], "cogGlobals missing key present in new(): " .. tostring(k))
+            end
+            for k in pairs(cog) do
+                assert.is_not_nil(lib[k], "cogGlobals has key absent from new(): " .. tostring(k))
+            end
         end)
 
         it("does not expose any dangerous global", function()

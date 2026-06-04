@@ -16,8 +16,11 @@ url:http|nil
 # advancedElement: a focused enum for shadow realm content (Fire, Light, Shadow only)
 # intTypeName: bare extends constraint - accepts only names of types extending integer
 custom_types:{custom_type_def}|nil	{name="advancedElement",parent="{enum:Fire|Light|Shadow}"},{name="bossGem",parent="uint"},{name="intTypeName",parent="{extends,integer}"},{members={"bossGem"},name="CurrencyType",parent="number"},{name="ExpansionWiring",parent="type_wiring_def"}
-# Expansion-specific code library
-code_libraries:{{name,string}}|nil	{"bossLib","libs/bossLib.lua"}
+# Expansion-specific code libraries. bossLib: boss math + Type-Wiring bootstrap.
+# skillDoc: renders the SkillTree DAG as an ASCII graph for SkillTree.md (v0.22.0).
+# The logic lives in a library for reuse and a clean one-line COG block; COG doc
+# blocks and code libraries share the same safe sandbox (unified in v0.22.0).
+code_libraries:{{name,string}}|nil	{"bossLib","libs/bossLib.lua"},{"skillDoc","libs/skillDoc.lua"}
 # Type-Wiring bootstrap (v0.21.0): bossLib.bootstrap(api) runs once at
 # engine init with the registration api. It registers a sandbox helper
 # `isShadowRealm(name)` and a no-op enginePostPasses entry to demonstrate

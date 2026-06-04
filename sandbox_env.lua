@@ -92,10 +92,12 @@ local SAFE_TABLE = {
     unpack = table.unpack,
 }
 
--- The TabuLua helper block: pure, side-effect-free utilities exposed to the
--- five internal sandboxes (validators, processors, code libraries,
--- custom-type `validate` expressions, `transformCells`). Cell expressions
--- and COG scripts deliberately do NOT receive this block — see `cogGlobals`.
+-- The TabuLua helper block: pure, side-effect-free utilities exposed to EVERY
+-- sandbox this module hands out — validators, processors, code libraries,
+-- custom-type `validate` expressions, `transformCells`, and (as of v0.22.0)
+-- cell expressions and COG scripts too. The cell-expression / COG surface was
+-- unified with the code-library surface so that, e.g., a COG doc block and the
+-- library it calls see exactly the same safe API (see `cogGlobals`).
 local SAFE_UTILS = {
     predicates = predicates,
     stringUtils = {
@@ -150,22 +152,16 @@ local function new(extras)
 end
 
 --- Builds a FRESH set of safe globals for cell expressions and COG scripts.
---- Identical to `new()` but WITHOUT the TabuLua helper block: cell
---- expressions and COG scripts have never had access to `predicates`,
---- `stringUtils`, `tableUtils`, or `equals`, and there is no reason to widen
---- their surface now. Intended to be used as the `__index` fallback of the
---- `loadEnv` table that backs cell expressions and COG scripts.
+--- As of v0.22.0 this is IDENTICAL to `new()` (including the TabuLua helper
+--- block `predicates` / `stringUtils` / `tableUtils` / `equals`): the
+--- cell-expression / COG surface was unified with the code-library surface, so
+--- a COG doc block and the code library it calls share exactly the same safe
+--- API. Kept as a distinct, intention-revealing factory because it is used as
+--- the `__index` fallback of the `loadEnv` table that backs cell expressions
+--- and COG scripts.
 --- @return table A fresh table of safe globals
 local function cogGlobals()
-    local env = {
-        math = math,
-        string = SAFE_STRING,
-        table = SAFE_TABLE,
-    }
-    for k, v in pairs(SAFE_BUILTINS) do
-        env[k] = v
-    end
-    return env
+    return new()
 end
 
 -- Provides a tostring() function for the API

@@ -1,6 +1,6 @@
 # Chronicles of Tabulua - Tutorial
 
-A comprehensive tutorial for **TabuLua** (v0.11.0), themed as an RPG game data system.
+A comprehensive tutorial for **TabuLua** (v0.22.0), themed as an RPG game data system.
 It demonstrates virtually every feature of the TabuLua typed TSV format through two
 interconnected packages: a core game and an expansion mod.
 
@@ -19,7 +19,7 @@ tutorial/
     CoreTypes.tsv                    # Custom type definition file (v0.10.0)
     Element.tsv                      # Enum: elemental damage types
     Rarity.tsv                       # Enum: item rarity tiers
-    Constant.tsv                     # Published game constants + expressions
+    Constant.tsv.gz                  # Published game constants (gzip-compressed source, v0.22.0)
     Item.tsv                         # Items: long IDs, enums, arrays, unions
     Item.en.tsv                      # Localization: file joining demo
     Icon.tsv                         # Icons: hexbytes + base64bytes binary types
@@ -43,8 +43,10 @@ tutorial/
     SkillTree.tsv                    # graph_node: DAG with multi-parent skills
     SkillEdges.tsv                   # graph_edge: per-edge data attached via edgesFor
     ExpansionWiring.tsv              # type_wiring_def: pure-data Type Wiring (v0.21.0)
+    SkillTree.md                     # COG-Markdown doc: ASCII skill graph generated from data (v0.22.0)
     libs/
       bossLib.lua                    # Expansion code library + bootstrap (v0.21.0)
+      skillDoc.lua                   # Code library that renders the SkillTree DAG for SkillTree.md (v0.22.0)
 ```
 
 ## Running the Tutorial
@@ -69,6 +71,12 @@ lua reformatter.lua --file=json --collapse-exploded tutorial/core/ tutorial/expa
 
 # Clean export directory before exporting:
 lua reformatter.lua --file=json --clean tutorial/core/ tutorial/expansion/
+
+# Refresh COG-Markdown docs (e.g. SkillTree.md) in place against the data, markers kept:
+lua reformatter.lua --cog-docs tutorial/core/ tutorial/expansion/
+
+# Export, stripping COG scaffolding from generated docs for a clean published copy:
+lua reformatter.lua --file=json --strip-cog tutorial/core/ tutorial/expansion/
 ```
 
 See `REFORMATTER.md` for the full list of export formats and options.
@@ -137,9 +145,11 @@ validators, and special behaviors (enum registration, data publishing, file join
 - **Element.tsv** and **Rarity.tsv** use `superType=enum`, which registers them as enum types
   available for use in column type declarations throughout all loaded packages.
 
-- **Constant.tsv** uses `publishColumn=value` with an empty `publishContext`, which publishes
+- **Constant.tsv.gz** (a gzip-compressed data file, registered under its full `.gz` name)
+  uses `publishColumn=value` with an empty `publishContext`, which publishes
   each row's `value` field as a bare name in the global expression scope. This means other
-  files can write `=baseDamage*2` instead of needing a qualified reference.
+  files can write `=baseDamage*2` instead of needing a qualified reference. Compression is
+  transparent to publishing (see the Constant.tsv.gz section below).
 
   *Rationale:* Game balance constants (base damage, crit multiplier, etc.) are referenced
   frequently in expressions across many files. Publishing them globally keeps expressions
@@ -184,11 +194,28 @@ rarity tier, making the enum a data table rather than just a list of names.
 
 ---
 
-#### Constant.tsv (Published Constants)
+#### Constant.tsv.gz (Published Constants + Gzip-Compressed Source, v0.22.0)
 
 Game balance constants with expressions and library function calls.
 
 Columns: `name:name`, `displayName:text`, `value:float`, `unit:name`, `comment:comment`
+
+**Reversible gzip data file (v0.22.0):** This file is stored on disk as
+`Constant.tsv.gz` — a gzip-compressed TSV — and registered under that exact name in
+`Files.tsv`. TabuLua treats it as a first-class data file:
+
+- On load, the content pipeline peels the `.gz` extension, **decompresses** the bytes,
+  and parses the result as ordinary `Constant` TSV data. Publishing (`publishColumn=value`)
+  and every downstream expression (`=baseDamage*N` in Creature.tsv, etc.) work exactly as
+  they would for a plaintext `.tsv` — compression is transparent.
+- On reformat, TabuLua reformats the **decoded** TSV and **re-compresses** it, writing the
+  bytes back in binary. It never clobbers the `.gz` with plaintext, and the round-trip is
+  **idempotent** (running the reformatter twice leaves the bytes unchanged).
+
+*Rationale:* Large generated or rarely-edited data tables can be committed compressed to
+save space, while remaining fully validated, publishable, and reformattable. The gzip
+compressor is pure Lua (built on `libdeflate` plus an RFC 1952 envelope), so this needs no
+native dependency.
 
 **Notable rows:**
 - `baseDamage=10.0`, `critMultiplier=2.5` -- simple numeric constants
@@ -735,6 +762,80 @@ nodes. Authors who don't need per-edge data can simply omit the edge file.
 
 ---
 
+#### SkillTree.md (COG-Markdown Doc Generation, v0.22.0)
+
+Demonstrates **data-driven documentation**: a Markdown file whose body is generated from
+the loaded data by a COG block. [SkillTree.md](expansion/SkillTree.md) renders the skill
+DAG (from `SkillTree.tsv` and `SkillEdges.tsv`) as an ASCII graph, so the doc can never
+drift out of sync with the data.
+
+**Hidden Markdown COG marker.** COG's usual markers (`###`, `---`) would render as a
+heading or horizontal rule in Markdown. So this file uses the **HTML-comment marker
+style**, `<!---[[[ … ]]]--->`, which is a valid HTML comment: invisible when the page is
+rendered and free of heading/rule pollution in the raw source. (Plain `<!-- … -->`
+comments are *not* COG — the third dash is the COG sigil.)
+
+```markdown
+## Prerequisite graph
+
+<!---[[[
+return skillDoc.skillTreeAscii(files)
+]]]--->
+```text
+perception (max 5)
+|-- aim (max 5)  -- needs perception lvl 2
+...
+```
+<!---[[[end]]]--->
+```
+
+**COG logic in a code library.** The COG block is a one-liner: it calls
+`skillDoc.skillTreeAscii(files)`. The real rendering logic lives in
+[libs/skillDoc.lua](expansion/libs/skillDoc.lua). COG doc blocks and code libraries share
+the **same safe sandbox** (unified in v0.22.0 — both expose `math`, the curated
+`string`/`table` libraries, and the `predicates`/`stringUtils`/`tableUtils`/`equals`
+helpers), so this logic could equally run inline. Keeping it in a library is a matter of
+**organization and reuse**: the template stays a readable one-liner, and the renderer can
+be reused and unit-tested on its own.
+
+**The data env.** Doc blocks read the loaded datasets through `files`, keyed by file name
+(`files["SkillTree.tsv"]`) or type name (`files["SkillTree"]`). Generation runs *after* the
+data is fully loaded, so the graph's derived `graphChildren` back-references (filled by the
+graph_node completion pre-processor) are already in place — that is what lets `skillDoc`
+walk the tree top-down from its roots. Each row's cells expose a `.parsed` value; array
+cells like `graphParents` parse to a plain Lua list (or `nil` when empty).
+
+**Auto-discovery.** No registration is needed in `Files.tsv`. The `cog_discovery` pass
+scans the package roots for COG-eligible text files (`.md`, `.markdown`, `.html`, `.txt`)
+and processes only those that actually contain a COG block (`needsCog`), so dropping a
+`.md` with a `<!---[[[ … ]]]--->` block anywhere in the package "just works". `.tsv`/`.csv`
+are excluded (data files are already COG-processed on read).
+
+**Two modes:**
+
+- **In-place refresh** keeps a committed doc current with the data, markers kept so it
+  stays re-runnable:
+
+  ```bash
+  lua reformatter.lua --cog-docs tutorial/core/ tutorial/expansion/
+  ```
+
+- **Generate-to-export** expands the template against the data and writes it to the export
+  directory (mirroring source layout), leaving the source untouched. Adding `--strip-cog`
+  removes the COG scaffolding for a clean published copy (the ASCII graph stays, the
+  `<!--- … --->` markers and code are gone):
+
+  ```bash
+  lua reformatter.lua --file=json --strip-cog tutorial/core/ tutorial/expansion/
+  ```
+
+*Rationale:* Reference tables, type listings, and graphs like this one are tedious and
+error-prone to maintain by hand. Generating them from the single source of truth — the
+TSV data — keeps the docs correct for free, and the hidden marker style means the
+generated file is clean both when rendered and in raw form.
+
+---
+
 ## Multi-Package Architecture
 
 ### How It Works
@@ -821,10 +922,15 @@ Quick lookup: which file demonstrates which feature.
 | File joining | Item.en.tsv into Item.tsv |
 | COG code generation | LevelScale.tsv |
 | COG view (`files` table) | FireItems.tsv |
+| COG-Markdown doc generation (hidden `<!---` marker) | SkillTree.md |
+| COG logic in a code library | skillDoc.lua (called from SkillTree.md) |
+| In-place doc refresh (`--cog-docs`) | SkillTree.md |
+| Strip COG on export (`--strip-cog`) | SkillTree.md |
+| Reversible gzip data file (`.tsv.gz`) | Constant.tsv.gz |
 | TSV preamble (comments before header) | FireItems.tsv |
-| Code libraries | gameLib.lua, bossLib.lua |
+| Code libraries | gameLib.lua, bossLib.lua, skillDoc.lua |
 | TSV comments | All files (lines starting with `#`) |
-| publishColumn | Constant.tsv (global constants) |
+| publishColumn | Constant.tsv.gz (global constants) |
 | Row validators | Item.tsv, ExpansionItem.tsv |
 | File validators | Item.tsv (count limit) |
 | Package validators | Both Manifests |

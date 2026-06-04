@@ -126,6 +126,35 @@ describe("content_pipeline", function()
     end)
   end)
 
+  describe("runSink (sink/export direction)", function()
+    -- Regression: a source-only stage (transform, no sinkTransform) — e.g. a
+    -- decode stage — must NOT be selected in the sink direction. The old
+    -- `useSink and sinkTransform or transform` idiom fell through to transform
+    -- when sinkTransform was nil, so runSink then tried to call a nil
+    -- sinkTransform and crashed (hit by `.tsv.gz` data file + stripCog export).
+    it("skips a source-only stage instead of calling its nil sinkTransform", function()
+      local called = false
+      content_pipeline.register("decode-only", {
+        phase = "decode", extensions = {"zz"},
+        transform = function(_, c) called = true; return c end,
+      })
+      local bv = newBadVal()
+      local out = content_pipeline.runSink("file.zz", "RAW", {}, bv)
+      assert.equals("RAW", out)        -- unchanged, no crash
+      assert.is_false(called)          -- the source-only transform was not invoked
+      assert.equals(0, #bv.messages)
+    end)
+
+    it("invokes a matching stage's sinkTransform", function()
+      content_pipeline.register("sink-stage", {
+        phase = "macro", extensions = {"txt"},
+        sinkTransform = function(_, c) return c .. "+SINK" end,
+      })
+      local bv = newBadVal()
+      assert.equals("X+SINK", content_pipeline.runSink("a.txt", "X", {}, bv))
+    end)
+  end)
+
   describe("run (normalize + macro)", function()
     it("normalises EOL and expands COG on a text file", function()
       local bv = newBadVal()

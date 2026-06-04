@@ -217,6 +217,10 @@ local function checkTypeName(extends, fileDesc, fileName, typeName, superType, l
         log = log or logger
         local idx = fileName:find("/[^/]*$")
         local fileNameWithoutPath = (idx and fileName:sub(idx + 1)) or fileName
+        -- Peel any decode-extension layers (e.g. a gzip-compressed data file
+        -- 'Constant.tsv.gz' -> 'Constant.tsv') so the typeName check compares
+        -- against the effective data file name, not the compression wrapper.
+        fileNameWithoutPath = content_pipeline.peeledName(fileNameWithoutPath)
         -- Handle compound extension ".transposed.tsv" as a single extension
         local fileNameWithoutExt
         if fileNameWithoutPath:sub(-#TRANSPOSED_TSV_EXT) == TRANSPOSED_TSV_EXT then

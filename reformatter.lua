@@ -290,6 +290,12 @@ local function generateUsage()
         "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
         "                        block) in place against the loaded data, keeping markers.",
         "                        Independent of reformat/export; nothing is exported.",
+        "                        Cannot be combined with export options (--file=, --data=,",
+        "                        --strip-cog, --clean, --collapse-exploded, --export-dir=).",
+        "",
+        "  --strip-cog           When exporting, strip the COG scaffolding (markers and",
+        "                        code) from generated doc templates, keeping only the",
+        "                        generated output. Default off (markers kept).",
         "",
         "  --variant=<name>      Activate a named variant for conditional file inclusion",
         "                        Can be specified multiple times (e.g., --variant=en --variant=ios)",
@@ -625,6 +631,8 @@ if isMainScript then
         local collapseExploded = false  -- --collapse-exploded flag
         local cleanExportDir = false    -- --clean flag
         local cogDocs = false           -- --cog-docs flag (in-place doc refresh)
+        local stripCog = false          -- --strip-cog flag (strip COG on doc export)
+        local exportDirSet = false      -- whether --export-dir= was given
         local variants = {}             -- --variant=<name> values
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
@@ -689,6 +697,7 @@ if isMainScript then
                 end
             elseif exportDirMatch then
                 exportDir = exportDirMatch
+                exportDirSet = true
             elseif arg_i:match("^%-%-log%-level=") then
                 local levelName = arg_i:match("^%-%-log%-level=(.+)$")
                 local level = LOG_LEVELS[levelName:lower()]
@@ -709,6 +718,8 @@ if isMainScript then
                 cleanExportDir = true
             elseif arg_i == "--cog-docs" then
                 cogDocs = true
+            elseif arg_i == "--strip-cog" then
+                stripCog = true
             elseif arg_i:match("^%-%-variant=") then
                 local variantName = arg_i:match("^%-%-variant=(.+)$")
                 if variantName then
@@ -731,6 +742,27 @@ if isMainScript then
         -- Finalize any remaining pending export
         finalizePending()
 
+        -- --cog-docs is an in-place refresh mode (rewrites source doc templates,
+        -- keeping markers) and exports nothing. Combining it with export options
+        -- used to silently ignore them — leaving the export dir empty. Error
+        -- instead, so the conflicting intent is surfaced rather than swallowed.
+        if cogDocs then
+            local offending = {}
+            if #exporters > 0 then offending[#offending + 1] = "--file=" end
+            if stripCog then offending[#offending + 1] = "--strip-cog" end
+            if cleanExportDir then offending[#offending + 1] = "--clean" end
+            if collapseExploded then offending[#offending + 1] = "--collapse-exploded" end
+            if exportDirSet then offending[#offending + 1] = "--export-dir=" end
+            if #offending > 0 then
+                logger:error("--cog-docs cannot be combined with export options ("
+                    .. table.concat(offending, ", ") .. "). It refreshes COG doc "
+                    .. "templates in place and exports nothing. Run --cog-docs on its "
+                    .. "own, or drop it to export (add --strip-cog to strip COG markers "
+                    .. "from the generated docs).")
+                hasError = true
+            end
+        end
+
         if hasError then
             print("\nUse 'lua reformatter.lua' without arguments to see usage.")
             os.exit(1)
@@ -750,6 +782,11 @@ if isMainScript then
             -- Set cleanExportDir=true when --clean is specified
             if cleanExportDir then
                 exportParams.cleanExportDir = true
+            end
+            -- Set stripCog=true when --strip-cog is specified: generated COG doc
+            -- templates have their scaffolding removed on export (default off).
+            if stripCog then
+                exportParams.stripCog = true
             end
             processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
         end

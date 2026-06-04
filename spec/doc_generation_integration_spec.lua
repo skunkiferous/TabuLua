@@ -36,7 +36,8 @@ local FILES = table.concat({
 local ITEM_TSV = "name:identifier\tprice:integer\nsword\t100\nshield\t50\n"
 
 -- A doc template that lists item names — reads data by BOTH typeName and filename
--- to exercise the combined env. Avoids table.concat (not in the COG sandbox).
+-- to exercise the combined env. (Builds its string with `..` in a loop; the COG
+-- sandbox does have table.concat, this just keeps the fixture self-contained.)
 local REPORT_MD = table.concat({
     "# Item Report",
     "<!---[[[",
