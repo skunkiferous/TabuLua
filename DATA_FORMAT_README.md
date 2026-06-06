@@ -1022,6 +1022,7 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `publishColumn` | `name\|nil` | The optional column of the file that is "published" |
 | `loadOrder` | `number` | A number defining the processing order (affects computed expressions) |
 | `description` | `text` | The optional description of the file |
+| `transcoder` | `string\|nil` | Selects an input transcoder so a non-TSV file (e.g. `.json` / `.xml`) loads as data — e.g. `json:objects`, `xml:tabulua` (see [Alternative Input Formats](#alternative-input-formats-transcoders)) |
 | `joinInto` | `name\|nil` | The fileName of the primary file this file joins into |
 | `joinColumn` | `name\|nil` | The column name used for joining (defaults to first column if nil) |
 | `export` | `boolean\|nil` | Whether to export this file independently (defaults based on joinInto) |
@@ -1154,6 +1155,134 @@ Each group tuple has three elements: `{groupName, {allowedValues}, default}`. Th
 
 - No variant from a group (no default): `variant group 'platform' requires exactly one of: ios, android`
 - Multiple from same group: `variant group 'lang' has multiple selected variants: en, fr -- expected exactly one`
+
+## Alternative Input Formats (Transcoders)
+
+A data file listed in `Files.tsv` does not have to be a TSV/CSV file. The engine
+can read a handful of other formats and convert them to the same wide, typed
+table at load time, so the rest of the system (validation, joining, export, …)
+sees an ordinary parsed file. The component that performs the conversion is a
+**transcoder**.
+
+Transcoding is transparent: the on-disk file stays in its original format, and
+the converted wide table is what gets validated and exported. Whether a file is
+transcoded at all is decided **before** parsing, by file name and/or the
+`transcoder` column — never by guessing from the content.
+
+### Dispatch: extension-auto vs. explicit `transcoder`
+
+There are two ways a file is routed through a transcoder:
+
+- **Auto-matched by extension.** A `.eav` file is recognised by its extension —
+  just list it in `Files.tsv` and it loads as data, no `transcoder` column
+  needed. Compressed data files (`.tsv.gz`, `.csv.gz`) are likewise decompressed
+  automatically.
+- **Explicitly selected** via the `transcoder` column in `Files.tsv`. Formats
+  like JSON and XML are *ambiguous* — the same extension can hold several
+  different layouts, or be an unrelated game asset — so they never auto-fire. You
+  opt a specific file in by naming a transcoder id (e.g. `xml:tabulua`). A
+  `.json` / `.xml` file **without** a `transcoder` value is treated as an opaque
+  asset (copied through on export, not parsed as data).
+
+### Supported transcoders
+
+| `transcoder` id | Extension | Selection | Reversible | Column types from |
+|-----------------|-----------|-----------|------------|-------------------|
+| *(none)* | `.eav` | auto (by extension) | yes | the file's `typeName` schema |
+| `json:objects` | `.json` | explicit | no | the file's `typeName` schema |
+| `json:rows` | `.json` | explicit | no | the file's `typeName` schema |
+| `json:columns` | `.json` | explicit | no | the file's `typeName` schema |
+| `xml:tabulua` | `.xml` | explicit | yes | the file's own `<header>` |
+
+> A transcode stage may declare an **input-extension guard**: an explicitly
+> selected transcoder verifies the file actually has the expected extension and
+> errors clearly otherwise (e.g. pointing `json:rows` at a `.txt` file is caught
+> early rather than mis-parsed).
+
+### Reversibility and the reformatter
+
+When a file is reformatted in place, a **reversible** transcoder rewrites the
+on-disk source back in its own format from the reformatted wide table; a
+**non-reversible** one leaves the source untouched (the derived TSV is not the
+source of truth, so it is never written back over the original).
+
+- `.eav`, `.xml` (`xml:tabulua`), and `.tsv.gz` / `.csv.gz` are reversible — the
+  reformatter rewrites them.
+- The `json:*` transcoders are read-only inputs: the `.json` source is never
+  rewritten.
+
+### EAV (Entity–Attribute–Value) long format
+
+A `.eav` file is a header-less, three-column long table of
+`entity <tab> attribute <tab> value` triples. The engine pivots it back to the
+wide table, typing the rebuilt header from the file's `typeName` schema (so a
+`typeName` is required, and each attribute must be a field of that type). The
+key column is the schema's first field; an attribute absent for a given entity
+becomes an empty cell.
+
+<!-- markdownlint-disable MD010 -->
+```text
+# Items.eav  (typeName=Item in Files.tsv)
+sword	price	100
+sword	tag	sharp
+shield	price	50
+```
+<!-- markdownlint-enable MD010 -->
+
+loads as the wide table:
+
+<!-- markdownlint-disable MD010 -->
+```text
+name:identifier	price:integer	tag:string|nil
+sword	100	sharp
+shield	50
+```
+<!-- markdownlint-enable MD010 -->
+
+### XML round-trip format (`xml:tabulua`)
+
+The `xml:tabulua` transcoder reads TabuLua's **own** XML export format back in as
+data — the inverse of XML export. The document is `<file>/<header>/<row>`, with
+typed cell elements (`<integer>`, `<string>`, `<number>`, `<true/>`, `<null/>`,
+nested `<table>` for composite values):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<file xmlns="urn:tabulua:table:1">
+<header><string>name:identifier</string><string>n:integer</string><string>loot:{name}</string></header>
+<row><string>sword</string><integer>100</integer><table><string>gem</string><string>coin</string></table></row>
+</file>
+```
+
+Two properties make it distinct from the other transcoders:
+
+- **Namespaced.** The root carries the namespace `urn:tabulua:table:1` (a
+  version-tagged URN). This is how a reader tells a TabuLua data file from an
+  unrelated `.xml` asset. The transcoder verifies the namespace and rejects a
+  document that is not in it — even one explicitly opted in with
+  `transcoder=xml:tabulua` — so a mis-pointed asset fails loudly instead of being
+  mis-read.
+- **Schema-free.** Column names and types come from the file's own `<header>`
+  (`name:type` cells), not from a `typeName`. (The `typeName` column in
+  `Files.tsv` is still filled in as usual, but it does not drive the XML column
+  types.) Composite `<table>` cells round-trip through the same machinery every
+  other format uses, so a `table`-typed column reads/writes identically across
+  formats.
+
+Because the format is reversible, an `.xml` data file is rewritten in place by
+the reformatter from the reformatted wide table — a true XML ⇄ TSV round-trip.
+
+> **XML export is namespaced.** Producing this format (XML export) now emits the
+> `urn:tabulua:table:1` namespace on the root `<file>` element. XML files
+> exported by older versions (bare `<file>`) must be re-exported before they can
+> be read back via `xml:tabulua`.
+
+### Compressed data files (gzip)
+
+A `.tsv.gz` / `.csv.gz` file is transparently decompressed and parsed as the
+inner TSV/CSV. It is reversible: the reformatter reformats the decoded TSV and
+re-compresses it, writing the bytes back over the `.gz` (never clobbering it with
+plain text). Decompression is bounded against decompression bombs.
 
 ## Package Manifest (Manifest.transposed.tsv)
 
