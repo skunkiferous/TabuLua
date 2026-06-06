@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.24.0] - 2026-06-06
+
+### Added
+
 - **XML files load as data — the `xml:tabulua` round-trippable transcoder.** New
   `xml_transcoder` registers as a content-pipeline `transcode` stage that reads
   TabuLua's own XML export format (`<file>/<header>/<row>`) back in as a wide,
@@ -73,10 +83,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   case, unchanged). The reformatter threads each file's `Files.tsv` `transcoder`
   id into the reformat pass, so any id-selected reversible transcoder is
   reformatter-ready, not just XML.
-
-### Removed
-
-### Fixed
 
 ## [0.23.0] - 2026-06-04
 

@@ -7,7 +7,7 @@ local os = require("os")
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 23, 0)
+local VERSION = semver(0, 24, 0)
 local semver_mt = getmetatable(VERSION)
 
 -- Dependencies
