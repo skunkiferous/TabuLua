@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns="urn:tabulua:table:1"
+           targetNamespace="urn:tabulua:table:1"
+           elementFormDefault="qualified">
 
   <!--
     XML Schema for the XML export format used by the Lua game data exporter.
     This format preserves Lua type information with typed XML elements.
+
+    The format lives in the namespace urn:tabulua:table:1 (a version-tagged URN;
+    the trailing segment is the format version). The root <file> element and all
+    descendants are in this namespace (elementFormDefault="qualified"), which is
+    how a reader tells "is this XML ours?".
 
     Usage: Validate XML files against this schema using any XSD validator.
   -->

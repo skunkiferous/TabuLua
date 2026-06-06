@@ -821,7 +821,12 @@ local function exportXML(process_files, exportParams)
     logger:info("Exporting files as XML to: " .. exportParams.exportDir)
     local copy = { }
     for k, v in pairs(exportParams) do copy[k] = v end
-    copy.filePrefix = '<?xml version="1.0" encoding="UTF-8"?>\n<file>\n'
+    -- The root carries the TabuLua table namespace (urn:tabulua:table:1) so a
+    -- reader can tell "is this XML ours?" from the vocabulary, not a generic
+    -- <file> name. The trailing version segment is baked into every exported
+    -- file, so it is fixed once (see TODO/xml_input_round_trip.md). The
+    -- xml_transcoder verifies this namespace when reading an .xml file back in.
+    copy.filePrefix = '<?xml version="1.0" encoding="UTF-8"?>\n<file xmlns="urn:tabulua:table:1">\n'
     copy.fileSuffix = "\n</file>"
     copy.linePrefix = function(rowIdx) return rowIdx == 1 and "<header>" or "<row>" end
     copy.lineSuffix = function(rowIdx) return rowIdx == 1 and "</header>" or "</row>" end

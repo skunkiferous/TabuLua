@@ -25,6 +25,10 @@ local json_transcoders = require("json_transcoders")
 -- .eav extension and reversible (see eav_transcoder.lua).
 local eav_transcoder = require("eav_transcoder")
 
+-- XML (our export format) -> TSV transcoder. Id-selected (never auto-fires on a
+-- stray .xml), schema-free, namespaced, and reversible (see xml_transcoder.lua).
+local xml_transcoder = require("xml_transcoder")
+
 -- Codec registry. The decode stage calls compression.decompress("gzip", …)
 -- lazily, so the libdeflate rock is only loaded if a .gz is actually processed
 -- (see compression.lua). Requiring this module has no side effects and pulls in
@@ -142,6 +146,7 @@ content_pipeline.register(NAME, {
 content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:objects",
+    inputExtensions = {"json"},          -- guard only (Step 2), not a matcher
     transform = json_transcoders.objectsToTSV,
 })
 
@@ -150,12 +155,14 @@ content_pipeline.register(NAME, {
 content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:rows",
+    inputExtensions = {"json"},
     transform = json_transcoders.rowsToTSV,
 })
 
 content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:columns",
+    inputExtensions = {"json"},
     transform = json_transcoders.columnsToTSV,
 })
 
@@ -173,6 +180,27 @@ content_pipeline.register(NAME, {
     reversible = true,
     encode = eav_transcoder.tsvToEav,
     transform = eav_transcoder.eavToTSV,
+})
+
+-- XML (our export format) transcoder (xml_input_round_trip.md). Unlike the JSON
+-- layouts AND unlike .eav, it has NO `extensions` key: it is id-only, so a
+-- non-data .xml asset is never auto-interpreted as data — the author opts a
+-- specific file in with transcoder=xml:tabulua in Files.tsv. The specific id
+-- (family `xml`, variant `tabulua`) leaves the `xml:*` space free for
+-- user-registered XML formats. inputExtensions is the Step-2 guard (catches a
+-- mis-pointed transcoder column), NOT a matcher. It is reversible: the
+-- reformatter rewrites an .xml source from the reformatted wide TSV via `encode`
+-- (content_pipeline.md §3.6, reached through the id-selected reversibleTranscode
+-- path). The forward transform is schema-free — column names/types come from the
+-- file's own <header>, not a typeName (xml_transcoder.xmlToTSV).
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "xml:tabulua",
+    inputExtensions = {"xml"},
+    outputKind = "text",
+    reversible = true,
+    encode = xml_transcoder.tsvToXml,
+    transform = xml_transcoder.xmlToTSV,
 })
 
 -- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md

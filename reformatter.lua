@@ -396,7 +396,11 @@ end
 ---   * Everything else       — transcoded sources (items.json) and non-reversible
 ---                             decodes are read-only: derived TSV must NOT clobber
 ---                             the original, so they are left untouched.
-local function reformat(tsv_files, raw_files, badVal)
+--- @param fn2Transcoder table|nil Optional map of full file path -> Files.tsv
+---   `transcoder` id, so an id-selected reversible transcoder (e.g. xml:tabulua,
+---   which has no `extensions`) can be found for the round-trip rewrite.
+local function reformat(tsv_files, raw_files, badVal, fn2Transcoder)
+    fn2Transcoder = fn2Transcoder or {}
     for file_name, tsv in pairs(tsv_files) do
         local old_content = raw_files[file_name]
         if type(old_content) ~= "string" then
@@ -443,7 +447,7 @@ local function reformat(tsv_files, raw_files, badVal)
                 -- derived wide TSV, so the change check compares like with like; the
                 -- EAV output is text, so write it text-mode (unlike the binary gzip
                 -- case above).
-                local rt = content_pipeline.reversibleTranscode(file_name)
+                local rt = content_pipeline.reversibleTranscode(file_name, fn2Transcoder[file_name])
                 if rt then
                     if new_content ~= old_content then
                         logContentChange(file_name, new_content, old_content)
@@ -509,7 +513,8 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
     if result then
         local tsv_files = result.tsv_files
         local raw_files = result.raw_files
-        reformat(tsv_files, raw_files, badVal)
+        reformat(tsv_files, raw_files, badVal,
+            result.joinMeta and result.joinMeta.fn2Transcoder)
         local errors = badVal.errors
         if errors > 0 then
             logger:error("Reformatting errors: " .. errors)

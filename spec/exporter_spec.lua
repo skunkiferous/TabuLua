@@ -486,7 +486,8 @@ describe("exporter", function()
             assert.is_not_nil(content)
             -- Should contain XML header and structure
             assert.is_truthy(content:match('<%?xml'))
-            assert.is_truthy(content:match('<file>'))
+            -- Root carries the TabuLua table namespace (urn:tabulua:table:1).
+            assert.is_truthy(content:match('<file xmlns="urn:tabulua:table:1">'))
             assert.is_truthy(content:match('</file>'))
         end)
     end)

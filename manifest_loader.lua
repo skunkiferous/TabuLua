@@ -636,6 +636,18 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     joinMeta.extends = extends
     -- Variant metadata
     joinMeta.lcSkippedFiles = lcSkippedFiles
+    -- Full-path -> transcoder id, for the reformatter's id-selected reversible
+    -- round-trip: an id-only transcoder (e.g. xml:tabulua) has no `extensions`,
+    -- so reversibleTranscode can't find it by file name alone. lcFn2Transcoder is
+    -- keyed by the relative filename key; re-key it by the same full file_name the
+    -- reformatter iterates (tsv_files keys). Built here because computeFilenameKey
+    -- is module-private.
+    local fn2Transcoder = {}
+    for _, file_name in ipairs(files) do
+        local tc = lcFn2Transcoder[computeFilenameKey(file_name, file2dir)]
+        if tc then fn2Transcoder[file_name] = tc end
+    end
+    joinMeta.fn2Transcoder = fn2Transcoder
     return tsv_files, joinMeta
 end
 

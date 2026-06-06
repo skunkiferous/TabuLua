@@ -7,7 +7,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
-| [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only |
+| [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV + XML transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only, xml_transcoder |
 | [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
 | [cog_discovery](#cog_discovery) | Auto-scans package roots for COG-eligible doc/template files (extension + `needsCog`-gated), with `.cogignore` opt-out | content_pipeline, file_util, lua_cog, read_only |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
@@ -68,6 +68,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [type_wiring](#type_wiring) | Registry that attaches behaviour to files by walking the `extends` chain; Phase 1 supports the `onLoad` slot | named_logger, read_only |
 | [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, type_wiring, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
+| [xml_transcoder](#xml_transcoder) | Content-pipeline transcoder reading/writing TabuLua's own namespaced XML export format as a wide TSV; id-selected (`xml:tabulua`), schema-free, and reversible | deserialization, error_reporting, parsers, raw_tsv, read_only, serialization, string_utils, tsv_model |
 
 ---
 
@@ -85,9 +86,9 @@ Pure-Lua RFC 4648 Base64 encode/decode. Provides `encode()`, `decode()`, and `is
 ### builtin_content_stages
 **File:** [builtin_content_stages.lua](builtin_content_stages.lua)
 
-Seeds the [content_pipeline](#content_pipeline) registry with the built-in content stages (the content-pipeline analog of [builtin_wiring](#builtin_wiring) for the type-wiring registry). Registers: a core `normalize`-phase EOL-normalise stage; the `macro`-phase COG stage (`transform` = `lua_cog.processContentBV`, `sinkTransform` = `lua_cog.stripCog`); a `decode`-phase gzip stage (delegating to [compression](#compression), reversible); and the `transcode`-phase stages — the three JSON layouts from [json_transcoders](#json_transcoders) (id-selected) and the auto-matched, reversible `.eav` stage from [eav_transcoder](#eav_transcoder). Also declares the COG-scan-eligible extension set. Snapshots the registry and restores it via `global_reset`.
+Seeds the [content_pipeline](#content_pipeline) registry with the built-in content stages (the content-pipeline analog of [builtin_wiring](#builtin_wiring) for the type-wiring registry). Registers: a core `normalize`-phase EOL-normalise stage; the `macro`-phase COG stage (`transform` = `lua_cog.processContentBV`, `sinkTransform` = `lua_cog.stripCog`); a `decode`-phase gzip stage (delegating to [compression](#compression), reversible); and the `transcode`-phase stages — the three JSON layouts from [json_transcoders](#json_transcoders) (id-selected, with an `inputExtensions={"json"}` guard), the auto-matched, reversible `.eav` stage from [eav_transcoder](#eav_transcoder), and the id-selected (`xml:tabulua`), reversible XML stage from [xml_transcoder](#xml_transcoder) (`inputExtensions={"xml"}`). Also declares the COG-scan-eligible extension set. Snapshots the registry and restores it via `global_reset`.
 
-**Dependencies:** compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only
+**Dependencies:** compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only, xml_transcoder
 
 ---
 
@@ -659,6 +660,15 @@ Sandboxed execution engine for row, file, and package validators. Normalizes val
 Helper functions available to validator expressions in the sandboxed environment. Provides collection predicates (`unique`, `sum`, `min`, `max`, `avg`, `count`), iteration helpers (`all`, `any`, `none`, `filter`, `find`), and lookup helpers (`lookup`, `groupBy`). All column-based functions operate on cell objects via `.parsed` to extract computed values. `lookup` short-circuits to O(1) when `column` is the PK column and the rows table is PK-indexed (the wrappers from [validator_executor](#validator_executor) and [processor_executor](#processor_executor), or anything from `extractDataRows`); otherwise it falls through to a linear scan, so plain-array test fixtures still work.
 
 **Dependencies:** read_only, serialization
+
+---
+
+### xml_transcoder
+**File:** [xml_transcoder.lua](xml_transcoder.lua)
+
+Content-pipeline `transcode` stage that reads TabuLua's own XML export format (`<file>/<header>/<row>`, namespace `urn:tabulua:table:1`) back in as a wide, typed TSV, and re-encodes a wide TSV to that XML. Registered as `id="xml:tabulua"` with **no `extensions`**, so it is selected only when a `Files.tsv` `transcoder` column names it — a stray `.xml` asset is never auto-interpreted (`inputExtensions={"xml"}` is a guard, not a matcher). It is **schema-free**: column names/types come from the file's own `<header>` (`name:type` cells), not a `typeName`. `xmlToTSV` (forward) decodes each typed cell — including composite `<table>` cells — via [deserialization](#deserialization), then re-serialises it to the native in-cell form through the column's own [parsers](#parsers) parser, so every column (scalar or composite) agrees with how the rest of the pipeline represents it. `tsvToXml` (reverse, the reversible `encode`) re-parses the wide TSV with [tsv_model](#tsv_model) and emits the namespaced document via `serialization.serializeXML`, exactly as `exporter.exportXML`. The root namespace is verified on read (defense-in-depth) before the file is treated as data.
+
+**Dependencies:** deserialization, error_reporting, parsers, raw_tsv, read_only, serialization, string_utils, tsv_model
 
 ---
 

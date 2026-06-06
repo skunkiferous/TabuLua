@@ -266,8 +266,11 @@ local function importXMLFile(filePath)
         return nil, "Failed to read XML file: " .. tostring(err)
     end
 
-    -- Skip XML declaration if present
-    local dataStart = content:find("<file>")
+    -- Skip XML declaration if present. The root may carry attributes (the
+    -- exporter now emits <file xmlns="urn:tabulua:table:1">), so locate the
+    -- opening tag by its name and skip to the end of that tag rather than
+    -- assuming a fixed-width "<file>".
+    local dataStart = content:find("<file")
     if not dataStart then
         return nil, "Expected <file> tag"
     end
@@ -278,8 +281,12 @@ local function importXMLFile(filePath)
         return nil, "Expected </file> tag"
     end
 
-    -- Extract content between <file> and </file>
-    local fileContent = content:sub(dataStart + 6, dataEnd - 1)
+    -- Extract content between the opening <file ...> tag and </file>.
+    local openEnd = content:find(">", dataStart)
+    if not openEnd or openEnd >= dataEnd then
+        return nil, "Malformed <file> opening tag"
+    end
+    local fileContent = content:sub(openEnd + 1, dataEnd - 1)
 
     local result = {}
     local pos = 1

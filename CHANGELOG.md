@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **XML files load as data — the `xml:tabulua` round-trippable transcoder.** New
+  `xml_transcoder` registers as a content-pipeline `transcode` stage that reads
+  TabuLua's own XML export format (`<file>/<header>/<row>`) back in as a wide,
+  typed table. It is **schema-free / self-describing**: column names and types
+  come from the file's own `<header>` (`name:type` cells), not a `typeName`. It
+  is **id-selected** (`transcoder=xml:tabulua` in `Files.tsv`) and never
+  auto-fires on a stray `.xml` asset; the `xml:*` id space is left open for
+  user-registered XML layouts. Like `.eav` it is **reversible**: the reformatter
+  rewrites an `.xml` source from the reformatted wide TSV. Composite (`<table>`)
+  cells are supported (symmetric with export) — they round-trip through the same
+  `parsers`/`tsv_model` machinery every other format uses, so the in-cell form
+  agrees with the rest of the pipeline. The transcoder verifies the root is in
+  the `urn:tabulua:table:1` namespace and errors clearly on a foreign document.
+
+- **`inputExtensions` guard on transcode stages.** A `transcode` stage may now
+  declare `inputExtensions` (an array, e.g. `{"json"}` / `{"xml"}`). Under
+  **explicit** selection (`transcoder=…` in `Files.tsv`), the effective file
+  name's final extension is checked against it and a mismatch is a hard error —
+  catching a mis-pointed `transcoder` column (e.g. `json:rows` aimed at a
+  `.txt`) early instead of mis-parsing. It is a **guard only**, never a matcher
+  (so it can't make ambiguous JSON layouts auto-fire). The three `json:*` stages
+  and the new `xml:tabulua` stage declare it.
+
 - **`raw_eav` — Entity–Attribute–Value (long-format) table support.** New
   low-level module that pivots between the 3-column `(entity, attribute,
   value)` layout (row/column identifiers are domain keys, not indices) and
@@ -30,6 +53,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   extensions and the pipeline's text extensions).
 
 ### Changed
+
+- **BREAKING — the XML export format is now namespaced.** The exporter emits the
+  root as `<file xmlns="urn:tabulua:table:1">` instead of a bare `<file>` (the
+  trailing segment is a format version). This is the discriminator that lets a
+  reader tell a TabuLua data file from an unrelated `.xml` asset. Existing
+  exported `.xml` files must be re-exported. `schemas/export.xsd` gains a
+  matching `targetNamespace` (qualified elements); `schemas/export.dtd` models
+  the namespace as a `#FIXED xmlns` attribute on `file` (DTDs are
+  namespace-blind). The value-level XML serializer (bare `<integer>`/`<table>`
+  cell values, no `<file>` wrapper) and round-trip tests are unaffected. The
+  importer and internal schema validator accept both the namespaced root and the
+  legacy bare `<file>`.
+
+- **`content_pipeline.reversibleTranscode` accepts an optional transcoder id.**
+  `reversibleTranscode(file_name, opt_transcoderId)` resolves an **id-selected**
+  reversible transcode stage (the XML case, which has no `extensions`), falling
+  back to the existing extension-keyed lookup when no id is given (the `.eav`
+  case, unchanged). The reformatter threads each file's `Files.tsv` `transcoder`
+  id into the reformat pass, so any id-selected reversible transcoder is
+  reformatter-ready, not just XML.
 
 ### Removed
 

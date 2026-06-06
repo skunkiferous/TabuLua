@@ -504,6 +504,63 @@ describe("content_pipeline", function()
 
   end)
 
+  -- inputExtensions is a GUARD on explicit selection (xml_input_round_trip.md
+  -- Step 2): the json:* stages declare inputExtensions={"json"}.
+  describe("inputExtensions guard (explicit selection)", function()
+    it("aborts when the selected transcoder's extension doesn't match the file", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("notes.txt", "[]", {}, bv,
+        {transcoder = "json:objects", typeName = "CpTestItem"})
+      assert.is_nil(out)
+      assert.matches("expects a file with extension", bv.messages[1])
+    end)
+
+    it("passes when the extension matches", function()
+      local bv = newBadVal()
+      local out = content_pipeline.run("items.json", '[{"name":"a","price":1}]', {}, bv,
+        {transcoder = "json:objects", typeName = "CpTestItem"})
+      assert.equals(0, #bv.messages)
+      assert.is_not_nil(out)
+    end)
+
+    it("passes on a peeled data.json.gz (decode peeled the .gz first)", function()
+      -- The decode loop peels .gz to the effective name d.json BEFORE transcode,
+      -- so the guard sees .json and passes.
+      local gz = makeGzip('[{"name":"a","price":7}]')
+      local bv = newBadVal()
+      local out = content_pipeline.run("d.json.gz", gz, {}, bv,
+        {transcoder = "json:objects", typeName = "CpTestItem"})
+      assert.equals(0, #bv.messages)
+      assert.is_not_nil(out)
+    end)
+  end)
+
+  -- reversibleTranscode resolves an id-selected reversible stage (xml:tabulua,
+  -- which has no `extensions`) in addition to the extension-keyed path (.eav).
+  describe("reversibleTranscode (id-selected + extension)", function()
+    it("resolves an id-only reversible stage by transcoder id", function()
+      local rt = content_pipeline.reversibleTranscode("data.xml", "xml:tabulua")
+      assert.is_not_nil(rt)
+      assert.equals("function", type(rt.encode))
+    end)
+
+    it("returns nil for an id-only stage when no id is given (no extension match)", function()
+      assert.is_nil(content_pipeline.reversibleTranscode("data.xml"))
+    end)
+
+    it("still resolves an extension-keyed reversible stage (.eav) with no id", function()
+      local rt = content_pipeline.reversibleTranscode("data.eav")
+      assert.is_not_nil(rt)
+      assert.equals("function", type(rt.encode))
+    end)
+
+    it("falls through to the extension lookup for a non-reversible id (json:objects)", function()
+      -- json:objects has no `encode`, so the id branch declines; the extension
+      -- lookup for .json also finds no reversible stage -> nil.
+      assert.is_nil(content_pipeline.reversibleTranscode("x.json", "json:objects"))
+    end)
+  end)
+
   -- Name-only decode-extension peeling, used by the loader (routing) and the
   -- reformatter (reversible round-trip). The gzip stage (reversible) is the one
   -- registered decode stage via builtin_content_stages.

@@ -147,6 +147,21 @@ local function validateSpec(moduleName, spec)
         error("content_pipeline.register: extensions must be an array for module '"
             .. moduleName .. "'", 3)
     end
+    -- inputExtensions is a GUARD, not a matcher (unlike `extensions`). Under
+    -- explicit transcoder selection it rejects a mis-pointed file by extension;
+    -- it never makes a stage auto-fire. Validate it the same way as extensions.
+    if spec.inputExtensions ~= nil then
+        if type(spec.inputExtensions) ~= "table" then
+            error("content_pipeline.register: inputExtensions must be an array for module '"
+                .. moduleName .. "'", 3)
+        end
+        for _, e in ipairs(spec.inputExtensions) do
+            if type(e) ~= "string" or e == "" then
+                error("content_pipeline.register: inputExtensions must contain only"
+                    .. " non-empty strings for module '" .. moduleName .. "'", 3)
+            end
+        end
+    end
     if spec.id ~= nil and (type(spec.id) ~= "string" or spec.id == "") then
         error("content_pipeline.register: id must be a non-empty string for module '"
             .. moduleName .. "'", 3)
@@ -459,13 +474,29 @@ local function autoTranscodes(file_name)
     return false
 end
 
--- The transcode analog of reversibleDecode: returns { encode } when the
--- highest-priority transcode stage matching `file_name`'s extension declares
--- `reversible` + an `encode`, else nil. The reformatter uses it to rewrite a
--- reversible transcoded source (an .eav) from the reformatted wide TSV
--- (content_pipeline.md §3.6); matched by extension only, like reversibleDecode.
+-- The transcode analog of reversibleDecode: returns { encode } when a reversible
+-- transcode stage applies to this file, else nil. The reformatter uses it to
+-- rewrite a reversible transcoded source from the reformatted wide TSV
+-- (content_pipeline.md §3.6).
 --   encode(content, env, badVal) -> (text) | (nil, reason)
-local function reversibleTranscode(file_name)
+--
+-- Two ways a stage is selected, mirroring runTranscode's dispatch:
+--   * opt_transcoderId (the per-file Files.tsv `transcoder` id) — resolves an
+--     EXPLICIT, possibly id-only stage (e.g. xml:tabulua, which has no
+--     `extensions` and so is invisible to the extension lookup). This is what
+--     makes any id-selected reversible transcoder reformatter-ready, not just XML.
+--   * otherwise — the highest-priority transcode stage matching `file_name`'s
+--     final extension (e.g. .eav), exactly as before.
+-- If an id is given but its stage isn't reversible, we fall through to the
+-- extension lookup, so the call is always as permissive as the un-id'd form.
+local function reversibleTranscode(file_name, opt_transcoderId)
+    if opt_transcoderId then
+        local spec = findStageById("transcode", opt_transcoderId)
+        if spec and spec.transform and spec.reversible and spec.encode then
+            return {encode = spec.encode}
+        end
+        -- else: fall through to the extension-keyed lookup below.
+    end
     if type(file_name) ~= "string" then return nil end
     local ext = finalExtension(file_name)
     if not ext then return nil end
@@ -554,6 +585,24 @@ local function runTranscode(name, content, kind, env, badVal, ctx)
             badVal(name, "content_pipeline: unknown transcoder '"
                 .. tostring(ctx.transcoder) .. "' for '" .. name .. "'")
             return nil, name, kind, true
+        end
+        -- inputExtensions guard (§ inputExtensions, xml_input_round_trip.md):
+        -- catch a mis-pointed `transcoder` column (e.g. json:rows aimed at a
+        -- .txt) early. The decode loop has already peeled, so data.json.gz
+        -- arrives as effective name data.json and passes. Empty list = no guard.
+        if spec.inputExtensions and #spec.inputExtensions > 0 then
+            local ext = finalExtension(name)
+            local ok = false
+            for _, e in ipairs(spec.inputExtensions) do
+                if ext and e:lower() == ext then ok = true break end
+            end
+            if not ok then
+                badVal(name, "content_pipeline: transcoder '" .. tostring(ctx.transcoder)
+                    .. "' expects a file with extension "
+                    .. table.concat(spec.inputExtensions, "/") .. ", but '" .. name
+                    .. "' has " .. (ext and ("." .. ext) or "no extension"))
+                return nil, name, kind, true
+            end
         end
     else
         local stages = matchingStages("transcode", name, content, kind)

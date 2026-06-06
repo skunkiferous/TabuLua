@@ -293,8 +293,10 @@ local function validateExportXML(content)
         return false, "missing XML declaration"
     end
 
-    -- Check root element
-    if not content:match("<file>") then
+    -- Check root element. Accept both the bare <file> root and the namespaced
+    -- <file xmlns="urn:tabulua:table:1"> root the exporter now emits, so an
+    -- attribute on the opening tag (the namespace) is matched by [%s>].
+    if not content:match("<file[%s>]") then
         return false, "missing <file> root element"
     end
     if not content:match("</file>%s*$") then
