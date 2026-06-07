@@ -1211,6 +1211,68 @@ source of truth, so it is never written back over the original).
 - The `json:*` transcoders are read-only inputs: the `.json` source is never
   rewritten.
 
+### JSON layouts (`json:objects` / `json:rows` / `json:columns`)
+
+JSON has several equally-valid ways to lay out the same tabular data, which an
+extension cannot disambiguate, so the author picks one per file with the
+`transcoder` column. In **all three**, the column **names, types and order** come
+from the file's `typeName` schema (in sorted field order), never from the JSON, so
+the table carries a correctly typed header and the normal type/validation
+machinery applies unchanged. A missing or `null` value becomes an empty cell.
+
+- **`json:objects`** — a top-level array of objects, one object per row; fields are
+  pulled by name:
+
+  ```json
+  [{"name":"sword","price":100,"tag":"sharp"},{"name":"shield","price":50}]
+  ```
+
+- **`json:rows`** — a top-level array of arrays, one inner array per row; values are
+  **positional** to the schema's sorted field order (here `name,price,tag`):
+
+  ```json
+  [["sword",100,"sharp"],["shield",50]]
+  ```
+
+- **`json:columns`** — a top-level array of arrays, one inner array per **column**
+  (the transpose of `json:rows`), one column per schema field:
+
+  ```json
+  [["sword","shield"],[100,50],["sharp"]]
+  ```
+
+All three load as the same wide table:
+
+<!-- markdownlint-disable MD010 -->
+```text
+name:identifier	price:integer	tag:string|nil
+sword	100	sharp
+shield	50
+```
+<!-- markdownlint-enable MD010 -->
+
+**Composite cell values.** A cell may itself be a table-typed value (an array,
+map, tuple, or nested record) matching the column's declared type. It is
+reconstructed **type-directed** against that column type, so a `map`'s keys are
+typed by the declared key type: a `map<string,…>` key like `"01"` stays the string
+`"01"`, while a `map<integer,…>` key `"1"` becomes the number `1` — at any nesting
+depth.
+
+```json
+[{"name":"hero","skills":["slash","guard"],"stats":{"atk":7,"def":3}}]
+```
+
+with `typeName` `{name:identifier,skills:{string},stats:{string:integer}}` loads
+`skills` as a list and `stats` as a map.
+
+**Notes / limits.**
+
+- A non-finite number (e.g. an overflowing `1e999`) is reported as an error, but
+  the rest of the file still loads, so every offending value is flagged in one
+  pass. (`NaN` / `Infinity` are not valid JSON tokens in the first place.)
+- A map whose **key type is itself a table** is not a valid column type (the type
+  parser rejects it), so it cannot occur here.
+
 ### EAV (Entity–Attribute–Value) long format
 
 A `.eav` file is a header-less, three-column long table of

@@ -177,6 +177,69 @@ local function deserializeJSON(s)
     return processValue(parsed)
 end
 
+--- Post-processes an ALREADY JSON-decoded Lua value into natural-import form.
+--- Recursively: the sentinel strings "NAN"/"INF"/"-INF" become the float values,
+--- "<FUNCTION>" becomes nil, and string object keys that look numeric/boolean are
+--- coerced back to number/boolean keys. Operates on a decoded value (no JSON
+--- parsing), so a caller holding a decoded substructure can reuse it without a
+--- lossy re-encode (dkjson.encode turns inf/nan into null).
+--- @param v any An already-decoded JSON value
+--- @return any The post-processed Lua value
+--- @return string|nil Error message (reserved; currently always nil)
+local function processNaturalValue(v)
+    if v == nil then
+        return nil, nil
+    end
+
+    local t = type(v)
+    if t == "string" then
+        -- Check for special float values
+        if v == "NAN" then
+            return 0/0, nil
+        elseif v == "INF" then
+            return math.huge, nil
+        elseif v == "-INF" then
+            return -math.huge, nil
+        elseif v == "<FUNCTION>" then
+            return nil, nil  -- Functions can't be deserialized
+        end
+        return v
+    end
+    if t ~= "table" then
+        return v, nil
+    end
+
+    -- Process table
+    local result = {}
+    local err
+    for k, val in pairs(v) do
+        -- Natural JSON uses string keys for objects
+        local key = k
+        if type(k) == "string" then
+            -- Try to convert numeric string keys back to numbers
+            local numKey = tonumber(k)
+            if numKey then
+                key = numKey
+            elseif k == "true" then
+                key = true
+            elseif k == "false" then
+                key = false
+            elseif k == "NAN" then
+                key = 0/0
+            elseif k == "INF" then
+                key = math.huge
+            elseif k == "-INF" then
+                key = -math.huge
+            end
+        end
+        result[key], err = processNaturalValue(val)
+        if err then
+            return nil, err
+        end
+    end
+    return result, nil
+end
+
 --- Deserializes a natural JSON string back to a Lua value.
 --- Handles "NAN", "INF", "-INF" strings as special float values.
 --- Note: integers cannot be distinguished from floats in natural JSON.
@@ -200,62 +263,7 @@ local function deserializeNaturalJSON(s)
         return nil, "Failed to parse JSON: " .. tostring(err)
     end
 
-    -- Recursive function to handle special string values
-    local processValue
-    processValue = function(v)
-        if v == nil then
-            return nil, nil
-        end
-
-        local t = type(v)
-        if t == "string" then
-            -- Check for special float values
-            if v == "NAN" then
-                return 0/0, nil
-            elseif v == "INF" then
-                return math.huge, nil
-            elseif v == "-INF" then
-                return -math.huge, nil
-            elseif v == "<FUNCTION>" then
-                return nil, nil  -- Functions can't be deserialized
-            end
-            return v
-        end
-        if t ~= "table" then
-            return v, nil
-        end
-
-        -- Process table
-        local result = {}
-        for k, val in pairs(v) do
-            -- Natural JSON uses string keys for objects
-            local key = k
-            if type(k) == "string" then
-                -- Try to convert numeric string keys back to numbers
-                local numKey = tonumber(k)
-                if numKey then
-                    key = numKey
-                elseif k == "true" then
-                    key = true
-                elseif k == "false" then
-                    key = false
-                elseif k == "NAN" then
-                    key = 0/0
-                elseif k == "INF" then
-                    key = math.huge
-                elseif k == "-INF" then
-                    key = -math.huge
-                end
-            end
-            result[key], err = processValue(val)
-            if err then
-                return nil, err
-            end
-        end
-        return result, nil
-    end
-
-    return processValue(parsed)
+    return processNaturalValue(parsed)
 end
 
 -- XML parsing helpers
@@ -529,6 +537,7 @@ local API = {
     deserializeSQLBlob = deserializeSQLBlob,
     deserializeXML = deserializeXML,
     getVersion = getVersion,
+    processNaturalValue = processNaturalValue,
 }
 
 -- Enables the module to be called as a function

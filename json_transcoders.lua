@@ -15,9 +15,33 @@ local readOnly = read_only.readOnly
 local dkjson = require("dkjson")
 local parsers = require("parsers")
 local raw_tsv = require("raw_tsv")
+local error_reporting = require("error_reporting")
 local recordFieldNames = parsers.recordFieldNames
 local recordFieldTypes = parsers.recordFieldTypes
 local rawTSVToString = raw_tsv.rawTSVToString
+
+-- Type introspection drives type-DIRECTED reconstruction of composite cells
+-- (json_complex_values.md D6): keys and leaves are rebuilt according to the
+-- column's declared type rather than guessed, so e.g. a map<string,…> key "01"
+-- stays the string "01" while a map<integer,…> key "1" becomes the number 1 (the
+-- map parser requires the key's Lua type to match the declared key type).
+local parseType = parsers.parseType
+local mapKVType = parsers.mapKVType
+local arrayElementType = parsers.arrayElementType
+local tupleFieldTypes = parsers.tupleFieldTypes
+local unionTypes = parsers.unionTypes
+local isNeverTable = parsers.isNeverTable
+local extendsOrRestrict = parsers.extendsOrRestrict
+local nullBadVal = error_reporting.nullBadVal
+
+-- Reconstruction + native serialisation of composite cell values. A composite
+-- JSON value is turned into a Lua value and then into TabuLua's native,
+-- brace-less cell text, which the column's own table parser re-parses and
+-- validates (content_pipeline.md Phase 3, json_complex_values.md D1).
+local deserialization = require("deserialization")
+local serialization = require("serialization")
+local processNaturalValue = deserialization.processNaturalValue
+local serializeTable = serialization.serializeTable
 
 -- Returns the module version as a string.
 local function getVersion()
@@ -30,26 +54,36 @@ end
 -- Several JSON layouts encode the same tabular data — object-per-row,
 -- array-per-row, array-per-column — so they can't be told apart by extension;
 -- the author selects one per file via the Files.tsv `transcoder` column. Each
--- layout is one function here with the content-pipeline transform signature
--- (name, content, env, badVal, ctx); builtin_content_stages.lua registers them
--- as id-selected `transcode` stages.
+-- layout is one factory here, parametrised by the cell-value reconstruction codec
+-- and registered by builtin_content_stages as id-selected `transcode` stages.
+-- Today only the json-natural codec is wired (the bare json:* ids); the factory
+-- is ready for a `:typed` codec as an alternative (json_complex_values.md Phase 2).
 --
 -- In every layout the column NAMES, TYPES and ORDER come from the file's typeName
 -- schema (ctx.typeName, in sorted field order), NOT from the JSON, so the emitted
 -- TSV carries a correctly typed `name:type` header and the existing
 -- type/validation machinery applies unchanged. The array layouts are therefore
--- positional: each value aligns to the schema's sorted field order. The
--- schema-resolution, value->cell and serialisation helpers below are shared.
+-- positional: each value aligns to the schema's sorted field order.
 --
--- The three id-selected transcoders:
---   json:objects  [ {name:…, price:…}, … ]   one object per row (self-describing)
---   json:rows     [ [v, v, …], … ]           one array per row  (values in field order)
---   json:columns  [ [v, v, …], … ]           one array per column (transpose of rows)
+-- A cell may itself be a composite value (a JSON object/array matching a
+-- table-typed column). It is reconstructed to a Lua value and serialised to
+-- native cell text; the column parser does the final typing (json_complex_values.md).
+--
+-- The id-selected transcoders:
+--   json:objects        [ {name:…, price:…}, … ]   one object per row
+--   json:rows           [ [v, v, …], … ]           one array per row
+--   json:columns        [ [v, v, …], … ]           one array per column
 -- ============================================================
 
--- Resolves ctx.typeName to the ordered schema field names and a typed TSV header
--- row (one `name:type` cell per field, in the schema's sorted field order).
--- Returns (fieldNames, headerRow) or (nil, errmsg).
+-- Resolves ctx.typeName to the ordered schema field names, a typed TSV header
+-- row (one `name:type` cell per field, in the schema's sorted field order) and
+-- the field→type map (used to type-direct composite-cell reconstruction).
+-- Returns (fieldNames, headerRow, fieldTypes) or (nil, errmsg).
+--
+-- Note: a column type with a table-typed map KEY needs no special handling here —
+-- the type parser itself rejects such a type ("map key_type can never be a
+-- table"), so recordFieldTypes returns nil and this aborts with the message
+-- below. (json_complex_values.md D4.)
 local function schemaHeader(ctx)
     local typeName = ctx and ctx.typeName
     if not typeName or typeName == "" then
@@ -65,16 +99,164 @@ local function schemaHeader(ctx)
     for i, fname in ipairs(fieldNames) do
         header[i] = fname .. ":" .. fieldTypes[fname]
     end
-    return fieldNames, header
+    return fieldNames, header, fieldTypes
 end
 
--- Converts one JSON value to a raw-TSV cell. A missing/null value is an empty
--- cell; a composite (table) value is rejected. Returns (cell) or (nil, errmsg).
-local function valueToCell(v)
+-- Serialises a reconstructed Lua value to native, brace-less cell text (what the
+-- column's table parser consumes: it re-wraps in {} and evaluates via ltcn).
+local function toCellText(luaValue)
+    return serializeTable(luaValue):sub(2, -2)
+end
+
+-- Recursively reports every non-finite number (NaN/±Inf) via `flag` — values that
+-- cannot round-trip through JSON (json_complex_values.md D5). Reporting only; it
+-- never aborts. `seen` guards cyclic tables.
+local function flagNonFinite(value, flag, where, seen)
+    local t = type(value)
+    if t == "number" then
+        if value ~= value then
+            flag("NaN " .. where .. " (not representable in JSON)")
+        elseif value == math.huge or value == -math.huge then
+            flag("infinite number " .. where .. " (not representable in JSON)")
+        end
+    elseif t == "table" then
+        seen = seen or {}
+        if seen[value] then return end
+        seen[value] = true
+        for k, v in pairs(value) do
+            flagNonFinite(k, flag, where, seen)
+            flagNonFinite(v, flag, where, seen)
+        end
+    end
+end
+
+-- Is `typeSpec` a numeric leaf type? Only then are the JSON sentinel strings
+-- "NAN"/"INF"/"-INF" read back as the float values; in any other slot they stay
+-- literal strings (so a string-typed "NAN" is preserved).
+local function isNumericType(typeSpec)
+    return typeSpec == "number" or extendsOrRestrict(typeSpec, "number")
+end
+
+-- Reconstructs a leaf (non-table) JSON value, type-directed: special-float
+-- sentinels only in a numeric slot, "<FUNCTION>" always nil, everything else
+-- verbatim.
+local function leafValue(v, typeSpec)
+    if type(v) == "string" then
+        if v == "<FUNCTION>" then
+            return nil
+        end
+        if isNumericType(typeSpec) then
+            if v == "NAN" then return 0/0
+            elseif v == "INF" then return math.huge
+            elseif v == "-INF" then return -math.huge end
+        end
+    end
+    return v
+end
+
+-- If `typeSpec` is a union, returns its single table-typed member (e.g. the map
+-- in `{string:string}|nil`) so reconstruction can see through optional
+-- containers; returns `typeSpec` unchanged when there is no union, or no/ambiguous
+-- container member.
+local function containerType(typeSpec)
+    local members = unionTypes(typeSpec)
+    if not members then return typeSpec end
+    local found
+    for _, m in ipairs(members) do
+        if not isNeverTable(m) then          -- m can be a table → a container
+            if found then return typeSpec end  -- 2+ containers: ambiguous
+            found = m
+        end
+    end
+    return found or typeSpec
+end
+
+-- Type-DIRECTED reconstruction of a JSON-decoded value into the Lua shape the
+-- column parser expects (json_complex_values.md D6). The decisive case is map
+-- KEYS: each is rebuilt with the key type's own parser, so the key's Lua type
+-- matches the declared key type. Falls back to the type-blind processNaturalValue
+-- for untyped (`table`/`raw`) or ambiguous-union slots, where there is no key type
+-- to honour.
+local function reconstructTyped(v, typeSpec)
+    if type(v) ~= "table" then
+        return leafValue(v, typeSpec)
+    end
+
+    local ts = containerType(typeSpec)
+
+    local keyType, valueType = mapKVType(ts)
+    if keyType then
+        local keyParser = parseType(nullBadVal, keyType, "tsv")
+        local out = {}
+        for jsonKey, jsonVal in pairs(v) do
+            local key = jsonKey
+            if type(jsonKey) == "string" and keyParser then
+                local parsedKey = keyParser(nullBadVal, jsonKey, "tsv")
+                if parsedKey ~= nil then key = parsedKey end
+            end
+            out[key] = reconstructTyped(jsonVal, valueType)
+        end
+        return out
+    end
+
+    local elemType = arrayElementType(ts)
+    if elemType then
+        local out = {}
+        for i, e in ipairs(v) do out[i] = reconstructTyped(e, elemType) end
+        return out
+    end
+
+    local tupleTypes = tupleFieldTypes(ts)
+    if tupleTypes then
+        local out = {}
+        for i = 1, #tupleTypes do out[i] = reconstructTyped(v[i], tupleTypes[i]) end
+        return out
+    end
+
+    local fieldTypes = recordFieldTypes(ts)
+    if fieldTypes then
+        local out = {}
+        for fname, ftype in pairs(fieldTypes) do
+            out[fname] = reconstructTyped(v[fname], ftype)
+        end
+        return out
+    end
+
+    -- Untyped (`table`/`raw`) or ambiguous union: no key type to honour.
+    return processNaturalValue(v)
+end
+
+-- Converts one JSON value to a raw-TSV cell, guided by the column's `fieldType`.
+--   * missing/null            -> empty cell
+--   * composite (table)       -> reconstruct (type-directed) then native cell text
+--   * scalar                  -> passed through (rawTSVToString stringifies)
+-- Non-finite numbers (at any depth) are flagged via `flag` but NOT rejected (D5).
+-- Returns (cell) or (nil, errmsg); an errmsg is a structural failure that aborts.
+local function valueToCell(v, fieldType, reconstruct, flag, where)
     if v == nil or v == dkjson.null then
         return ""
     elseif type(v) == "table" then
-        return nil, "composite value, which is not supported yet"
+        -- reconstruct may raise (e.g. a "NAN" object key is an invalid Lua key),
+        -- so guard it; (lv, derr) is the normal (value, errmsg) convention.
+        local ok, lv, derr = pcall(reconstruct, v, fieldType)
+        if not ok then
+            return nil, "could not reconstruct composite " .. where
+                .. ": " .. tostring(lv)
+        end
+        if lv == nil then
+            return nil, "could not reconstruct composite " .. where
+                .. (derr and (": " .. tostring(derr)) or "")
+        end
+        flagNonFinite(lv, flag, where)
+        local serOk, txt = pcall(toCellText, lv)
+        if not serOk then
+            return nil, "could not serialise composite " .. where
+                .. ": " .. tostring(txt)
+        end
+        return txt
+    end
+    if type(v) == "number" then
+        flagNonFinite(v, flag, where)
     end
     return v   -- string / number / boolean; rawTSVToString stringifies
 end
@@ -109,19 +291,23 @@ local function failer(name, badVal)
     end
 end
 
--- json:objects — a top-level JSON array of objects, one object per row. Fields
--- are pulled by name in schema order; a missing/null field becomes an empty
--- cell. An unknown typeName, malformed JSON, a non-object element, or a
--- composite field value all abort the file via badVal.
-local function objectsToTSV(name, content, _env, badVal, ctx)
-    local fail = failer(name, badVal)
+-- Like failer, but reports without returning nil — for non-fatal fidelity
+-- warnings that are flagged while the transcode carries on (D5).
+local function flagger(name, badVal)
+    return function(msg)
+        badVal(name, "json transcoder: " .. msg .. " in '" .. name .. "'")
+    end
+end
 
-    local fieldNames, header = schemaHeader(ctx)
-    if not fieldNames then return fail(header) end   -- `header` holds the error message
+-- ------------------------------------------------------------
+-- Per-layout body functions. Each takes the decoded top-level array plus the
+-- resolved schema and shared helpers, and returns the TSV text or nil (after
+-- reporting via `fail`). Composite/non-finite handling lives in valueToCell.
+-- ------------------------------------------------------------
 
-    local parsed, err = decodeArray(content)
-    if not parsed then return fail(err) end
-
+-- json:objects — a top-level array of objects, one object per row; fields pulled
+-- by name in schema order, a missing/null field becoming an empty cell.
+local function objectsBody(parsed, fieldNames, fieldTypes, header, reconstruct, fail, flag)
     local rows = {header}
     for idx, obj in ipairs(parsed) do
         if type(obj) ~= "table" then
@@ -129,33 +315,21 @@ local function objectsToTSV(name, content, _env, badVal, ctx)
         end
         local row = {}
         for i, fname in ipairs(fieldNames) do
-            local cell, cellErr = valueToCell(obj[fname])
-            if cellErr then
-                return fail("field '" .. fname .. "' of element " .. idx .. " is a " .. cellErr)
-            end
+            local where = "field '" .. fname .. "' of element " .. idx
+            local cell, cellErr = valueToCell(obj[fname], fieldTypes[fname],
+                reconstruct, flag, where)
+            if cellErr then return fail(cellErr) end
             row[i] = cell
         end
         rows[#rows + 1] = row
     end
-
-    local tsvText, serr = serialize(rows)
-    if not tsvText then return fail(serr) end
-    return tsvText
+    return serialize(rows)
 end
 
--- json:rows — a top-level JSON array of arrays, one inner array per row. Values
--- are positional, aligning to the schema's sorted field order; a missing trailing
--- value becomes an empty cell, and more values than fields is an error. A
--- non-array element, composite value, etc. abort via badVal.
-local function rowsToTSV(name, content, _env, badVal, ctx)
-    local fail = failer(name, badVal)
-
-    local fieldNames, header = schemaHeader(ctx)
-    if not fieldNames then return fail(header) end
-
-    local parsed, err = decodeArray(content)
-    if not parsed then return fail(err) end
-
+-- json:rows — a top-level array of arrays, one inner array per row; values
+-- positional to the schema's sorted field order. A missing trailing value becomes
+-- an empty cell; more values than fields is an error.
+local function rowsBody(parsed, fieldNames, fieldTypes, header, reconstruct, fail, flag)
     local rows = {header}
     for idx, arr in ipairs(parsed) do
         if type(arr) ~= "table" then
@@ -167,23 +341,20 @@ local function rowsToTSV(name, content, _env, badVal, ctx)
         end
         local row = {}
         for i = 1, #fieldNames do
-            local cell, cellErr = valueToCell(arr[i])
-            if cellErr then
-                return fail("value " .. i .. " of row " .. idx .. " is a " .. cellErr)
-            end
+            local where = "value " .. i .. " of row " .. idx
+            local cell, cellErr = valueToCell(arr[i], fieldTypes[fieldNames[i]],
+                reconstruct, flag, where)
+            if cellErr then return fail(cellErr) end
             row[i] = cell
         end
         rows[#rows + 1] = row
     end
-
-    local tsvText, serr = serialize(rows)
-    if not tsvText then return fail(serr) end
-    return tsvText
+    return serialize(rows)
 end
 
--- json:columns — a top-level JSON array of arrays, one inner array per column,
--- in the schema's sorted field order (the transpose of json:rows). There must be
--- exactly one column per schema field. A missing/null cell becomes empty.
+-- json:columns — a top-level array of arrays, one inner array per column, in the
+-- schema's sorted field order (the transpose of json:rows). Exactly one column
+-- per schema field. A missing/null cell becomes empty.
 --
 -- Row count is the highest index present across the columns, NOT Lua's `#`: a
 -- JSON null decodes (via dkjson) to nil, a hole that makes `#` unreliable, so a
@@ -191,15 +362,7 @@ end
 -- in apparent length (the shorter ones are null-padded), and a trailing row that
 -- is null in EVERY column cannot be represented (anchor length with a non-null
 -- column such as the PK).
-local function columnsToTSV(name, content, _env, badVal, ctx)
-    local fail = failer(name, badVal)
-
-    local fieldNames, header = schemaHeader(ctx)
-    if not fieldNames then return fail(header) end
-
-    local parsed, err = decodeArray(content)
-    if not parsed then return fail(err) end
-
+local function columnsBody(parsed, fieldNames, fieldTypes, header, reconstruct, fail, flag)
     if #parsed ~= #fieldNames then
         return fail("expected " .. #fieldNames .. " column(s) (one per schema field) but got "
             .. #parsed)
@@ -221,19 +384,48 @@ local function columnsToTSV(name, content, _env, badVal, ctx)
     for r = 1, nRows do
         local row = {}
         for c = 1, #fieldNames do
-            local cell, cellErr = valueToCell(parsed[c][r])
-            if cellErr then
-                return fail("value " .. r .. " of column " .. c .. " is a " .. cellErr)
-            end
+            local where = "value " .. r .. " of column " .. c
+            local cell, cellErr = valueToCell(parsed[c][r], fieldTypes[fieldNames[c]],
+                reconstruct, flag, where)
+            if cellErr then return fail(cellErr) end
             row[c] = cell
         end
         rows[#rows + 1] = row
     end
-
-    local tsvText, serr = serialize(rows)
-    if not tsvText then return fail(serr) end
-    return tsvText
+    return serialize(rows)
 end
+
+-- ------------------------------------------------------------
+-- Factory: wraps a per-layout body with the shared prologue (schema resolution,
+-- JSON decode) and the content-pipeline signature (name, content, env, badVal,
+-- ctx). `reconstruct(decodedValue, fieldType) -> (lua, err)` is the cell-format
+-- codec (json-natural is type-directed and consults fieldType; a future `:typed`
+-- codec is self-describing and ignores it).
+-- ------------------------------------------------------------
+local function makeTranscoder(body, reconstruct)
+    return function(name, content, _env, badVal, ctx)
+        local fail = failer(name, badVal)
+        local flag = flagger(name, badVal)
+
+        local fieldNames, header, fieldTypes = schemaHeader(ctx)
+        if not fieldNames then return fail(header) end   -- `header` holds the error message
+
+        local parsed, err = decodeArray(content)
+        if not parsed then return fail(err) end
+
+        local tsvText, serr = body(parsed, fieldNames, fieldTypes, header,
+            reconstruct, fail, flag)
+        if not tsvText then return serr and fail(serr) or nil end
+        return tsvText
+    end
+end
+
+-- The natural (default) stages. The bare json:* ids map here; natural handles
+-- both simple and composite cell values, reconstructing composites type-directed
+-- (reconstructTyped).
+local objectsToTSV = makeTranscoder(objectsBody, reconstructTyped)
+local rowsToTSV    = makeTranscoder(rowsBody,    reconstructTyped)
+local columnsToTSV = makeTranscoder(columnsBody, reconstructTyped)
 
 -- ============================================================
 -- Public API
