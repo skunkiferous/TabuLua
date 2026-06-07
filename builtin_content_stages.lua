@@ -166,6 +166,32 @@ content_pipeline.register(NAME, {
     transform = json_transcoders.columnsToTSV,
 })
 
+-- The `:typed` variants of the three layouts. Same row layouts, but cell values
+-- are in TabuLua's self-describing typed JSON encoding ({"int":…}/{"float":…}
+-- wrappers and the [size,…] table form) — the read-back of exportJSON. They
+-- preserve every type, including non-string and table-valued map keys, where
+-- json-natural cannot (json_complex_values.md Phase 2).
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "json:objects:typed",
+    inputExtensions = {"json"},
+    transform = json_transcoders.objectsToTSVTyped,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "json:rows:typed",
+    inputExtensions = {"json"},
+    transform = json_transcoders.rowsToTSVTyped,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "json:columns:typed",
+    inputExtensions = {"json"},
+    transform = json_transcoders.columnsToTSVTyped,
+})
+
 -- EAV (long-format) transcoder (eav_long_format.md). Unlike the JSON layouts, EAV
 -- is unambiguous by extension, so it AUTO-matches `.eav` (no Files.tsv `transcoder`
 -- column needed); the `id` lets it also be selected explicitly on a non-.eav file.

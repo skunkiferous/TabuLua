@@ -41,6 +41,7 @@ local nullBadVal = error_reporting.nullBadVal
 local deserialization = require("deserialization")
 local serialization = require("serialization")
 local processNaturalValue = deserialization.processNaturalValue
+local processTypedValue = deserialization.processTypedValue
 local serializeTable = serialization.serializeTable
 
 -- Returns the module version as a string.
@@ -56,8 +57,9 @@ end
 -- the author selects one per file via the Files.tsv `transcoder` column. Each
 -- layout is one factory here, parametrised by the cell-value reconstruction codec
 -- and registered by builtin_content_stages as id-selected `transcode` stages.
--- Today only the json-natural codec is wired (the bare json:* ids); the factory
--- is ready for a `:typed` codec as an alternative (json_complex_values.md Phase 2).
+-- Two codecs are wired per layout: json-natural (the bare json:* ids; conventional
+-- JSON, type-directed reconstruction) and json-typed (the json:*:typed ids; the
+-- self-describing read-back of exportJSON).
 --
 -- In every layout the column NAMES, TYPES and ORDER come from the file's typeName
 -- schema (ctx.typeName, in sorted field order), NOT from the JSON, so the emitted
@@ -171,13 +173,13 @@ local function containerType(typeSpec)
     return found or typeSpec
 end
 
--- Type-DIRECTED reconstruction of a JSON-decoded value into the Lua shape the
--- column parser expects (json_complex_values.md D6). The decisive case is map
--- KEYS: each is rebuilt with the key type's own parser, so the key's Lua type
--- matches the declared key type. Falls back to the type-blind processNaturalValue
--- for untyped (`table`/`raw`) or ambiguous-union slots, where there is no key type
--- to honour.
-local function reconstructTyped(v, typeSpec)
+-- json-natural codec: type-DIRECTED reconstruction of a JSON-decoded value into
+-- the Lua shape the column parser expects (json_complex_values.md D6). The
+-- decisive case is map KEYS: each is rebuilt with the key type's own parser, so
+-- the key's Lua type matches the declared key type. Falls back to the type-blind
+-- processNaturalValue for untyped (`table`/`raw`) or ambiguous-union slots, where
+-- there is no key type to honour.
+local function reconstructNatural(v, typeSpec)
     if type(v) ~= "table" then
         return leafValue(v, typeSpec)
     end
@@ -194,7 +196,7 @@ local function reconstructTyped(v, typeSpec)
                 local parsedKey = keyParser(nullBadVal, jsonKey, "tsv")
                 if parsedKey ~= nil then key = parsedKey end
             end
-            out[key] = reconstructTyped(jsonVal, valueType)
+            out[key] = reconstructNatural(jsonVal, valueType)
         end
         return out
     end
@@ -202,14 +204,14 @@ local function reconstructTyped(v, typeSpec)
     local elemType = arrayElementType(ts)
     if elemType then
         local out = {}
-        for i, e in ipairs(v) do out[i] = reconstructTyped(e, elemType) end
+        for i, e in ipairs(v) do out[i] = reconstructNatural(e, elemType) end
         return out
     end
 
     local tupleTypes = tupleFieldTypes(ts)
     if tupleTypes then
         local out = {}
-        for i = 1, #tupleTypes do out[i] = reconstructTyped(v[i], tupleTypes[i]) end
+        for i = 1, #tupleTypes do out[i] = reconstructNatural(v[i], tupleTypes[i]) end
         return out
     end
 
@@ -217,7 +219,7 @@ local function reconstructTyped(v, typeSpec)
     if fieldTypes then
         local out = {}
         for fname, ftype in pairs(fieldTypes) do
-            out[fname] = reconstructTyped(v[fname], ftype)
+            out[fname] = reconstructNatural(v[fname], ftype)
         end
         return out
     end
@@ -228,8 +230,11 @@ end
 
 -- Converts one JSON value to a raw-TSV cell, guided by the column's `fieldType`.
 --   * missing/null            -> empty cell
---   * composite (table)       -> reconstruct (type-directed) then native cell text
---   * scalar                  -> passed through (rawTSVToString stringifies)
+--   * JSON table              -> reconstruct, then native cell text (composite
+--                                result) or pass-through (scalar result — the typed
+--                                format wraps a scalar int as {"int":"100"}, which
+--                                decodes to a table but reconstructs to a number)
+--   * plain scalar            -> passed through (rawTSVToString stringifies)
 -- Non-finite numbers (at any depth) are flagged via `flag` but NOT rejected (D5).
 -- Returns (cell) or (nil, errmsg); an errmsg is a structural failure that aborts.
 local function valueToCell(v, fieldType, reconstruct, flag, where)
@@ -244,10 +249,16 @@ local function valueToCell(v, fieldType, reconstruct, flag, where)
                 .. ": " .. tostring(lv)
         end
         if lv == nil then
-            return nil, "could not reconstruct composite " .. where
-                .. (derr and (": " .. tostring(derr)) or "")
+            if derr then
+                return nil, "could not reconstruct composite " .. where
+                    .. ": " .. tostring(derr)
+            end
+            return ""   -- reconstructed to nil (e.g. an empty/null wrapper)
         end
         flagNonFinite(lv, flag, where)
+        if type(lv) ~= "table" then
+            return lv   -- typed scalar wrapper unwrapped to a scalar
+        end
         local serOk, txt = pcall(toCellText, lv)
         if not serOk then
             return nil, "could not serialise composite " .. where
@@ -422,10 +433,24 @@ end
 
 -- The natural (default) stages. The bare json:* ids map here; natural handles
 -- both simple and composite cell values, reconstructing composites type-directed
--- (reconstructTyped).
-local objectsToTSV = makeTranscoder(objectsBody, reconstructTyped)
-local rowsToTSV    = makeTranscoder(rowsBody,    reconstructTyped)
-local columnsToTSV = makeTranscoder(columnsBody, reconstructTyped)
+-- (reconstructNatural).
+local objectsToTSV = makeTranscoder(objectsBody, reconstructNatural)
+local rowsToTSV    = makeTranscoder(rowsBody,    reconstructNatural)
+local columnsToTSV = makeTranscoder(columnsBody, reconstructNatural)
+
+-- json-typed codec: the typed JSON encoding is self-describing ({"int":…} /
+-- {"float":…} wrappers and the [size,…] table form preserve every type, including
+-- non-string and table-valued map keys), so it ignores the column type. This is
+-- the read-back of `exportJSON` (json_complex_values.md Phase 2).
+local function reconstructTypedJSON(v, _fieldType)
+    return processTypedValue(v)
+end
+
+-- The `:typed` stages, registered under json:objects:typed / :rows:typed /
+-- :columns:typed by builtin_content_stages.
+local objectsToTSVTyped = makeTranscoder(objectsBody, reconstructTypedJSON)
+local rowsToTSVTyped    = makeTranscoder(rowsBody,    reconstructTypedJSON)
+local columnsToTSVTyped = makeTranscoder(columnsBody, reconstructTypedJSON)
 
 -- ============================================================
 -- Public API
@@ -440,6 +465,9 @@ local API = {
     objectsToTSV = objectsToTSV,
     rowsToTSV = rowsToTSV,
     columnsToTSV = columnsToTSV,
+    objectsToTSVTyped = objectsToTSVTyped,
+    rowsToTSVTyped = rowsToTSVTyped,
+    columnsToTSVTyped = columnsToTSVTyped,
 }
 
 local function apiCall(_, operation, ...)

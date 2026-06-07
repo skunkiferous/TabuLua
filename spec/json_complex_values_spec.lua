@@ -18,9 +18,25 @@ local manifest_loader = require("manifest_loader")
 local error_reporting = require("error_reporting")
 local json_transcoders = require("json_transcoders")
 local parsers = require("parsers")
+local serializeJSON = require("serialization").serializeJSON
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))
+end
+
+-- Builds a `json:objects:typed` document from a list of rows (field→Lua value),
+-- encoding every value in TabuLua's typed JSON form via serializeJSON (so an
+-- integer becomes {"int":"…"}, a map becomes [size,[k,v],…], etc.).
+local function typedObjectsFile(rows)
+    local objs = {}
+    for _, row in ipairs(rows) do
+        local parts = {}
+        for field, value in pairs(row) do
+            parts[#parts + 1] = string.format("%q", field) .. ":" .. serializeJSON(value)
+        end
+        objs[#objs + 1] = "{" .. table.concat(parts, ",") .. "}"
+    end
+    return "[" .. table.concat(objs, ",") .. "]"
 end
 
 local MANIFEST_FILENAME = "Manifest.transposed.tsv"
@@ -200,6 +216,47 @@ describe("JSON transcode - complex values (json-natural)", function()
         local parser = parsers.parseType(bv, "{{integer,integer}:string}", "tsv")
         assert.is_nil(parser)
         assert.matches("key_type can never be a table", table.concat(logs, " | "))
+    end)
+
+    -- ---- json-typed (`:typed`) — Phase 2 ----
+
+    it("`:typed` loads typed scalars (int wrappers) and composites", function()
+        local v = loadField("{name:identifier,price:integer,stats:{string:integer}}",
+            "json:objects:typed",
+            typedObjectsFile({{name = "sword", price = 100, stats = {atk = 7, def = 3}}}),
+            "stats")
+        assert.same({atk = 7, def = 3}, v)
+    end)
+
+    -- The headline reason for typed: a JSON producer that cannot represent an
+    -- int64 as a NUMBER (e.g. JavaScript, capped at 2^53) emits it as a
+    -- string-tagged integer {"int":"<digits>"}, which survives any JSON toolchain.
+    it("`:typed` carries an int64 exactly via the {\"int\":\"...\"} string wrapper", function()
+        local v = loadField("{id:identifier,big:long}", "json:objects:typed",
+            '[{"id":"x","big":{"int":"9223372036854775807"}}]', "big")
+        assert.equals(9223372036854775807, v)
+    end)
+
+    it("`:typed` preserves non-string scalar keys exactly", function()
+        local m = {}; m[10] = "a"; m[20] = "b"   -- map<integer,string>, sparse
+        local v = loadField("{id:identifier,m:{integer:string}}", "json:objects:typed",
+            typedObjectsFile({{id = "x", m = m}}), "m")
+        assert.same({[10] = "a", [20] = "b"}, v)
+    end)
+
+    -- The one thing `:typed` can do that natural cannot: in an UNTYPED `table`
+    -- column there is no key type to guide natural (it would coerce "1" -> 1), but
+    -- the self-describing typed encoding keeps the exact string key "1".
+    it("`:typed` preserves an exact scalar key in an untyped `table` column", function()
+        local v = loadField("{id:identifier,m:table}", "json:objects:typed",
+            typedObjectsFile({{id = "x", m = {["1"] = "a"}}}), "m")
+        assert.same({["1"] = "a"}, v)
+    end)
+
+    it("natural coerces that same key (`table` column gives it no type to honour)", function()
+        local v = loadField("{id:identifier,m:table}", "json:objects",
+            '[{"id":"x","m":{"1":"a"}}]', "m")
+        assert.same({[1] = "a"}, v)   -- coerced to a number key, unlike :typed
     end)
 end)
 

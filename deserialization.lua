@@ -62,6 +62,99 @@ local function deserialize(s)
     return result, nil
 end
 
+--- Post-processes an ALREADY JSON-decoded *typed* value into its Lua value.
+--- Handles the {"int":"123"} / {"float":"nan"/"inf"/"-inf"} type wrappers and the
+--- [size, elem1, ..., elemN, [key1,val1], ...] table encoding. Operates on a
+--- decoded value (no JSON parsing), so a caller holding a decoded substructure can
+--- reuse it without a re-encode. Returns (value, err).
+--- @param v any An already-decoded typed-JSON value
+--- @return any The reconstructed Lua value
+--- @return string|nil Error message if reconstruction failed
+local function processTypedValue(v)
+    if v == nil then
+        return nil, nil
+    end
+
+    local t = type(v)
+    if t ~= "table" then
+        return v, nil
+    end
+
+    -- Type wrappers: {"int":"123"} or {"float":"nan"}
+    if v.int ~= nil then
+        local num = tonumber(v.int)
+        if num == nil then
+            return nil, "Failed to parse int: " .. tostring(v.int)
+        end
+        if math.type(num) == "float" then
+            num = math.floor(num)   -- force to integer
+        end
+        return num, nil
+    end
+    if v.float ~= nil then
+        local f = v.float
+        if f == "nan" then
+            return 0/0, nil
+        elseif f == "inf" then
+            return math.huge, nil
+        elseif f == "-inf" then
+            return -math.huge, nil
+        end
+        local num = tonumber(f)
+        if num == nil then
+            return nil, "Failed to parse float: " .. tostring(v.float)
+        end
+        return num, nil
+    end
+
+    -- Our table encoding: [size, elem1, ..., elemN, [key,val], ...]
+    if #v > 0 then
+        local size = v[1]
+        if type(size) == "number" then
+            local result, err = {}, nil
+            -- Sequence elements (indices 2 to size+1)
+            for i = 2, size + 1 do
+                result[i - 1], err = processTypedValue(v[i])
+                if err then
+                    return nil, err
+                end
+            end
+            -- Key-value pairs (remaining elements)
+            for i = size + 2, #v do
+                local kv = v[i]
+                if type(kv) == "table" and #kv == 2 then
+                    local key, kerr = processTypedValue(kv[1])
+                    if kerr then
+                        return nil, kerr
+                    end
+                    local val, verr = processTypedValue(kv[2])
+                    if verr then
+                        return nil, verr
+                    end
+                    result[key] = val
+                else
+                    return nil, "Bad JSON format: expected key-value pair, " .. tostring(kv)
+                end
+            end
+            return result, nil
+        end
+    end
+
+    -- Regular table (shouldn't happen in our format, but handle it)
+    local result, err = {}, nil
+    for k, val in pairs(v) do
+        local key, kerr = processTypedValue(k)
+        if kerr then
+            return nil, kerr
+        end
+        result[key], err = processTypedValue(val)
+        if err then
+            return nil, err
+        end
+    end
+    return result, nil
+end
+
 --- Deserializes a typed JSON string back to a Lua value.
 --- Handles {"int":"123"} and {"float":"nan"/"inf"/"-inf"} type wrappers.
 --- Tables are encoded as: [size, elem1, ..., elemN, [key1,val1], ...]
@@ -85,96 +178,7 @@ local function deserializeJSON(s)
         return nil, "Failed to parse JSON: " .. tostring(err)
     end
 
-    -- Recursive function to handle type wrappers and table encoding
-    local processValue
-    processValue = function(v)
-        if v == nil then
-            return nil, nil
-        end
-
-        local t = type(v)
-        if t ~= "table" then
-            return v, nil
-        end
-
-        -- Check for type wrappers: {"int":"123"} or {"float":"nan"}
-        if v.int ~= nil then
-            local num = tonumber(v.int)
-            if num == nil then
-                return nil, "Failed to parse int: " .. tostring(v.int)
-            end
-            if math.type(num) == "float" then
-                -- Force to integer
-                num = math.floor(num)
-            end
-            return num, nil
-        end
-        if v.float ~= nil then
-            local f = v.float
-            if f == "nan" then
-                return 0/0, nil
-            elseif f == "inf" then
-                return math.huge, nil
-            elseif f == "-inf" then
-                return -math.huge, nil
-            end
-            local num = tonumber(f)
-            if num == nil then
-                return nil, "Failed to parse float: " .. tostring(v.float)
-            end
-            return num, nil
-        end
-
-        -- Check if this is our table encoding: [size, elem1, ..., elemN, [key,val], ...]
-        if #v > 0 then
-            local size = v[1]
-            if type(size) == "number" then
-                local result = {}
-                -- Process sequence elements (indices 2 to size+1)
-                for i = 2, size + 1 do
-                    local elem = v[i]
-                    result[i - 1], err = processValue(elem)
-                    if err then
-                        return nil, err
-                    end
-                end
-                -- Process key-value pairs (remaining elements)
-                for i = size + 2, #v do
-                    local kv = v[i]
-                    if type(kv) == "table" and #kv == 2 then
-                        local key, err = processValue(kv[1])
-                        if err then
-                            return nil, err
-                        end
-                        local val, err = processValue(kv[2])
-                        if err then
-                            return nil, err
-                        end
-                        result[key] = val
-                    else
-                        return nil, "Bad JSON format: expected key-value pair, " .. tostring(kv)
-                    end
-                end
-                return result, nil
-            end
-        end
-
-        -- Regular table (shouldn't happen in our format, but handle it)
-        local result = {}
-        for k, val in pairs(v) do
-            local key, err = processValue(k)
-            if err then
-                return nil, err
-            end
-            result[key], err = processValue(val)
-            if err then
-                return nil, err
-            end
-        end
-        return result, nil
-    end
-
-    return processValue(parsed)
+    return processTypedValue(parsed)
 end
 
 --- Post-processes an ALREADY JSON-decoded Lua value into natural-import form.
@@ -538,6 +542,7 @@ local API = {
     deserializeXML = deserializeXML,
     getVersion = getVersion,
     processNaturalValue = processNaturalValue,
+    processTypedValue = processTypedValue,
 }
 
 -- Enables the module to be called as a function

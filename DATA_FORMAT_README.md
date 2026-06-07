@@ -1192,6 +1192,9 @@ There are two ways a file is routed through a transcoder:
 | `json:objects` | `.json` | explicit | no | the file's `typeName` schema |
 | `json:rows` | `.json` | explicit | no | the file's `typeName` schema |
 | `json:columns` | `.json` | explicit | no | the file's `typeName` schema |
+| `json:objects:typed` | `.json` | explicit | no | the file's `typeName` schema |
+| `json:rows:typed` | `.json` | explicit | no | the file's `typeName` schema |
+| `json:columns:typed` | `.json` | explicit | no | the file's `typeName` schema |
 | `xml:tabulua` | `.xml` | explicit | yes | the file's own `<header>` |
 
 > A transcode stage may declare an **input-extension guard**: an explicitly
@@ -1272,6 +1275,21 @@ with `typeName` `{name:identifier,skills:{string},stats:{string:integer}}` loads
   pass. (`NaN` / `Infinity` are not valid JSON tokens in the first place.)
 - A map whose **key type is itself a table** is not a valid column type (the type
   parser rejects it), so it cannot occur here.
+
+**Typed variants (`json:objects:typed` / `json:rows:typed` / `json:columns:typed`).**
+The same three row layouts, but cell values use TabuLua's **typed** JSON encoding —
+the self-describing read-back of `exportJSON`, where integers are the *string*
+`{"int":"…"}`, special floats `{"float":"nan"/"inf"/"-inf"}`, and tables
+`[size, …, [key, value]]`. The encoding carries the types, so values survive
+independently of the column type and of the JSON toolchain.
+
+The main reason to use it is **64-bit integers**: most JSON producers/consumers are
+JavaScript-derived and cannot represent an integer above 2^53 as a number, so a
+natural `9223372036854775807` is corrupted before TabuLua ever sees it. The typed
+`{"int":"9223372036854775807"}` string form survives any toolchain. A secondary
+case is an **untyped `table` / `raw` column**, where natural has no key type to
+guide it (and would coerce a key `"1"` to the number `1`) but typed keeps the exact
+key `"1"`. For ordinary typed columns the result is identical to natural.
 
 ### EAV (Entity–Attribute–Value) long format
 

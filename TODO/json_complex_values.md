@@ -19,21 +19,32 @@ column's declared type. The bare ids *become* the **`json-natural`** stages
 **`:typed`** family (`json:objects:typed`, …) is added for **symmetry with export**
 and for the cases `json-natural` cannot represent losslessly.
 
-**What `:typed` is actually for (corrected).** JSON objects only have string keys,
-so json-natural can only render a map as `{ "key": value }`. `:typed` exists to
-preserve **non-string keys**. Two sub-cases, neither of which is "a table-typed map
-key as a *column type*" (that is forbidden outright — see D4):
+**What `:typed` is actually for (corrected).** `:typed` exists to preserve **types
+that conventional JSON (and the toolchains around it) cannot carry**. In order of
+practical importance:
 
-- **Non-string scalar keys** in typed maps — `map<integer,…>`, `map<boolean,…>`,
-  `map<enum,…>` (see the [serialization.lua](../serialization.lua#L364) comment).
-  **Natural now handles these fully**, including numeric-looking string keys,
-  because reconstruction is type-directed (D6) — so `:typed` offers *no* advantage
-  here. JSON stringifies the key; the key type's own parser rebuilds it.
-- **Table keys at the value level** inside an untyped `table`/`raw`/`any` column
-  (the type does not constrain keys). Natural stringifies such a key irrecoverably;
-  `:typed` preserves it. This is the **only** remaining `:typed` advantage, and it
-  only matters for `:typed` *input* and export round-trips — a table key cannot
-  arrive via natural JSON (object keys are strings).
+- **64-bit integers across foreign JSON toolchains (the headline reason).** Most
+  JSON producers/consumers are JavaScript-derived and cannot represent an integer
+  above 2^53 *as a number* — it is corrupted before TabuLua ever sees it. The typed
+  encoding tags integers as the **string** `{"int":"<digits>"}`
+  ([serialization.lua](../serialization.lua#L283) literally explains this), so an
+  exact int64 survives *any* JSON toolchain. Natural emits a plain JSON number,
+  which only survives if both producer and consumer happen to support int64 (e.g.
+  our own Lua 5.4 + dkjson; a JS-based producer already lost it). Floats, special
+  floats, etc. are likewise tag-preserved.
+- **Exact scalar key types inside an untyped `table`/`raw`/`any` column.** The type
+  does not constrain keys, so natural has nothing to guide it and coerces a key
+  `"1"` to the number `1`; `:typed` is self-describing and keeps `"1"`.
+- **Non-string scalar keys in *typed* maps** (`map<integer,…>`, `map<boolean,…>`):
+  natural now handles these fully via type-directed reconstruction (D6), so `:typed`
+  offers *no* advantage there.
+
+Two things `:typed` does **not** rescue: a table-typed map key as a *column type*
+(forbidden — D4), and a table-*valued* key, which round-trips in neither format
+because the native cell parser `ltcn` does not accept a table as a key (so
+`serializeTable`'s `[{1,2}]=…` form fails to re-parse). These two share one root —
+the native cell representation cannot hold a table key — which is likely *why* the
+type system forbids table-typed map keys in the first place.
 
 ## Background — the architecture this rides on
 
@@ -163,9 +174,10 @@ string-keyed map rejected it) — a real defect, so D6 was pulled forward.
   `"01"`/`"1"`) all round-trip correctly, at any nesting depth. The old ambiguity
   (a numeric-looking *string* key) is gone, as is the `"NAN"`-in-a-string-slot
   misread (sentinels are interpreted only in numeric slots). The one remaining
-  natural-only gap is **value-level table keys in an untyped `table`/`raw` column**,
-  which cannot arrive via natural JSON anyway (JSON object keys are strings) — that
-  is `:typed`-input territory.
+  natural-only gap is **exact scalar key types in an untyped `table`/`raw` column**
+  (no key type to guide natural, so it coerces `"1"`→`1`); `:typed` keeps the exact
+  key. A table-*valued* key round-trips in neither format (`ltcn` rejects table
+  keys in a cell).
 - **NaN/±Inf are not JSON.** Reachable only via `1e999` overflow; flagged per D5.
   Inside a `:typed` table they arrive as the `"NAN"`/`"INF"` sentinels and
   reconstruct, but a bare scalar numeric cell cannot carry them (no valid token).
@@ -201,19 +213,27 @@ wild yet, so only tests need updating.
    records across all three layouts; non-string + numeric-looking-string keys;
    nested per-depth key typing; nullable containers; D4 type rejection; D5
    flag-and-continue).
-6. ⏳ Docs: module header done; `DATA_FORMAT_README.md` still to update.
+6. ✅ Docs: module header + `DATA_FORMAT_README.md` JSON-layouts subsection.
 
-### Phase 2 — `:typed` family (symmetry with export)
+### Phase 2 — `:typed` family (symmetry with export) — DONE
 
-1. Add a typed codec `(v, _fieldType) -> deserializeJSON(dkjson.encode(v))` and
-   instantiate the same three factories with it; register `json:objects:typed`,
-   `json:rows:typed`, `json:columns:typed` in
+1. ✅ Typed codec `reconstructTypedJSON(v, _fieldType) -> processTypedValue(v)`
+   (`processTypedValue` extracted/exported from
+   [deserialization.lua](../deserialization.lua) — operates on the decoded value,
+   no lossy re-encode); the same three factories instantiated with it.
+2. ✅ Registered `json:objects:typed`, `json:rows:typed`, `json:columns:typed` in
    [builtin_content_stages.lua](../builtin_content_stages.lua#L146) (same shape as
-   the natural ids; `inputExtensions={"json"}` guard, no matcher).
-2. Tests: a typed round-trip of a value natural cannot carry — a **table-keyed map
-   in an untyped `table`/`raw` column** — proving `:typed` preserves the table key
-   where natural cannot express it.
-3. Docs: note the pairing with `exportNaturalJSON` / `exportJSON`.
+   the natural ids; `inputExtensions={"json"}` guard, no matcher). `valueToCell`
+   now also handles a reconstructed *scalar* (a typed `{"int":…}` wrapper decodes to
+   a table but reconstructs to a number).
+3. ✅ Tests: typed scalars + composites; **exact non-string scalar keys**; and the
+   one thing natural cannot do — **exact scalar key types in an untyped `table`
+   column** (natural coerces `"1"`→`1`, typed keeps `"1"`).
+4. ✅ Docs: `DATA_FORMAT_README.md` typed ids + note.
+
+   Finding: a table-*valued* key does **not** round-trip in either format — the
+   native cell parser `ltcn` rejects a table as a key — so the originally-planned
+   "table-keyed map" showcase was replaced with the untyped-column scalar-key case.
 
 ### Phase 3 — none required
 
