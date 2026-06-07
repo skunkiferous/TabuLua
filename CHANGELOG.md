@@ -15,6 +15,50 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.25.0] - 2026-06-07
+
+### Added
+
+- **Composite (table-typed) cell values in the JSON transcoders.** The
+  `json:objects` / `json:rows` / `json:columns` stages no longer reject a cell
+  that is itself a table-typed value — an array, map, tuple, or nested record
+  matching the column's declared type now loads correctly across all three
+  layouts. A composite JSON value is reconstructed to a Lua value and serialised to
+  TabuLua's native cell text, so the column's own parser does the final typing and
+  validation. Reconstruction is **type-directed**: each map key is rebuilt with the
+  key type's own parser, so a `map<string,…>` key `"01"` stays the string `"01"`
+  while a `map<integer,…>` key `"1"` becomes the number `1`, at any nesting depth.
+  Non-finite numbers (reachable only via a `1e999`-style overflow) are reported but
+  do not abort — every offending value is flagged in one pass.
+
+- **`json:objects:typed` / `json:rows:typed` / `json:columns:typed` transcoders.**
+  The same three row layouts, but cell values use TabuLua's self-describing typed
+  JSON encoding (the read-back of `exportJSON`: integers as the string
+  `{"int":"…"}`, special floats as `{"float":"…"}`, tables as `[size, …, [k, v]]`).
+  Because the encoding carries the types, values survive independently of the
+  column type and of the JSON toolchain. The main use is **64-bit integers**, which
+  most JavaScript-derived JSON tools cannot represent as a number (capped at 2^53):
+  the `{"int":"<digits>"}` string form round-trips an exact `int64` through any
+  toolchain.
+
+- **`deserialization.processNaturalValue` / `processTypedValue`.** The
+  natural/typed JSON post-processing (special-float sentinels, int wrappers, the
+  `[size,…]` table encoding) is now exposed as functions that operate on an
+  already-decoded value, so a caller holding a decoded substructure can reuse them
+  without a lossy re-encode.
+
+### Fixed
+
+- **`serializeTable`, `serializeTableJSON`, and `serializeTableXML` produced
+  malformed output for a sequence stored in Lua's hash part.** These serialisers
+  emitted the sequence/array part by walking `pairs(t)` and assuming it yielded
+  indices `1, 2, …` in order. For a table whose sequence lives in the hash part
+  (e.g. one built with explicit `{[1]=…, [2]=…}` keys), `pairs()` order is
+  arbitrary, so `serializeJSON({[1]="a",[2]="b"})` could produce the malformed
+  `[2,null,"b","a"]` (and likewise for the native and XML forms). All three now
+  emit the sequence prefix by explicit index, making the output independent of
+  `pairs()` order. (`serializeTableNaturalJSON` was already correct.)
+
 ## [0.24.0] - 2026-06-06
 
 ### Added

@@ -9,7 +9,6 @@ local VERSION = semver(0, 24, 0)
 
 -- Dependencies
 local sparse_seq = require("sparse_sequence")
-local isSparseSequence = sparse_seq.isSparseSequence
 local getSparseSequenceSize = sparse_seq.getSparseSequenceSize
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -59,6 +58,23 @@ end
 
 -- Maximum table depth for serializeTable
 local MAX_TABLE_DEPTH = 10
+
+-- True if k is an integer sequence index in 1..maxLen. Used to tell a table's
+-- "sequence prefix" keys from its "map" keys without relying on pairs() order.
+local function isSeqIndex(k, maxLen)
+    return type(k) == "number" and k >= 1 and k <= maxLen
+        and (math.type and math.type(k) == "integer" or math.floor(k) == k)
+end
+
+-- Length of the leading contiguous non-nil run t[1], t[2], … — the part that is
+-- emitted inline as a sequence when the table is NOT a (sparse) sequence.
+local function contiguousPrefixLen(t)
+    local m = 0
+    while t[m + 1] ~= nil do
+        m = m + 1
+    end
+    return m
+end
 
 -- Forward declaration of serializeTable
 local serializeTableRef
@@ -136,53 +152,43 @@ local function serializeTable(t, nil_as_empty_str, in_process, depth)
     in_process[t] = true
     local sep = ""
     local r = { "{" }
-    local idx = 1
     local keyed = {}
     local tmp = {}
-    local sparse = nil
-    for k, v in pairs(t) do
-        -- Does the table has a "sequence/array part", and is k an index in that part?
-        if k == idx then
-            -- In this case, the "index" is implicit, saving space
-            r[#r + 1] = sep
-            sep = ","
-            r[#r + 1] = serialize(v, nil_as_empty_str, in_process, depth)
-            idx = idx + 1
-        -- Is key an "identifier", that can be used as a table key? The use syntactic sugar
-        elseif type(k) == "string" and k:match("^[%a_][%w_]*$") then
-            tmp[1] = k
-            tmp[2] = '='
-            tmp[3] = serialize(v, nil_as_empty_str, in_process, depth)
-            tmp[4] = nil
-            keyed[#keyed + 1] = table.concat(tmp)
-        -- otherwise, serialize as an "ordinary" table key
+
+    -- Emit the "sequence prefix" by explicit index so output does NOT depend on
+    -- pairs() order (a sequence stored in Lua's hash part iterates arbitrarily).
+    -- A (sparse) sequence emits all of 1..sparseSize (gaps as nil); any other
+    -- table emits its leading contiguous non-nil run, the rest become map keys.
+    local sparseSize = getSparseSequenceSize(t)
+    local seqLen = sparseSize or contiguousPrefixLen(t)
+    for i = 1, seqLen do
+        r[#r + 1] = sep
+        sep = ","
+        local v = t[i]
+        if v == nil then
+            r[#r + 1] = nil_as_empty_str and "''" or "nil"
         else
-            if sparse == nil then
-                sparse = isSparseSequence(t)
-            end
-            if sparse then
-                -- In this case, the "index" is implicit, but we have a gap where the value is nil
-                -- Since the table evaluated to sparse, that means k must be a valid index.
-                while k > idx do
-                    r[#r + 1] = sep
-                    sep = ","
-                    if nil_as_empty_str then
-                        r[#r + 1] = "''"
-                    else
-                        r[#r + 1] = 'nil'
-                    end
-                    idx = idx + 1
+            r[#r + 1] = serialize(v, nil_as_empty_str, in_process, depth)
+        end
+    end
+
+    -- Remaining keys (not in the sequence prefix) become explicit table keys.
+    -- A non-nil sparseSize means every key is a sequence index, so skip this.
+    if sparseSize == nil then
+        for k, v in pairs(t) do
+            if not isSeqIndex(k, seqLen) then
+                -- Identifier keys use syntactic sugar (k=v); the rest use [k]=v.
+                if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+                    tmp[1] = k
+                    tmp[2] = '='
+                    tmp[3] = serialize(v, nil_as_empty_str, in_process, depth)
+                    tmp[4] = nil
+                else
+                    tmp[1] = '['
+                    tmp[2] = serialize(k, nil_as_empty_str, in_process, depth)
+                    tmp[3] = ']='
+                    tmp[4] = serialize(v, nil_as_empty_str, in_process, depth)
                 end
-                -- And now, the actual value
-                r[#r + 1] = sep
-                sep = ","
-                r[#r + 1] = serialize(v, nil_as_empty_str, in_process, depth)
-                idx = idx + 1
-            else
-                tmp[1] = '['
-                tmp[2] = serialize(k, nil_as_empty_str, in_process, depth)
-                tmp[3] = ']='
-                tmp[4] = serialize(v, nil_as_empty_str, in_process, depth)
                 keyed[#keyed + 1] = table.concat(tmp)
             end
         end
@@ -328,41 +334,31 @@ local function serializeTableJSON(t, nil_as_empty_str, in_process, depth)
     in_process = in_process or {}
     assert(not in_process[t], "recursive table")
     in_process[t] = true
-    local idx = 1
     local keyed = {}
     local tmp = {}
+
+    -- Sequence prefix emitted by explicit index (order-independent — see
+    -- serializeTable). "seqLen" is the leading element count and is the value at
+    -- "index 0" of the JSON array, so it always matches the inline elements.
     local sparseSize = getSparseSequenceSize(t)
-    local size = sparseSize or #t
-    -- "size" will come out as "index 0" in the JSON array
-    local r = { "[", tostring(size) }
-    for k, v in pairs(t) do
-        -- Does the table has a "sequence/array part", and is k an index in that part?
-        if k == idx then
-            -- In this case, the "index" is implicit, saving space
-            r[#r + 1] = ","
-            r[#r + 1] = serializeJSON(v, nil_as_empty_str, in_process, depth)
-            idx = idx + 1
-        -- otherwise, serialize as an "ordinary" table key
+    local seqLen = sparseSize or contiguousPrefixLen(t)
+    local r = { "[", tostring(seqLen) }
+    for i = 1, seqLen do
+        r[#r + 1] = ","
+        local v = t[i]
+        if v == nil then
+            r[#r + 1] = nil_as_empty_str and '""' or 'null'
         else
-            if sparseSize and sparseSize > 0 then
-                -- In this case, the "index" is implicit, but we have a gap where the value is nil
-                -- Since the table evaluated to sparse, that means k must be a valid index.
-                while k > idx do
-                    r[#r + 1] = ","
-                    if nil_as_empty_str then
-                        r[#r + 1] = '""'
-                    else
-                        r[#r + 1] = 'null'
-                    end
-                    idx = idx + 1
-                end
-                -- And now, the actual value
-                r[#r + 1] = ","
-                r[#r + 1] = serializeJSON(v, nil_as_empty_str, in_process, depth)
-                idx = idx + 1
-            else
-                -- Stoopid JSON also only support strings as "map keys", and I refuse to accept this limitation,
-                -- so we are NOT using "JSON objects" to represent maps
+            r[#r + 1] = serializeJSON(v, nil_as_empty_str, in_process, depth)
+        end
+    end
+
+    -- Remaining (map) keys. Stoopid JSON only supports string map keys, and I
+    -- refuse to accept this limitation, so we use [key,value] pairs, not objects.
+    -- A non-nil sparseSize means every key is a sequence index, so skip this.
+    if sparseSize == nil then
+        for k, v in pairs(t) do
+            if not isSeqIndex(k, seqLen) then
                 tmp[1] = '['
                 tmp[2] = serializeJSON(k, nil_as_empty_str, in_process, depth)
                 tmp[3] = ','
@@ -662,34 +658,29 @@ local function serializeTableXML(t, nil_as_empty_str, in_process, depth)
     in_process = in_process or {}
     assert(not in_process[t], "recursive table")
     in_process[t] = true
-    local idx = 1
     local keyed = {}
     local tmp = {}
+
+    -- Sequence prefix emitted by explicit index (order-independent — see
+    -- serializeTable); a (sparse) sequence emits 1..sparseSize with gaps as
+    -- <null/>, any other table emits its leading contiguous non-nil run.
     local sparseSize = getSparseSequenceSize(t)
+    local seqLen = sparseSize or contiguousPrefixLen(t)
     local r = { "<table>" }
-    for k, v in pairs(t) do
-        -- Does the table has a "sequence/array part", and is k an index in that part?
-        if k == idx then
-            -- In this case, the "index" is implicit, saving space
-            r[#r + 1] = serializeXML(v, nil_as_empty_str, in_process, depth)
-            idx = idx + 1
-        -- otherwise, serialize as an "ordinary" table key
+    for i = 1, seqLen do
+        local v = t[i]
+        if v == nil then
+            r[#r + 1] = nil_as_empty_str and "<string/>" or "<null/>"
         else
-            if sparseSize and sparseSize > 0 then
-                -- In this case, the "index" is implicit, but we have a gap where the value is nil
-                -- Since the table evaluated to sparse, that means k must be a valid index.
-                while k > idx do
-                    if nil_as_empty_str then
-                        r[#r + 1] = "<string/>"
-                    else
-                        r[#r + 1] = "<null/>"
-                    end
-                    idx = idx + 1
-                end
-                -- And now, the actual value
-                r[#r + 1] = serializeXML(v, nil_as_empty_str, in_process, depth)
-                idx = idx + 1
-            else
+            r[#r + 1] = serializeXML(v, nil_as_empty_str, in_process, depth)
+        end
+    end
+
+    -- Remaining (map) keys become <key_value> pairs. A non-nil sparseSize means
+    -- every key is a sequence index, so skip this.
+    if sparseSize == nil then
+        for k, v in pairs(t) do
+            if not isSeqIndex(k, seqLen) then
                 tmp[1] = '<key_value>'
                 tmp[2] = serializeXML(k, nil_as_empty_str, in_process, depth)
                 tmp[3] = serializeXML(v, nil_as_empty_str, in_process, depth)

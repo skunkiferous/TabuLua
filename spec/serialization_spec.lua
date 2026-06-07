@@ -11,6 +11,7 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 
 local serialization = require("serialization")
+local deserialization = require("deserialization")
 
 describe("serialization", function()
   describe("serialize and serializeTable", function()
@@ -317,6 +318,44 @@ describe("serialization", function()
         assert.is_nil(result:match(",%]"), "Should not have trailing comma: " .. result)
         assert.is_nil(result:match("%[,"), "Should not have leading comma after [: " .. result)
       end
+    end)
+  end)
+
+  -- Regression: a sequence built with explicit [i]= keys lands in Lua's hash part,
+  -- where pairs() yields indices in arbitrary order. The table serializers must
+  -- emit the sequence by index (not rely on pairs() order); previously this
+  -- produced malformed output such as [2,null,"b","a"].
+  describe("sequence serialization is independent of pairs() order", function()
+    -- {[1]="a",[2]="b"} is the same value as {"a","b"} but stored differently.
+    local hashSeq = {}
+    hashSeq[1] = "a"; hashSeq[2] = "b"
+
+    it("serializeTable (native)", function()
+      assert.equals('{"a","b"}', serialization.serializeTable(hashSeq))
+    end)
+
+    it("serializeTableJSON (typed)", function()
+      assert.equals('[2,"a","b"]', serialization.serializeTableJSON(hashSeq))
+    end)
+
+    it("serializeTableXML", function()
+      assert.equals("<table><string>a</string><string>b</string></table>",
+        serialization.serializeTableXML(hashSeq))
+    end)
+
+    it("matches the array-part form for all three serializers", function()
+      local arraySeq = {"a", "b"}
+      assert.equals(serialization.serializeTable(arraySeq),
+        serialization.serializeTable(hashSeq))
+      assert.equals(serialization.serializeTableJSON(arraySeq),
+        serialization.serializeTableJSON(hashSeq))
+      assert.equals(serialization.serializeTableXML(arraySeq),
+        serialization.serializeTableXML(hashSeq))
+    end)
+
+    it("round-trips a hash-part sequence through typed JSON", function()
+      local enc = serialization.serializeTableJSON(hashSeq)
+      assert.same({"a", "b"}, deserialization.deserializeJSON(enc))
     end)
   end)
 
