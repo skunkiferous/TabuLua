@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **JSON input round-trip — the six `json:*` transcoders are now reversible.**
+  Each `json:objects` / `json:rows` / `json:columns` stage (and its `:typed`
+  variant) now declares an `encode` (`json_transcoders.*ToJson`), so the
+  reformatter rewrites a `.json` data source from the reformatted wide TSV — the
+  way it already round-trips `.xml`/`.eav` — reached through the id-selected
+  `reversibleTranscode` (no engine change; the generic hook was built for XML).
+  The reverse is **schema-free**: column names, types and order come from the
+  wide-TSV `name:type` header (parsed with `processTSV`, the same machinery the
+  loader uses), not a `typeName`. The round-trip is **normalizing** (canonical
+  JSON), not byte-identical: object key order becomes the header order and
+  number/whitespace formatting is canonical. `:typed` is value-lossless (the
+  self-describing `{"int":…}` form survives any JSON toolchain); `json-natural`
+  carries the usual conventional-JSON caveats (`json_complex_values.md`). See
+  `TODO/json_input_round_trip.md`.
 - **`IgnoredFile` type tag and `MigrationScript` built-in type.** `IgnoredFile`
   is a built-in type tag (ancestor `table`) marking file types that the loader
   recognises but deliberately does **not** load as data. The built-in record

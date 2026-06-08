@@ -1231,12 +1231,12 @@ There are two ways a file is routed through a transcoder:
 | `transcoder` id | Extension | Selection | Reversible | Column types from |
 |-----------------|-----------|-----------|------------|-------------------|
 | *(none)* | `.eav` | auto (by extension) | yes | the file's `typeName` schema |
-| `json:objects` | `.json` | explicit | no | the file's `typeName` schema |
-| `json:rows` | `.json` | explicit | no | the file's `typeName` schema |
-| `json:columns` | `.json` | explicit | no | the file's `typeName` schema |
-| `json:objects:typed` | `.json` | explicit | no | the file's `typeName` schema |
-| `json:rows:typed` | `.json` | explicit | no | the file's `typeName` schema |
-| `json:columns:typed` | `.json` | explicit | no | the file's `typeName` schema |
+| `json:objects` | `.json` | explicit | yes¹ | the file's `typeName` schema |
+| `json:rows` | `.json` | explicit | yes¹ | the file's `typeName` schema |
+| `json:columns` | `.json` | explicit | yes¹ | the file's `typeName` schema |
+| `json:objects:typed` | `.json` | explicit | yes | the file's `typeName` schema |
+| `json:rows:typed` | `.json` | explicit | yes | the file's `typeName` schema |
+| `json:columns:typed` | `.json` | explicit | yes | the file's `typeName` schema |
 | `xml:tabulua` | `.xml` | explicit | yes | the file's own `<header>` |
 
 > A transcode stage may declare an **input-extension guard**: an explicitly
@@ -1251,10 +1251,18 @@ on-disk source back in its own format from the reformatted wide table; a
 **non-reversible** one leaves the source untouched (the derived TSV is not the
 source of truth, so it is never written back over the original).
 
-- `.eav`, `.xml` (`xml:tabulua`), and `.tsv.gz` / `.csv.gz` are reversible — the
-  reformatter rewrites them.
-- The `json:*` transcoders are read-only inputs: the `.json` source is never
-  rewritten.
+- `.eav`, `.xml` (`xml:tabulua`), `.tsv.gz` / `.csv.gz`, and the `json:*`
+  transcoders are reversible — the reformatter rewrites the source in its own
+  format from the reformatted wide table.
+- ¹ The JSON round-trip is **normalizing**, not byte-identical: the rewritten
+  JSON is canonical (object keys in the schema's header order, canonical number
+  and whitespace formatting) and parses back to the same data. The `:typed`
+  layouts are **value-lossless** (the self-describing `{"int":…}` form survives
+  any JSON toolchain); the bare `json-natural` layouts carry the usual
+  conventional-JSON caveats (an int above 2⁵³ only survives a JS-derived
+  toolchain in the typed form; `NaN`/`±Inf` are not representable; an exact
+  scalar key inside an untyped `table` column is coerced). Reading then writing a
+  natural-JSON file re-emits equivalent natural JSON.
 
 ### JSON layouts (`json:objects` / `json:rows` / `json:columns`)
 

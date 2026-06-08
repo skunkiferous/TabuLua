@@ -554,10 +554,21 @@ describe("content_pipeline", function()
       assert.equals("function", type(rt.encode))
     end)
 
-    it("falls through to the extension lookup for a non-reversible id (json:objects)", function()
-      -- json:objects has no `encode`, so the id branch declines; the extension
-      -- lookup for .json also finds no reversible stage -> nil.
-      assert.is_nil(content_pipeline.reversibleTranscode("x.json", "json:objects"))
+    it("resolves the reversible JSON stages by transcoder id (json_input_round_trip.md)", function()
+      -- All six json:* stages are now reversible (they declare an `encode`), so an
+      -- id-selected .json source is reformatter-round-trippable like .xml/.eav.
+      for _, id in ipairs({"json:objects", "json:rows", "json:columns",
+          "json:objects:typed", "json:rows:typed", "json:columns:typed"}) do
+        local rt = content_pipeline.reversibleTranscode("x.json", id)
+        assert.is_not_nil(rt, id)
+        assert.equals("function", type(rt.encode))
+      end
+    end)
+
+    it("falls through to the extension lookup for an unknown id (no stage, no .json match)", function()
+      -- An unknown id can't be resolved; the extension lookup for .json also finds
+      -- no auto-matched stage (the json:* stages are id-only) -> nil.
+      assert.is_nil(content_pipeline.reversibleTranscode("x.json", "json:nonesuch"))
     end)
   end)
 

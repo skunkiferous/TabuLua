@@ -143,10 +143,19 @@ content_pipeline.register(NAME, {
 -- (transcoder=json:objects). JSON has several tabular layouts that extension
 -- matching can't tell apart, so the author chooses per file. The conversion
 -- itself lives in json_transcoders.objectsToTSV.
+--
+-- All six JSON stages are reversible (json_input_round_trip.md): each declares an
+-- `encode` (json_transcoders.*ToJson), so the reformatter rewrites a .json source
+-- from the reformatted wide TSV — reached through the id-selected
+-- reversibleTranscode (built for XML, so no engine change is needed here), the
+-- text output written via safeReplaceFile. The round-trip is normalizing (canonical
+-- JSON), not byte-identical; see json_transcoders.lua.
 content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:objects",
     inputExtensions = {"json"},          -- guard only (Step 2), not a matcher
+    reversible = true,
+    encode = json_transcoders.objectsToJson,
     transform = json_transcoders.objectsToTSV,
 })
 
@@ -156,6 +165,8 @@ content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:rows",
     inputExtensions = {"json"},
+    reversible = true,
+    encode = json_transcoders.rowsToJson,
     transform = json_transcoders.rowsToTSV,
 })
 
@@ -163,6 +174,8 @@ content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:columns",
     inputExtensions = {"json"},
+    reversible = true,
+    encode = json_transcoders.columnsToJson,
     transform = json_transcoders.columnsToTSV,
 })
 
@@ -175,6 +188,8 @@ content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:objects:typed",
     inputExtensions = {"json"},
+    reversible = true,
+    encode = json_transcoders.objectsToJsonTyped,
     transform = json_transcoders.objectsToTSVTyped,
 })
 
@@ -182,6 +197,8 @@ content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:rows:typed",
     inputExtensions = {"json"},
+    reversible = true,
+    encode = json_transcoders.rowsToJsonTyped,
     transform = json_transcoders.rowsToTSVTyped,
 })
 
@@ -189,6 +206,8 @@ content_pipeline.register(NAME, {
     phase = "transcode",
     id = "json:columns:typed",
     inputExtensions = {"json"},
+    reversible = true,
+    encode = json_transcoders.columnsToJsonTyped,
     transform = json_transcoders.columnsToTSVTyped,
 })
 

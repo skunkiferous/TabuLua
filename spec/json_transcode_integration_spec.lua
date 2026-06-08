@@ -129,14 +129,37 @@ describe("manifest_loader - JSON transcode (Files.tsv-selected)", function()
         assert.equals(original, on_disk)
     end)
 
-    it("the reformatter does not rewrite the .json source (skips non-tsv/csv)", function()
+    it("the reformatter rewrites the .json source to canonical JSON (round-trip)", function()
+        -- json:objects is now reversible (json_input_round_trip.md), so the
+        -- reformatter rewrites items.json from the reformatted wide TSV via the
+        -- id-selected encode, the way it round-trips .xml/.eav. The round-trip is
+        -- normalizing (canonical JSON), so we assert it re-parses to the same data
+        -- and is stable on a second pass — not byte equality with the input.
         local original = '[{"name":"axe","price":7}]'
         local pkg_dir = makePkg(original)
-        -- processFiles loads + reformats in place (no exporters). It rewrites
-        -- the .tsv files but must leave items.json (a transcoded source) alone.
+        local json_path = path_join(pkg_dir, "items.json")
+
         reformatter.processFiles({pkg_dir})
-        local on_disk = file_util.readFile(path_join(pkg_dir, "items.json"))
-        assert.equals(original, on_disk)
+        local on_disk = file_util.readFile(json_path)
+        assert.is_not_nil(on_disk)
+        local decoded = require("dkjson").decode(on_disk)
+        assert.same({{name = "axe", price = 7}}, decoded)
+
+        -- Re-loading the rewritten file reproduces the same typed data.
+        local msgs2 = {}
+        local bad2 = error_reporting.badValGen(function(_s, m) msgs2[#msgs2 + 1] = m end)
+        bad2.logger = error_reporting.nullLogger
+        local result = manifest_loader.processFiles({pkg_dir}, bad2)
+        assert.equals(0, bad2.errors, table.concat(msgs2, " | "))
+        local tsv = findTsv(result, "items.json")
+        local header = tsv[1]
+        assert.equals("axe", tsv[2][header.name.idx].parsed)
+        assert.equals(7, tsv[2][header.price.idx].parsed)
+
+        -- Canonical form is stable on a second reformat pass.
+        local before = file_util.readFile(json_path)
+        reformatter.processFiles({pkg_dir})
+        assert.equals(before, file_util.readFile(json_path))
     end)
 
     it("reports a clear error when the JSON is malformed", function()

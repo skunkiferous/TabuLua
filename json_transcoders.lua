@@ -19,6 +19,15 @@ local error_reporting = require("error_reporting")
 local recordFieldNames = parsers.recordFieldNames
 local recordFieldTypes = parsers.recordFieldTypes
 local rawTSVToString = raw_tsv.rawTSVToString
+local stringToRawTSV = raw_tsv.stringToRawTSV
+
+-- The reverse encoders (tsvToJson) parse the reformatter's wide TSV back into a
+-- typed model with the SAME machinery the loader uses, so each cell's parsed Lua
+-- value agrees with the rest of the pipeline (json_input_round_trip.md Step 1).
+local tsv_model = require("tsv_model")
+local processTSV = tsv_model.processTSV
+local defaultOptionsExtractor = tsv_model.defaultOptionsExtractor
+local expressionEvaluatorGenerator = tsv_model.expressionEvaluatorGenerator
 
 -- Type introspection drives type-DIRECTED reconstruction of composite cells
 -- (json_complex_values.md D6): keys and leaves are rebuilt according to the
@@ -44,13 +53,22 @@ local processNaturalValue = deserialization.processNaturalValue
 local processTypedValue = deserialization.processTypedValue
 local serializeTable = serialization.serializeTable
 
+-- The reverse encoders serialise each parsed cell value per layout: natural ids
+-- use serializeNaturalJSON, the :typed ids use serializeJSON (the self-describing
+-- {"int":…} form) — the same per-cell serialisers exporter.exportJSON uses.
+local serializeNaturalJSON = serialization.serializeNaturalJSON
+local serializeJSON = serialization.serializeJSON
+
 -- Returns the module version as a string.
 local function getVersion()
     return tostring(VERSION)
 end
 
 -- ============================================================
--- JSON -> TSV transcoders for the content pipeline (content_pipeline.md Phase 3).
+-- JSON <-> TSV transcoders for the content pipeline (content_pipeline.md Phase 3).
+-- The forward transforms (JSON -> TSV) are below; the reversible `encode`
+-- functions (TSV -> JSON, json_input_round_trip.md) are further down, so a .json
+-- source round-trips in the reformatter like .xml/.eav.
 --
 -- Several JSON layouts encode the same tabular data — object-per-row,
 -- array-per-row, array-per-column — so they can't be told apart by extension;
@@ -453,6 +471,153 @@ local rowsToTSVTyped    = makeTranscoder(rowsBody,    reconstructTypedJSON)
 local columnsToTSVTyped = makeTranscoder(columnsBody, reconstructTypedJSON)
 
 -- ============================================================
+-- Reverse encoders: wide TSV -> JSON (json_input_round_trip.md). These are the
+-- `encode` of each reversible transcode stage; the reformatter calls them to
+-- rewrite a .json source from the reformatted wide TSV, so a JSON input round-trips
+-- like .xml/.eav. Schema-free, symmetric with xml_transcoder.tsvToXml: column
+-- NAMES, TYPES and ORDER all come from the wide-TSV `name:type` header (which the
+-- forward path already wrote in the schema's sorted field order), NOT from a
+-- typeName, so no ctx is needed. The round-trip is NORMALIZING (canonical JSON),
+-- not byte-identical: object key order becomes the header order, and number/
+-- whitespace formatting is canonical. :typed is value-lossless; natural carries the
+-- conventional-JSON caveats documented in json_complex_values.md.
+--
+-- The header row is NEVER emitted (the JSON layouts carry no header — the schema
+-- lived in typeName, not the file); only data rows are written.
+-- ============================================================
+
+-- A private badVal that collects messages, used to drive processTSV without
+-- touching the loader's badVal/col_types stack (mirrors xml_transcoder; the Open
+-- item in the plan notes this ~scaffold is mirrored rather than shared for now).
+-- processTSV pushes its own col_type via withColType and asserts the stack is empty
+-- on entry, so col_types is left unseeded.
+local function privateBadVal()
+    local msgs = {}
+    local bv = error_reporting.badValGen(function(_self, m) msgs[#msgs + 1] = m end)
+    bv.logger = error_reporting.nullLogger
+    return bv, msgs
+end
+
+-- Parses wide-TSV text into a typed model with the loader's machinery. Returns
+-- (file, header) — file[1] is the header (columns carry .name/.type_spec), file[2..]
+-- are rows of cells (.parsed is the Lua value) — or (nil, errmsg).
+local function parseWideTSV(content)
+    local ok, rawtsv = pcall(stringToRawTSV, content)
+    if not ok then return nil, "cannot parse TSV: " .. tostring(rawtsv) end
+
+    local pbad, msgs = privateBadVal()
+    local loadEnv = {files = {}}
+    local expr_eval = expressionEvaluatorGenerator(loadEnv)
+    local file = processTSV(defaultOptionsExtractor, expr_eval, parseType,
+        "json-encode", rawtsv, pbad, {}, false, nil)
+    if not file then
+        return nil, "cannot parse wide TSV: " .. (msgs[1] or "unknown error")
+    end
+    if pbad.errors > 0 then
+        return nil, "wide TSV did not validate: " .. (msgs[1] or "unknown error")
+    end
+    local header = file[1]
+    if not header then
+        return nil, "wide TSV has no header"
+    end
+    return file, header
+end
+
+-- Wraps a sequence of already-serialised row/column strings as a top-level JSON
+-- array, matching exporter.exportJSON's multi-line layout. An empty sequence emits
+-- the bare `[]` (json:columns instead always emits one array per column, so it never
+-- reaches here empty).
+local function wrapArray(items)
+    if #items == 0 then return "[]" end
+    return "[\n" .. table.concat(items, ",\n") .. "\n]"
+end
+
+-- The parsed Lua value of cell `i` of a row (nil if the cell is missing/empty).
+local function cellValue(row, i)
+    local cell = row[i]
+    return cell and cell.parsed
+end
+
+-- json:objects — one JSON object per data row, fields keyed by the header column
+-- names in header order. A missing/null cell becomes `"field":null` (D4): the
+-- forward path collapses absent and null to an empty cell, so re-emitting null is a
+-- faithful representative, and emitting the key keeps every row the same shape.
+local function objectsAssembler(file, header, serializeValue)
+    local rows = {}
+    for r = 2, #file do
+        local row = file[r]
+        if type(row) == "table" then
+            local cells = {}
+            for i = 1, #header do
+                cells[i] = dkjson.encode(header[i].name) .. ":"
+                    .. serializeValue(cellValue(row, i), false)
+            end
+            rows[#rows + 1] = "{" .. table.concat(cells, ",") .. "}"
+        end
+    end
+    return wrapArray(rows)
+end
+
+-- json:rows — one JSON array per data row, values positional in header order.
+local function rowsAssembler(file, header, serializeValue)
+    local rows = {}
+    for r = 2, #file do
+        local row = file[r]
+        if type(row) == "table" then
+            local cells = {}
+            for i = 1, #header do
+                cells[i] = serializeValue(cellValue(row, i), false)
+            end
+            rows[#rows + 1] = "[" .. table.concat(cells, ",") .. "]"
+        end
+    end
+    return wrapArray(rows)
+end
+
+-- json:columns — the transpose of rows: one JSON array per column (always exactly
+-- #header arrays, in header order), each holding that column's values down the rows.
+local function columnsAssembler(file, header, serializeValue)
+    local nCols = #header
+    local cols = {}
+    for c = 1, nCols do cols[c] = {} end
+    for r = 2, #file do
+        local row = file[r]
+        if type(row) == "table" then
+            for c = 1, nCols do
+                local col = cols[c]
+                col[#col + 1] = serializeValue(cellValue(row, c), false)
+            end
+        end
+    end
+    local colStrings = {}
+    for c = 1, nCols do
+        colStrings[c] = "[" .. table.concat(cols[c], ",") .. "]"
+    end
+    return wrapArray(colStrings)
+end
+
+-- Factory: wraps a layout assembler with the shared wide-TSV parse and the
+-- content-pipeline encode signature (content, env, badVal). `serializeValue` is the
+-- per-cell JSON serialiser (serializeNaturalJSON for the natural ids, serializeJSON
+-- for the :typed ids). Returns (jsonText) or (nil, reason), matching the encode
+-- contract; the reformatter writes the text output via safeReplaceFile.
+local function makeEncoder(assembler, serializeValue)
+    return function(content, _env, _badVal)
+        local file, headerOrErr = parseWideTSV(content)
+        if not file then return nil, headerOrErr end   -- headerOrErr holds the error
+        return assembler(file, headerOrErr, serializeValue)
+    end
+end
+
+local objectsToJson = makeEncoder(objectsAssembler, serializeNaturalJSON)
+local rowsToJson    = makeEncoder(rowsAssembler,    serializeNaturalJSON)
+local columnsToJson = makeEncoder(columnsAssembler, serializeNaturalJSON)
+
+local objectsToJsonTyped = makeEncoder(objectsAssembler, serializeJSON)
+local rowsToJsonTyped    = makeEncoder(rowsAssembler,    serializeJSON)
+local columnsToJsonTyped = makeEncoder(columnsAssembler, serializeJSON)
+
+-- ============================================================
 -- Public API
 -- ============================================================
 
@@ -468,6 +633,12 @@ local API = {
     objectsToTSVTyped = objectsToTSVTyped,
     rowsToTSVTyped = rowsToTSVTyped,
     columnsToTSVTyped = columnsToTSVTyped,
+    objectsToJson = objectsToJson,
+    rowsToJson = rowsToJson,
+    columnsToJson = columnsToJson,
+    objectsToJsonTyped = objectsToJsonTyped,
+    rowsToJsonTyped = rowsToJsonTyped,
+    columnsToJsonTyped = columnsToJsonTyped,
 }
 
 local function apiCall(_, operation, ...)

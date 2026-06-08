@@ -29,7 +29,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
 | [graph_wiring](#graph_wiring) | Family detection helpers for graph-shaped record types (`detectFamily`, `detectRole`, `detectEdgeFamily`). After Phase 2b the dispatch / validation entry points moved into the type-wiring registry | read_only |
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
-| [json_transcoders](#json_transcoders) | Content-pipeline JSON→TSV transcoders in three layouts (`json:objects` / `json:rows` / `json:columns`), id-selected via the `Files.tsv` `transcoder` column | parsers, raw_tsv, read_only |
+| [json_transcoders](#json_transcoders) | Content-pipeline JSON↔TSV transcoders in three layouts (`json:objects` / `json:rows` / `json:columns`) × natural/`:typed` codecs, id-selected via the `Files.tsv` `transcoder` column; **reversible** so JSON inputs round-trip in the reformatter | deserialization, error_reporting, parsers, raw_tsv, read_only, serialization, tsv_model |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
@@ -295,9 +295,9 @@ File import system that reads exported data files back into Lua. Supports Lua fi
 ### json_transcoders
 **File:** [json_transcoders.lua](json_transcoders.lua)
 
-Content-pipeline JSON→TSV transcoders. Several JSON layouts encode the same tabular data — `json:objects` (one object per row, self-describing), `json:rows` (one array per row, positional), `json:columns` (one array per column, the transpose) — so they can't be told apart by extension; the author selects one per file via the `Files.tsv` `transcoder` column. In every layout the column names, types and order come from the file's `typeName` schema (in sorted field order), **not** the JSON, so the emitted TSV carries a typed `name:type` header and the normal type/validation machinery applies. Registered as id-selected `transcode` stages by [builtin_content_stages](#builtin_content_stages).
+Content-pipeline JSON↔TSV transcoders. Several JSON layouts encode the same tabular data — `json:objects` (one object per row, self-describing), `json:rows` (one array per row, positional), `json:columns` (one array per column, the transpose) — so they can't be told apart by extension; the author selects one per file via the `Files.tsv` `transcoder` column. In every layout the column names, types and order come from the file's `typeName` schema (in sorted field order), **not** the JSON, so the emitted TSV carries a typed `name:type` header and the normal type/validation machinery applies. Each layout has a bare (`json-natural`) and a `:typed` codec. All six stages are **reversible**: a `*ToJson` encoder rewrites a `.json` source from the reformatted wide TSV (schema-free — names/types/order read from the wide-TSV header via `processTSV`), so JSON inputs round-trip in the reformatter like `.xml`/`.eav` (normalizing/canonical, not byte-identical). Registered as id-selected `transcode` stages by [builtin_content_stages](#builtin_content_stages).
 
-**Dependencies:** parsers, raw_tsv, read_only *(also uses external `dkjson`)*
+**Dependencies:** deserialization, error_reporting, parsers, raw_tsv, read_only, serialization, tsv_model *(also uses external `dkjson`)*
 
 ---
 
