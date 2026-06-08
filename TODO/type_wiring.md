@@ -57,7 +57,14 @@ User packages now reach the registry through two paths:
   `type_wiring.register` calls from inside the onLoad handler — they
   never touch the bootstrap api.
 
-Phases 4 (optional) and 5 remain.
+**Phase 4 (optional): resolved — but not as drafted.** Rather than a separate
+`shape_wiring` registry, migration-script recognition became a declarative
+**type-tag** check: a built-in `IgnoredFile` tag (ancestor `table`) whose member
+`MigrationScript` is declared in `Files.tsv`, skipped by the loader before
+parsing. This is more general (any file type can opt in via its `tags` field)
+and needs no new registry. See [ignored_files.md](ignored_files.md). **Done.**
+
+Phase 5 (documentation) remains.
 
 ## Summary
 
@@ -1035,21 +1042,21 @@ Rationale for the "No" cells:
   tables, which aren't exposed in `sandbox_env.new()`. Neither user
   path reaches them. Only engine code does.
 
-### Migration script detection — a softer fit
+### Migration script detection — RESOLVED via the `IgnoredFile` tag
 
-[manifest_loader.lua:390-414](../manifest_loader.lua#L390-L414)
-`isMigrationScript` fires on rawtsv shape, not on typeName — migration
-scripts don't appear in `Files.tsv`. It's worth flagging as a similar
-architectural pattern ("hard-coded recogniser that triggers a special path")
-but the dispatch key is different. Two options:
+The former `isMigrationScript` heuristic fired on rawtsv *shape* (column 1
+named `command`, the rest `p1…pN`), not on typeName. This was flagged here as
+a similar "hard-coded recogniser that triggers a special path" pattern, with
+two options originally considered: (a) leave it alone, or (b) generalise into a
+separate `shape_wiring` registry.
 
-- (a) Leave it alone. The cost is one branch in the loader; the benefit of
-  moving it is small.
-- (b) Generalise into a separate "file-shape recogniser" registry, parallel
-  to (but distinct from) the type-wiring registry.
-
-Lean (a) for now. Document it as a known candidate; revisit if a second
-shape-based recogniser appears.
+**Neither was chosen.** Instead, recognition moved onto the existing type
+system: a built-in `IgnoredFile` type tag (ancestor `table`) marks file types
+the loader recognises but does not load; the built-in `MigrationScript` record
+type is its member; migration scripts are declared in `Files.tsv` with
+`typeName=MigrationScript` and skipped before parsing. This removes the shape
+heuristic, needs no new registry, and lets any user file type opt in via its
+`tags` field. See [ignored_files.md](ignored_files.md).
 
 ### COG processing — a different registry, not this one
 
@@ -1330,12 +1337,13 @@ The pure-data path, complementary to Phase 3a's code-library path.
 - Tests: new `spec/type_wiring_user_tsv_spec.lua` covering load,
   accumulation across packages, and the unknown-type warning/error path.
 
-### Phase 4 (optional) — Migrate `isMigrationScript`
+### Phase 4 (optional) — Migrate `isMigrationScript` — DONE
 
-Skipped by default; revisit if a second shape-based recogniser surfaces.
-If migrated: generalise into a tiny separate registry (`shape_wiring` or
-similar) — kept distinct from `type_wiring` because the dispatch key
-differs.
+Resolved, but not via the `shape_wiring` registry this section originally
+proposed. `isMigrationScript` was removed in favour of the declarative
+`IgnoredFile` type tag + built-in `MigrationScript` type, recognised through
+the existing type system (no new registry). Full plan and rationale in
+[ignored_files.md](ignored_files.md).
 
 ### Phase 5 — Documentation
 

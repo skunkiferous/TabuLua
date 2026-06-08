@@ -39,6 +39,7 @@ local stringToRawTSV = raw_tsv.stringToRawTSV
 
 local parsers = require("parsers")
 local parseType = parsers.parseType
+local isMemberOfTag = parsers.isMemberOfTag
 
 local manifest_info = require("manifest_info")
 local isManifestFile = manifest_info.isManifestFile
@@ -307,36 +308,6 @@ local function computeFilenameKey(file_name, file2dir)
     return nfile:lower()
 end
 
--- Checks if a raw TSV structure looks like a migration script.
--- Migration scripts have a header row with columns: command, p1, p2, p3, ...
--- Column names may include type suffixes (e.g., command:string, p1:string).
--- Returns true if the header matches the migration script pattern.
-local function isMigrationScript(rawtsv)
-    -- Find the first data row (non-comment, non-blank)
-    for _, line in ipairs(rawtsv) do
-        if type(line) == "table" then
-            -- Need at least 2 columns (command + p1)
-            if #line < 2 then
-                return false
-            end
-            -- Extract column name without type suffix
-            local col1 = tostring(line[1]):match("^([^:]+)")
-            if col1 ~= "command" then
-                return false
-            end
-            -- Check that remaining columns are p1, p2, p3, ... in order
-            for i = 2, #line do
-                local colName = tostring(line[i]):match("^([^:]+)")
-                if colName ~= ("p" .. (i - 1)) then
-                    return false
-                end
-            end
-            return true
-        end
-    end
-    return false
-end
-
 -- Ensures `map[key]` is a populated array, creating an empty one if missing.
 -- Returns the array. Used to give type_wiring.applyWiring writable targets
 -- for the per-file processor / validator wiring contributions.
@@ -361,6 +332,18 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     badVal.source = file_name
     local lcFNKey = computeFilenameKey(file_name, file2dir)
     local fileType = lcFn2Type[lcFNKey]
+    -- Files whose typeName is a member of the IgnoredFile tag (e.g. migration
+    -- scripts, typeName=MigrationScript) are declared in Files.tsv but must NOT
+    -- be loaded as data: their columns carry no fixed per-row type and their
+    -- primary key may repeat, so parsing would fail. Recognised declaratively
+    -- via the type tag rather than a hard-coded shape heuristic; any user type
+    -- can opt in the same way by adding IgnoredFile to its `tags`. Gated before
+    -- the content read, so the file is never parsed and not stored in raw_files.
+    if fileType and isMemberOfTag("IgnoredFile", fileType) then
+        logger:info("Skipping IgnoredFile-tagged file: " .. file_name)
+        raw_files[file_name] = nil
+        return
+    end
     -- The content pipeline reads the file (binary), populates raw_files with the
     -- normalised pre-COG source, and runs the decode→transcode→normalise→COG
     -- stages. COG is no longer named here — it is the registered `macro` stage.
@@ -374,12 +357,6 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
         return
     end
     local rawtsv = stringToRawTSV(content)
-
-    if isMigrationScript(rawtsv) then
-        logger:warn("Skipping migration script: " .. file_name)
-        raw_files[file_name] = nil
-        return
-    end
 
     local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
     logFile(file_name, fileType, extends, table_subscribers)

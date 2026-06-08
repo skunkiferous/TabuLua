@@ -530,6 +530,48 @@ custom_types:{custom_type_def}|nil  {name="UnitTag",parent="number",members={"in
 {name="DensityUnit",parent="number",members={"integer"}},{name="density",parent="number",min=0}
 ```
 
+### Ignored files (the `IgnoredFile` tag)
+
+`IgnoredFile` is a **built-in type tag** (ancestor `table`) that marks file
+types the loader should recognise but **not** load as data. When a file's
+`typeName` in `Files.tsv` is a member of `IgnoredFile`, the loader skips it
+before any parsing or validation runs — it never appears in the loaded data,
+and no errors are raised for its contents.
+
+This exists for files that live in the data tree but aren't dataset data and
+would not survive normal parsing — for example, files whose columns have no
+fixed per-row type, or whose primary-key column repeats values.
+
+**Built-in member — `MigrationScript`.** The built-in record type
+`MigrationScript` (`{command, p1, p2, p3, p4, p5}`) is tagged `IgnoredFile`.
+A migration script (executed by `migration.lua`) is a TSV of command rows whose
+`command` primary key repeats and whose `p*` parameters mean different things
+per command, so it cannot be loaded as data. To keep such a script in the data
+tree, declare it in `Files.tsv` with `typeName=MigrationScript`:
+
+```tsv
+fileName:filepath    typeName:type_spec    superType:super_type    baseType:boolean    loadOrder:number    description:text
+migrate_v2.tsv       MigrationScript                               false               2                   v1→v2 migration
+```
+
+The file's own contents are never parsed against the type, so its header and
+rows are free-form as far as the loader is concerned. (Migration scripts run
+from *outside* the dataset need no `Files.tsv` entry — they are never scanned.)
+
+**Marking your own types.** Any file type can opt in by adding `IgnoredFile`
+to its `tags` field — independent of its own `superType`, because every record
+type extends the tag's `table` ancestor:
+
+```tsv
+# Types.tsv (extends custom_type_def)
+name:name    parent:type_spec|nil                      tags:name|{name}|nil
+ScratchFile  {note:text}                               IgnoredFile
+```
+
+Files declared with `typeName=ScratchFile` are then recognised and skipped the
+same way. Typical uses: scratch/template files, fixtures, or example data kept
+in-tree but excluded from the dataset.
+
 ## Self-Referencing Field Types
 
 Tuples and records support **self-referencing field types**, where one field's type is determined by the value of another field at parse time. This enables "dependent types" — fields whose validation depends on data in a sibling field.

@@ -91,6 +91,7 @@ local API = {
     getRegisteredParsers = introspection.getRegisteredParsers,
     getTypeKind = introspection.getTypeKind,
     isBuiltInType = introspection.isBuiltInType,
+    isMemberOfTag = introspection.isMemberOfTag,
     isNeverTable = introspection.isNeverTable,
     isNullable = introspection.isNullable,
     mapKVType = introspection.mapKVType,

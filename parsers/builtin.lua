@@ -1021,6 +1021,28 @@ function M.registerDerivedParsers()
     -- above). Family-level distinction lives in Files.tsv superType, not
     -- in the parser identity.
     registration.registerAlias(ownBadVal, 'tree_edge', 'graph_edge')
+
+    -- Migration-script record type and the IgnoredFile tag.
+    --
+    -- A migration script (see migration.lua) is a TSV of command rows:
+    -- column 1 is the command name, p1..p5 are positional parameters whose
+    -- meaning varies per command. Such a file is declared in Files.tsv but
+    -- must NOT be loaded as data — its parameter columns carry no fixed
+    -- per-row type, and the `command` primary key repeats across rows
+    -- (violating primary-key uniqueness). So it is recognised and skipped
+    -- before parsing.
+    --
+    -- IgnoredFile is the generic mechanism for that: a type tag whose
+    -- members are file types the loader recognises but does not load. Its
+    -- ancestor is `table` (the super-type of all tables), so any record
+    -- (i.e. any file) type can join it via the `tags` field, independent of
+    -- its own superType. MigrationScript is the one built-in member.
+    registration.registerTypesFromSpec(ownBadVal, {
+        {name = "MigrationScript",
+         parent = "{command:string,p1:string|nil,p2:string|nil," ..
+                  "p3:string|nil,p4:string|nil,p5:string|nil}"},
+        {name = "IgnoredFile", parent = "table", members = {"MigrationScript"}},
+    })
 end
 
 return M

@@ -979,7 +979,7 @@ description:markdown	Test view-of-view chaining
       end)
     end)
 
-    it("should skip migration scripts without errors", function()
+    it("should skip IgnoredFile-tagged files (migration scripts) without errors", function()
       local pkg_dir = path_join(temp_dir, "migrationpkg")
       assert(lfs.mkdir(pkg_dir))
 
@@ -989,15 +989,23 @@ name:string	Migration Test Package
 version:version	0.1.0
 description:markdown	Package with a migration script
 ]]
+      -- The migration script is declared in Files.tsv with the built-in
+      -- typeName=MigrationScript, which is a member of the IgnoredFile tag.
+      -- The loader recognises it declaratively and skips it (no shape sniffing).
       local FILES_MIG = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\tbaseType:boolean\tpublishContext:name|nil\tpublishColumn:name|nil\tloadOrder:number\tdescription:text\n" ..
-                        "Data.tsv\tMigData\t\ttrue\t\t\t1\tData file\n"
+                        "Data.tsv\tMigData\t\ttrue\t\t\t1\tData file\n" ..
+                        "migrate_v2.tsv\tMigrationScript\t\tfalse\t\t\t2\tMigration script\n"
       local DATA_MIG = "name:identifier\tvalue:number\nitem1\t42\n"
 
-      -- Migration script co-located in the package directory
+      -- Migration script co-located in the package directory. Its primary key
+      -- (command) repeats and its parameter columns are untyped — it would fail
+      -- normal parsing, which is exactly why IgnoredFile gates it before parse.
       local MIGRATION_SCRIPT = "# Migration: v1 to v2\n" ..
                                "command:string\tp1:string\tp2:string\tp3:string\n" ..
                                "loadFile\tData.tsv\t\t\n" ..
                                "renameColumn\tData.tsv\tvalue\tamount\n" ..
+                               "setCell\tData.tsv\titem1\tamount\n" ..
+                               "setCell\tData.tsv\titem1\tamount\n" ..
                                "saveAll\t\t\t\n"
 
       assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_MIG))
@@ -1009,7 +1017,7 @@ description:markdown	Package with a migration script
 
       assert.is_not_nil(result, "processFiles should succeed")
       assert.equals(0, badVal.errors,
-        "No errors expected — migration script should be skipped.\n" ..
+        "No errors expected — IgnoredFile-tagged file should be skipped.\n" ..
         "Messages: " .. table.concat(log_messages, "\n"))
 
       -- The migration script should not appear in tsv_files

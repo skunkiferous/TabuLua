@@ -9,9 +9,42 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`IgnoredFile` type tag and `MigrationScript` built-in type.** `IgnoredFile`
+  is a built-in type tag (ancestor `table`) marking file types that the loader
+  recognises but deliberately does **not** load as data. The built-in record
+  type `MigrationScript` (`{command, p1…p5}`) is its one built-in member, so
+  migration scripts (see `migration.lua`) are now recognised declaratively by
+  their `typeName` in `Files.tsv` rather than by a hard-coded content-shape
+  heuristic. Any user file type can opt into the same behaviour by adding
+  `IgnoredFile` to its `tags` field — useful for scratch files, templates, or
+  fixtures kept in the data tree but excluded from the dataset. See
+  `DATA_FORMAT_README.md` § *Ignored files*.
+- **`parsers.isMemberOfTag(tagName, typeName)`** is now part of the public
+  parsers API (previously introspection-internal).
+
 ### Changed
 
+- **Migration-script recognition is now declarative.** A migration script is
+  identified by `typeName=MigrationScript` in `Files.tsv` (a member of the
+  `IgnoredFile` tag) and skipped before parsing — its untyped parameter columns
+  and repeating `command` primary key would otherwise fail normal loading. This
+  replaces the former shape-sniffing recogniser.
+
+  > **Migration guide:** A migration script that lives **inside** a loaded data
+  > tree must now be declared in `Files.tsv` with `typeName=MigrationScript`
+  > (any `fileName`, `superType` empty, `baseType=false`). Migration scripts run
+  > from **outside** the dataset (the usual `lua54 migration.lua <script>
+  > <rootDir>` form, with the script not under `rootDir`) are never scanned and
+  > need no change. `migration.lua` itself reads scripts directly and is
+  > unaffected. Migration scripts are one-shot/disposable, so this break is
+  > low-impact.
+
 ### Removed
+
+- **`isMigrationScript` content-shape heuristic** in `manifest_loader.lua`
+  (replaced by the `IgnoredFile` tag check above). The old heuristic could
+  silently skip a legitimate data file whose primary key happened to be
+  `command` followed by `p1, p2, …`.
 
 ### Fixed
 
