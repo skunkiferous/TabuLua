@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.26.0] - 2026-06-08
+
+### Added
+
 - **JSON input round-trip — the six `json:*` transcoders are now reversible.**
   Each `json:objects` / `json:rows` / `json:columns` stage (and its `:typed`
   variant) now declares an `encode` (`json_transcoders.*ToJson`), so the
@@ -59,8 +69,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   (replaced by the `IgnoredFile` tag check above). The old heuristic could
   silently skip a legitimate data file whose primary key happened to be
   `command` followed by `p1, p2, …`.
-
-### Fixed
 
 ## [0.25.0] - 2026-06-07
 
