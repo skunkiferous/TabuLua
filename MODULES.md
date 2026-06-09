@@ -197,7 +197,7 @@ Error collection and reporting system using `badVal` handlers instead of excepti
 ### exporter
 **File:** [exporter.lua](exporter.lua)
 
-Exports parsed TSV data to multiple formats including JSON, Lua tables, XML, SQL, and MessagePack.
+Exports parsed TSV data to multiple formats including JSON, Lua tables, XML, SQL, and MessagePack. An archive file streams to the export verbatim (passthrough copy), but a loaded archive *member* is input-only: it is skipped (via `file_util.resolveArchivePath`) so it is never re-emitted at a nested `.zip/`-as-directory path — the packed archive is its export representation (archive_files.md §5).
 
 **Dependencies:** base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model
 
@@ -544,7 +544,7 @@ Creates read-only proxy wrappers for tables to prevent accidental mutations. Use
 ### reformatter
 **File:** [reformatter.lua](reformatter.lua)
 
-Reformats TSV data files in-place and exports to multiple formats. Used before committing to ensure consistent formatting.
+Reformats TSV data files in-place and exports to multiple formats. Used before committing to ensure consistent formatting. An archive member is a read-only input: the reformatter skips it (via `file_util.resolveArchivePath`) and never writes reformatted bytes back into a container (archive_files.md §5).
 
 **Dependencies:** error_reporting, exporter, file_util, manifest_info, manifest_loader, named_logger, read_only, serialization
 

@@ -402,6 +402,14 @@ end
 local function reformat(tsv_files, raw_files, badVal, fn2Transcoder)
     fn2Transcoder = fn2Transcoder or {}
     for file_name, tsv in pairs(tsv_files) do
+        -- An archive member (utilmod.zip/data/Item.tsv) is a READ-ONLY input in v1:
+        -- the reformatter must never try to splice bytes back into a container (and
+        -- a write to the .zip-as-directory path would fail outright). Writing back
+        -- into an archive is deferred (archive_files.md §5 / Phase 5).
+        if (select(2, file_util.resolveArchivePath(file_name))) ~= nil then
+            logger:debug("Leaving archive member untouched (read-only input): " .. file_name)
+            goto continue
+        end
         local old_content = raw_files[file_name]
         if type(old_content) ~= "string" then
             -- Binary passthrough files (§3.5) are descriptor tables, not strings,

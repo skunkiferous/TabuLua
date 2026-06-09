@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Archive export / reformat behaviour — the packed archive is the export
+  representation of its members.** On export, an archive file streams to the build
+  **verbatim** (the normal passthrough-by-reference copy), so a mod that includes a
+  `utilmod.zip` keeps it byte-for-byte. Its loaded members are **input-only**: their
+  data feeds the model, but they are *not* re-emitted at a nested
+  `…/utilmod.zip/data/Item.tsv` path (which would both duplicate the packed copy and
+  create a confusing `.zip`-as-directory layout). The reformatter likewise treats an
+  archive member as a **read-only input** — it never tries to splice reformatted
+  bytes back into a container, leaving the archive untouched (writing back into an
+  archive is deferred). Both behaviours key off the same `resolveArchivePath` check,
+  so they stay consistent across every export format. See `TODO/archive_files.md`.
+
 - **Archive members participate in the load like loose files (collection /
   expansion).** `zip` joined the loader's collected extensions, and a new
   `file_util.expandArchives` runs after collection: for every collected archive it

@@ -2,7 +2,22 @@
 
 ## Status
 
-**Phase 3 DONE (pending user commit) — collection / expansion + end-to-end
+**Phase 4 DONE (pending user commit) — export + reformatter.** The archive
+streams to the export verbatim (the zip is a passthrough `raw_files` descriptor, so
+the existing stream-by-reference copy already handles it). Member entries are now
+skipped in both exporter `raw_files` loops (`exportTSV` — which every text/JSON/Lua/
+XML/SQL format routes through — and `exportMessagePack`) and in the reformatter's
+`reformat` loop, all keyed off the same `file_util.resolveArchivePath(file_name)`
+member check (no side-table needed; DRY single source of truth). So a member is
+neither re-emitted as a nested `…/utilmod.zip/…` export file nor rewritten in place.
+Verified: export contains `utilmod.zip` byte-identically and creates **no**
+`utilmod.zip/` directory or member file; reformatting leaves the source zip
+untouched. Tests: `spec/archive_export_integration_spec.lua` (2). Full suite 2937
+green. Docs: CHANGELOG, MODULES. **All core phases (1–4) of archive_files.md are now
+done; Phase 5 (zip writer / tar / nested / per-member transcoder) is explicitly
+optional/deferred until a concrete need appears.**
+
+**Phase 3 DONE — collection / expansion + end-to-end
 load.** Added `zip` to the loader's `EXTENSIONS` and `file_util.expandArchives`
 (called from `collectAndLogFiles` after `collectFiles`): for each collected
 archive it lists members (metadata only) and appends each collectable member as a
