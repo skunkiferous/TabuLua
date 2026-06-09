@@ -767,6 +767,57 @@ local function collectFiles(directories, extensions, file2dir, opt_logger, opt_e
     return result, errors
 end
 
+--- Expands any archive files in `files` into their virtual member paths
+--- (TODO/archive_files.md §4). For each collected file that is a registered
+--- archive, lists its members (central-directory metadata only — never extracts)
+--- and appends each member whose extension is in `extensions` as
+--- `<archivePath>/<memberPath>`, mapping it (in file2dir) to the same source
+--- directory as the archive. Members of non-collectable types are ignored, just
+--- as loose files of those types are. The archive file itself stays in the list
+--- (it streams as an asset). After expansion the virtual members are
+--- indistinguishable from loose files to the rest of the loader: they participate
+--- in the existence check, the data-vs-asset gate, COG scanning, and transcoder
+--- routing exactly like loose files. Mutates and returns `files` (re-sorted).
+--- @param files string[] The collected file list (from collectFiles)
+--- @param extensions string[] Collectable extensions (the set passed to collectFiles)
+--- @param file2dir table|nil file -> source dir map (extended in place for members)
+--- @param opt_logger table|nil Optional logger (an unreadable archive is logged, not fatal)
+--- @return string[] The augmented file list (sorted)
+local function expandArchives(files, extensions, file2dir, opt_logger)
+    local extSet = {}
+    for _, e in ipairs(extensions) do extSet[e:lower()] = true end
+    local additions = {}
+    for _, file in ipairs(files) do
+        if archive_formats.isArchive(file) then
+            local rec, err = getArchiveMeta(file)
+            if not rec then
+                if opt_logger then
+                    opt_logger:error("Could not read archive " .. file .. ": " .. tostring(err))
+                end
+            else
+                for _, entry in ipairs(rec.entries) do
+                    local ext = entry.path:match("%.([^.\\/]+)$")
+                    if ext and extSet[ext:lower()] then
+                        local virtual = file .. "/" .. entry.path
+                        additions[#additions + 1] = virtual
+                        if file2dir then
+                            file2dir[virtual] = file2dir[file]
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #additions == 0 then
+        return files
+    end
+    for _, v in ipairs(additions) do
+        files[#files + 1] = v
+    end
+    table.sort(files)
+    return files
+end
+
 -- Returns the parent directory of a path
 local function getParentPath(path)
     -- Handle root directories
@@ -1064,6 +1115,7 @@ end
 local API = {
     changeExtension = changeExtension,
     collectFiles = collectFiles,
+    expandArchives = expandArchives,
     copyFileStreamed = copyFileStreamed,
     deleteTempDir = deleteTempDir,
     emptyDir = emptyDir,

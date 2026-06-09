@@ -92,9 +92,12 @@ local TSV = "tsv"
 -- Supported file extensions the loader collects. `gz` lets compressed data files
 -- (data.tsv.gz) be picked up so the content pipeline can decode them; whether a
 -- given .gz is parsed as data or streamed as an asset is decided per file by its
--- peeled name (see isCompressedDataFile / loadOtherFiles). Manifest files use
--- .transposed.tsv, which is covered by TSV.
-local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav"}
+-- peeled name (see isCompressedDataFile / loadOtherFiles). `zip` lets archive
+-- files be seen so collectAndLogFiles can expand them into their virtual members
+-- (file_util.expandArchives); the zip itself streams as an asset, while a
+-- collectable member (`utilmod.zip/data/Item.tsv`) participates like a loose file.
+-- Manifest files use .transposed.tsv, which is covered by TSV.
+local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav", "zip"}
 
 -- Find the priority of the file
 local function findPriority(priorities, file, missingPriority)
@@ -719,6 +722,10 @@ local function collectAndLogFiles(directories, file2dir, opt_excludeDirs)
     if hasInvalidDir then
         return nil
     end
+    -- Expand any collected archives into their virtual member paths, so a
+    -- Files.tsv reference to a member inside a zip (utilmod.zip/data/Item.tsv)
+    -- resolves like a loose file. Metadata only — no member is extracted here.
+    files = file_util.expandArchives(files, EXTENSIONS, file2dir, logger)
     return files
 end
 

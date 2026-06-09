@@ -2,7 +2,23 @@
 
 ## Status
 
-**Phase 2 DONE (pending user commit) — virtual member paths + archive-aware
+**Phase 3 DONE (pending user commit) — collection / expansion + end-to-end
+load.** Added `zip` to the loader's `EXTENSIONS` and `file_util.expandArchives`
+(called from `collectAndLogFiles` after `collectFiles`): for each collected
+archive it lists members (metadata only) and appends each collectable member as a
+virtual path `<archivePath>/<memberPath>`, with `file2dir[virtual]` = the archive's
+dir. As predicted, **no other loader code changed** — the existence check,
+data-vs-asset gate (`loadOtherFiles`), and transcoder routing already work on names
+and read through the archive-aware `readFileBinary`/`getFileSize`. Verified
+end-to-end: a member `.tsv` loads as typed data; a member `data.tsv.gz` decodes
+*and* parses (archive ∘ content-pipeline); a collectable non-data member (`.txt`)
+becomes a raw asset; the zip itself still streams as a passthrough asset; a
+member-path typo gives the normal "does not exist" error. Tests:
+`spec/archive_load_integration_spec.lua` (5). Full suite 2935 green. Docs: CHANGELOG,
+MODULES. **Next: Phase 4** (export + reformatter — archive streams verbatim, member
+`raw_files` tagged input-only so they aren't re-emitted; reformatter skips members).
+
+**Phase 2 DONE — virtual member paths + archive-aware
 reads.** Shipped in `file_util.lua`: `resolveArchivePath(path)` (splits at the
 first archive-extension segment that `isFile()` on disk, with a non-empty member
 remainder; member normalised to forward slashes), a new `isFile` helper, and

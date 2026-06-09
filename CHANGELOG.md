@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Archive members participate in the load like loose files (collection /
+  expansion).** `zip` joined the loader's collected extensions, and a new
+  `file_util.expandArchives` runs after collection: for every collected archive it
+  lists the members (central-directory metadata only — never an extraction) and
+  appends each member whose extension is collectable as a virtual path
+  (`utilmod.zip/data/Item.tsv`), mapped to the same source directory as the
+  archive. From there a member is indistinguishable from a loose file to the rest
+  of the loader — **with no change to the existence check, the data-vs-asset gate,
+  or transcoder routing** (they already operate on names and read through the
+  now-archive-aware `readFileBinary`/`getFileSize`). So a `Files.tsv` row pointing
+  at a member inside a zip loads it as data and its rows appear in the model; a
+  member `data.tsv.gz` *decodes and parses* (the archive layer composes with the
+  content pipeline); a collectable non-data member (e.g. a `.txt`) is stored as an
+  asset; and a typo in a member path yields the normal "does not exist" diagnostic.
+  The archive file itself still streams verbatim as a passthrough asset. See
+  `TODO/archive_files.md`.
+
 - **Archive members are now readable as virtual files (`file_util` archive
   awareness).** A path like `mods/utilmod.zip/data/Item.tsv` transparently reads
   the member `data/Item.tsv` inside the container `mods/utilmod.zip`. The new
