@@ -292,6 +292,13 @@ local API = {
     isSupported = isSupported,
     decompress = decompress,
     compress = compress,
+    -- Low-level primitives reused by the archive_formats zip provider (a zip's
+    -- method-8 member is raw DEFLATE — decoded via decompress's libdeflate — and
+    -- each member carries a CRC-32 integrity field with the same IEEE polynomial
+    -- as the gzip trailer). Exposed so the zip reader/writer needs no second copy
+    -- (TODO/archive_files.md Q4): crc32(bytes) -> number, u32le(n) -> 4-byte LE.
+    crc32 = crc32,
+    u32le = u32le,
 }
 
 local function apiCall(_, operation, ...)

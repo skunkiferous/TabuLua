@@ -2,7 +2,21 @@
 
 ## Status
 
-**Planned — not started.** This document proposes a new capability and a new
+**Phase 1 DONE (pending user commit) — registry + zip provider, no loader
+integration.** Shipped `archive_formats.lua`: the lazy provider registry
+(`registerProvider`/`resolve`, `formatForName`/`isArchive`, `list(format,bytes)` /
+`read(format,bytes,member,maxBytes)`) mirroring `compression`, plus the pure-Lua zip
+provider (central-directory parse + member extract; method 0 verbatim, method 8 via
+the shared `libdeflate` raw-DEFLATE path; **CRC-32 verification on every read**;
+member-count + per-member `maxBytes` caps; zip-slip / absolute-path rejection;
+Zip64 / encrypted / split / corrupt → clear errors). `crc32` + `u32le` are now public
+on `compression`. `snapshotState`/`restoreState` registered with `global_reset`. Tests:
+`spec/archive_formats_spec.lua` (22 — list/read stored+deflated, comment scan, all the
+caps and rejections, CRC mismatch, graceful libdeflate-absent via a fake provider).
+Full suite 2916 green. Docs: CHANGELOG, MODULES. **Next: Phase 2** (virtual member
+paths + archive-aware `readFileBinary`/`getFileSize` in `file_util`).
+
+This document proposes a new capability and a new
 registry. It is a *sibling* of the [compression](../compression.lua) provider
 registry and the [content-pipeline](content_pipeline.md) stage registry, but it
 solves a problem neither can: a single on-disk file that is a **container for a

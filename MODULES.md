@@ -6,6 +6,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
+| [archive_formats](#archive_formats) | Lazy archive-format registry (zip via libdeflate); enumerates and extracts the member files inside a container archive, mirroring `compression`'s lazy-provider pattern | compression, global_reset, named_logger, read_only |
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
 | [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV + XML + TSV-cell + Lua-file transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, lua_transcoder, read_only, tsv_transcoders, xml_transcoder |
 | [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
@@ -75,6 +76,15 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 ---
 
 ## Module Details
+
+### archive_formats
+**File:** [archive_formats.lua](archive_formats.lua)
+
+Archive / data-set format registry (TODO/archive_files.md §1). An *archive* is one on-disk file that is a **container for a set of member files** with an internal directory tree (a zip) — the load-bearing distinction from [compression](#compression), which wraps a single byte stream: an archive fans out to N members, so it cannot be a content-pipeline stage. The registry mirrors `compression`'s lazy-provider shape: a provider registers a **loader** keyed by extension (`zip`), run lazily the first time an archive of that format is opened, pulling in whatever rock it needs (or returning `nil` + reason). Registering the zip format does not require `libdeflate`; only opening a real zip does, so a project that never touches an archive runs without it, and one that does without it gets a clear "zip archives are not supported" error (logged once) instead of a crash. `list(format, bytes)` parses the central directory to enumerate members (metadata only); `read(format, bytes, member, maxBytes)` extracts one member, inflating method-8 entries via the same `libdeflate` raw-DEFLATE path the gzip provider uses and verifying each against its central-directory CRC-32 (reusing `compression.crc32`). The pure-Lua zip provider targets the common case (single-disk, non-encrypted, non-Zip64, method 0/8); Zip64, encryption, split archives, zip-slip paths, and member/size bomb caps are explicit clear errors. `formatForName` / `isArchive` classify a path by extension. Snapshots the provider registry and restores it via `global_reset`. (Not yet wired into the loader — that is archive_files.md Phase 2+.)
+
+**Dependencies:** compression, global_reset, named_logger, read_only
+
+---
 
 ### base64
 **File:** [base64.lua](base64.lua)

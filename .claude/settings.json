@@ -7,6 +7,9 @@
       "Bash(git log *)",
       "WebSearch",
       "WebFetch(domain:gitlab.com)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Sebastien Diot\\.claude\\projects\\c--Code-TabuLua\\memory"
     ]
   }
 }

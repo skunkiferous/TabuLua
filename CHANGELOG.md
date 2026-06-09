@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Archive / data-set format registry (`archive_formats.lua`) — reading the
+  member files inside a container archive (zip first).** A "game mod" is often
+  distributed as a single packed `.zip`, and a bigger mod may include that zip as
+  one of its own files. An *archive* is the load-bearing new concept: one on-disk
+  file that is a **container for a set of member files** with an internal directory
+  tree — distinct from `compression` (which wraps a single stream), so it cannot be
+  a content-pipeline stage. This first piece is the registry itself, with no loader
+  integration yet (that follows in later phases): a lazy provider registry mirroring
+  `compression` (`list(format, bytes)` enumerates members from the central
+  directory; `read(format, bytes, member, maxBytes)` extracts one), plus a pure-Lua
+  zip provider that parses the zip framing itself and inflates method-8 members via
+  the same `libdeflate` raw-DEFLATE path the gzip codec uses (no new dependency, no
+  second DEFLATE engine). Each extracted member is verified against its
+  central-directory **CRC-32** (`compression.crc32`, now exposed publicly alongside
+  `u32le`). The provider is hardened against untrusted input — per-member size
+  (zip-bomb) caps, a member-count cap, zip-slip / absolute-path rejection, and clear
+  errors for Zip64 / encrypted / split / corrupt archives (never a silent mis-read);
+  registering the format does not require `libdeflate`, and an archive opened without
+  it degrades to a logged "unsupported," not a crash. See `TODO/archive_files.md`.
+
 - **Re-importing TabuLua's own TSV export variants — three new `tsv:*` input
   transcoders.** The reformatter can *write* a wide TSV whose cells are Lua
   literals, typed JSON or natural JSON (`--file=tsv --data=lua|json-typed|json-natural`),
