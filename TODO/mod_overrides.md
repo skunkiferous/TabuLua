@@ -11,7 +11,11 @@ Reconciled against the engine state as of v0.21.0: the [type-wiring registry](ty
 (Phases 1–3b landed) is now the implementation vehicle for the new built-ins, descriptor
 columns, cross-file passes, and sandbox helpers this plan needs — see the note in §3 and the
 revised pipeline in §7. The `graph_node` / `tree_node` built-ins this plan once treated as
-downstream have also already shipped (§12).
+downstream have also already shipped (§12). Two later landings (≈v0.26.0+) further touch how a
+mod ships files and are reflected in §7.1 / §12: content-pipeline transcoders are **now all
+reversible** and span more formats than when this was written, and **`.zip` archive support**
+([archive_files.md](archive_files.md), Phases 1–4 landed) makes a whole mod packable as one
+file whose members load like loose files.
 
 ## Scope
 
@@ -720,16 +724,35 @@ reversibility and in how they are selected — which constrains how a mod ships 
   patch / data file is gunzipped on load and the reformatter **re-compresses it on
   write** (pure-Lua gzip, both directions, landed), so any mod file may be gzipped
   transparently with no extra declaration — selection is by extension / magic.
-- **Transcoding is non-reversible and explicitly selected.** Structured → TSV has no
-  automatic inverse, so a transcoded source (e.g. a JSON data file) is a **read-only**
-  input the reformatter leaves untouched. It is **not** triggered by extension — the
-  file must name a transcoder in its `Files.tsv` `transcoder` column — and the emitted
-  TSV header is typed from the file's **`typeName` schema**. Two consequences for mods:
-  (a) only JSON ships today (three layouts); XML / SQLite are deferred (§11); (b) because
-  the header is built from a *record-type* schema, the structured form is available for
-  **data files**, not for **patch / overlay files** — those use the `patch` /
-  `SchemaOverlay` typeName keywords, which are not record types, so a mod ships its
-  patch/overlay files as TSV (optionally `.gz`), not as JSON/XML.
+- **Transcoding is now reversible and explicitly selected.** Every shipped transcoder
+  declares an inverse `encode`, so a transcoded source **round-trips in place**: the
+  reformatter rewrites it through the transcoder (via `reversibleTranscode`) rather than
+  leaving it untouched — it is no longer a read-only input. It is still **not** triggered
+  by extension: the file must name a transcoder in its `Files.tsv` `transcoder` column.
+  The shipped set is now JSON (object / row / column layouts, each in a natural and a
+  `:typed` form), EAV, XML (`xml:tabulua`), the three TSV-cell encodings (`tsv:lua` /
+  `tsv:json-typed` / `tsv:json-natural`), and the Lua-file form (`lua:tabulua`); only
+  SQLite is still deferred (§11). The patch/overlay consequence is now **narrower than
+  before**: the `json:*` transcoders type their emitted header from the file's
+  **`typeName` record schema**, so those remain **data-file** only (a `patch` /
+  `SchemaOverlay` keyword is not a record type). But `tsv:*` and `xml:tabulua` are
+  **schema-free** — they read cell types from the file's own header — so there is no
+  longer a hard schema reason a patch/overlay file *could not* be shipped in one of those
+  encodings. Whether to allow it is an open design choice; the conservative v1 stance
+  stays "ship patch/overlay files as TSV, optionally `.gz`," but that is now a policy, not
+  an engine limitation.
+
+- **Archives (`.zip`) let a whole mod ship as one packed file.** A mod's overlay / patch /
+  data files may live inside a zip and are addressed as virtual members
+  (`utilmod.zip/ItemPatch.tsv`); collection expands them so they load exactly like loose
+  files, and `patchOf` / `joinInto` / `schemaOverlayOf` resolve their targets by basename
+  across members too — so a parent file packed in a zip is a valid patch/join/overlay
+  **target**, and a patch/overlay file packed in a zip is a valid **source**, with no new
+  mechanism. Compression still composes (a `.tsv.gz` *inside* a zip is decoded by the
+  content pipeline once the member is addressable). Two reformatter/export caveats: a
+  zipped member is a **read-only input** (the reformatter will not rewrite it in place —
+  ship patch/overlay files loose if you want them reformatted), and on export the archive
+  streams **verbatim** while its members are input-only (not re-emitted individually).
 
 A potential addition for tooling: a `--export-merged` flag that writes a copy of each
 parent file with patches applied, separately from the source layout. Useful for "show me
@@ -1025,11 +1048,24 @@ expressiveness/observability/performance refinements.
   structured-format transcoding, and COG itself. It is relevant here because a mod may
   ship its overlay, patch, or data files compressed or in a structured format, which the
   content pipeline decodes/transcodes to TSV **before** this document's overlay → parse →
-  patch → cross-package-processor pipeline (§7) begins. Two **implemented** constraints
-  shape how a mod uses it (detail in §7.1): compression (`.gz`) is reversible and
-  automatic, so any mod file may be gzipped transparently; transcoding is non-reversible,
-  explicitly selected via the `transcoder` Files.tsv column, and schema-typed from a
-  record `typeName` — so the structured form is available for **data files** (JSON today;
-  XML/SQLite deferred) but not for `patch`/`SchemaOverlay` files, which a mod ships as TSV
-  (optionally gzipped). The reformatter's "derived data is not baked back" rule (§7.1)
-  covers content-pipeline-derived files.
+  patch → cross-package-processor pipeline (§7) begins. As implemented (detail in §7.1):
+  compression (`.gz`) is reversible and automatic, so any mod file may be gzipped
+  transparently; transcoding is now **also reversible** (every shipped transcoder declares
+  an inverse) and explicitly selected via the `transcoder` Files.tsv column. The shipped
+  set spans JSON, EAV, XML, the `tsv:*` cell encodings and `lua:tabulua` (only SQLite
+  deferred); the `json:*` forms are schema-typed from a record `typeName` and so apply to
+  **data files** only, while the schema-free `tsv:*` / `xml:tabulua` forms read their
+  header from the file itself — so the old "structured form can't apply to
+  `patch`/`SchemaOverlay` files" rule now holds only for the JSON family, and shipping a
+  patch/overlay in a schema-free encoding is a policy choice, not an engine limitation.
+  The reformatter's "derived data is not baked back" rule (§7.1) covers
+  content-pipeline-derived files.
+
+- [archive_files.md](archive_files.md) (**landed**, Phases 1–4) makes a mod shippable as a
+  single packed `.zip` — this document's exact motivating scenario. A mod's overlay /
+  patch / data files may live inside the archive and are collected as virtual members
+  (`utilmod.zip/...`) that load like loose files; `patchOf` / `joinInto` /
+  `schemaOverlayOf` resolve their targets by basename across members, so a parent file
+  (or a patch/overlay file) packed in a zip is first-class. Caveats (§7.1): a zipped
+  member is a read-only input the reformatter won't rewrite in place, and on export the
+  archive streams verbatim with its members input-only.

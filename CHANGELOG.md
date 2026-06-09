@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.27.0] - 2026-06-09
+
+### Added
+
 - **Archive export / reformat behaviour — the packed archive is the export
   representation of its members.** On export, an archive file streams to the build
   **verbatim** (the normal passthrough-by-reference copy), so a mod that includes a
@@ -110,10 +120,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   now routes it to the id-selected `reversibleTranscode` path (re-rendering its
   cells through the transcoder's `encode`) instead of clobbering it with native
   TSV. Plain `.tsv`/`.csv` files with no `transcoder` are unaffected.
-
-### Removed
-
-### Fixed
 
 ## [0.26.0] - 2026-06-08
 
