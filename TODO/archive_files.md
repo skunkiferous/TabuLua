@@ -2,7 +2,23 @@
 
 ## Status
 
-**Phase 1 DONE (pending user commit) — registry + zip provider, no loader
+**Phase 2 DONE (pending user commit) — virtual member paths + archive-aware
+reads.** Shipped in `file_util.lua`: `resolveArchivePath(path)` (splits at the
+first archive-extension segment that `isFile()` on disk, with a non-empty member
+remainder; member normalised to forward slashes), a new `isFile` helper, and
+archive-aware `readFileBinary` / `getFileSize` (member reads extract via
+`archive_formats.read` bounded by a per-member cap; member sizes come from the
+central directory with no extraction). A per-process archive cache keyed by
+container path + (mtime, size) holds the parsed central directory (+ raw bytes
+within a 64 MiB budget), cleared by `global_reset` (newly required by file_util).
+The `filepath` parser already accepts member paths (it splits on `/` and
+validates each component — `utilmod.zip/data/Item.tsv` passes), so no parser
+change was needed. A loose-file path is byte-identical to before (ablation
+tested). Tests: `spec/file_util_archive_spec.lua` (14). Full suite 2930 green.
+Docs: CHANGELOG, MODULES. **Next: Phase 3** (`zip` into EXTENSIONS + `expandArchives`
++ end-to-end load).
+
+**Phase 1 DONE — registry + zip provider, no loader
 integration.** Shipped `archive_formats.lua`: the lazy provider registry
 (`registerProvider`/`resolve`, `formatForName`/`isArchive`, `list(format,bytes)` /
 `read(format,bytes,member,maxBytes)`) mirroring `compression`, plus the pure-Lua zip

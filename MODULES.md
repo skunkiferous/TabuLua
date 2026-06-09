@@ -25,7 +25,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [global_reset](#global_reset) | Registry for resetting all module-level mutable state | *(none)* |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
 | [extract_test_errors](#extract_test_errors) | Standalone CLI script: extracts failed-test info from TAP test output | file_util, named_logger, read_only *(standalone CLI script)* |
-| [file_util](#file_util) | File system operations and path manipulation | named_logger, read_only, table_utils |
+| [file_util](#file_util) | File system operations and path manipulation; resolves virtual archive-member paths so reads see inside containers | archive_formats, global_reset, named_logger, read_only, table_utils |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
 | [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
 | [graph_wiring](#graph_wiring) | Family detection helpers for graph-shaped record types (`detectFamily`, `detectRole`, `detectEdgeFamily`). After Phase 2b the dispatch / validation entry points moved into the type-wiring registry | read_only |
@@ -252,9 +252,9 @@ Joins related TSV files by key columns, enabling localization and data extension
 ### file_util
 **File:** [file_util.lua](file_util.lua)
 
-File system operations including path manipulation, file reading/writing, and directory management.
+File system operations including path manipulation, file reading/writing, and directory management. Also the **archive integration surface** (TODO/archive_files.md §3): `resolveArchivePath(path)` splits a path like `mods/utilmod.zip/data/Item.tsv` into the container and member when the `.zip` segment is a real file on disk, and `readFileBinary` / `getFileSize` are archive-aware — a member reads (extracts) and sizes (central-directory metadata, no extraction) exactly as if it were a loose file. Because the whole loader funnels through those two functions, this lights up the entire load path with no change to `content_pipeline`, `files_desc`, or `storeRawFile`. A small per-process archive cache (keyed by container path + mtime/size, holding the parsed central directory and — within a budget — the raw bytes) avoids re-parsing the zip per member access, and is cleared by `global_reset`. A loose-file path takes a few cheap string checks and is otherwise untouched.
 
-**Dependencies:** named_logger, read_only, table_utils
+**Dependencies:** archive_formats, global_reset, named_logger, read_only, table_utils
 
 ---
 

@@ -22,6 +22,8 @@ local read_only = require("read_only")
 local readOnly = read_only.readOnly
 local table_utils = require("table_utils")
 local setToSeq = table_utils.setToSeq
+local archive_formats = require("archive_formats")
+local global_reset = require("global_reset")
 
 --- Checks if a path is a root directory (/, \, or drive letter like C:\).
 --- @param path any The value to check
@@ -59,6 +61,19 @@ local function isDir(path)
         if lfs.attributes(path, "mode") == "directory" then
             return true
         end
+    end
+    return false
+end
+
+--- Checks if a path points to an existing regular file (not a directory).
+--- Used by resolveArchivePath to decide whether a path segment whose extension
+--- is a registered archive format is a real container file (so a directory
+--- literally named `foo.zip/` is still treated as a directory, not an archive).
+--- @param path any The value to check
+--- @return boolean True if path is an existing regular file, false otherwise
+local function isFile(path)
+    if type(path) == "string" and path ~= "" then
+        return lfs.attributes(path, "mode") == "file"
     end
     return false
 end
@@ -324,24 +339,167 @@ local function readFile(file_path)
     return content, nil
 end
 
---- Reads the entire contents of a file in binary mode ("rb").
---- Unlike readFile (text mode "r"), this performs no platform EOL translation,
---- so the bytes are returned exactly as on disk. Used by the content pipeline,
---- which normalises EOL itself in an explicit, testable stage and needs the
---- true bytes for magic-byte sniffing and binary assets (see TODO/content_pipeline.md §3.4).
+--- Reads a loose (on-disk) file in binary mode ("rb"). The plain reader, with no
+--- archive awareness — the public readFileBinary (below) layers virtual-member
+--- resolution on top of this. Kept separate so the archive layer can read a
+--- container file without recursing through its own resolution.
 --- @param file_path string The path to the file to read
 --- @return string|nil The file contents, or nil on error
 --- @return string|nil Error message if read failed, nil on success
-local function readFileBinary(file_path)
-    if type(file_path) ~= "string" then
-        return nil, "file_path not a string: "..type(file_path)
-    end
+local function readLooseBinary(file_path)
     local ok, file, err = pcall(io.open, file_path, "rb")
     if not ok then return nil, file end
     if not file then return nil, err end
     local content = file:read("*all")
     file:close()
     return content, nil
+end
+
+-- ============================================================
+-- Archive virtual-member resolution (TODO/archive_files.md §3)
+--
+-- A path like `mods/utilmod.zip/data/Item.tsv` addresses the member
+-- `data/Item.tsv` inside the container `mods/utilmod.zip`. The signal is "a path
+-- segment whose extension is a registered archive format AND which is a real file
+-- on disk." Because the whole loader funnels binary reads and size queries
+-- through readFileBinary / getFileSize, making just those two archive-aware lights
+-- up the entire pipeline (content_pipeline, files_desc, storeRawFile, …) with no
+-- further change.
+-- ============================================================
+
+-- Cap on a single extracted member's uncompressed size, to bound a zip bomb
+-- (archive_files.md §Safety). Generous enough for any legitimate data file;
+-- callers may override per read. The central-directory size is checked against
+-- this before inflating, then the actual output is backstopped.
+local ARCHIVE_MEMBER_MAX_BYTES = 256 * 1024 * 1024
+
+-- Cache whole-archive bytes only up to this size; larger archives keep just the
+-- (small) parsed central directory and re-read on demand — the "never hold a
+-- giant blob in memory" rule (archive_files.md Q6).
+local ARCHIVE_BYTES_BUDGET = 64 * 1024 * 1024
+
+-- Per-process archive cache, keyed by container path and validated by
+-- (mtime, size): { format, entries, byPath, byPathLower, size, mtime, bytes? }.
+-- Cleared by global_reset (a stale build artefact must never be served).
+local ARCHIVE_CACHE = {}
+
+--- Splits a path into (containerPath, memberPath) when it points inside an
+--- archive, else returns (path, nil) for an ordinary loose file. Splits at the
+--- FIRST path segment whose extension is a registered archive format and which is
+--- a real file on disk, when a non-empty member path follows it. The member path
+--- is returned with forward slashes (the archive-internal convention).
+--- For a non-archive path this is just a few cheap string checks — it stats the
+--- filesystem only for a segment that actually has an archive extension — so every
+--- existing loose-file read is unaffected.
+--- @param path any The path to resolve
+--- @return string container path (or the original path when not inside an archive)
+--- @return string|nil member path, or nil for a loose file
+local function resolveArchivePath(path)
+    if type(path) ~= "string" or path == "" then
+        return path, nil
+    end
+    for sep in path:gmatch("()[/\\]") do
+        local prefix = path:sub(1, sep - 1)
+        if archive_formats.isArchive(prefix) and isFile(prefix) then
+            local member = path:sub(sep + 1)
+            if member ~= "" then
+                return prefix, (member:gsub("\\", "/"))
+            end
+        end
+    end
+    return path, nil
+end
+
+-- Returns the cached archive record for `containerPath` (parsing the central
+-- directory and refreshing on an mtime/size change), or (nil, reason). Metadata
+-- only — extraction happens in readArchiveMember. Whole-archive bytes are cached
+-- alongside only when the archive is within the byte budget.
+local function getArchiveMeta(containerPath)
+    local attr = lfs.attributes(containerPath)
+    if not attr then
+        return nil, "cannot stat archive: " .. containerPath
+    end
+    local rec = ARCHIVE_CACHE[containerPath]
+    if rec and rec.mtime == attr.modification and rec.size == attr.size then
+        return rec
+    end
+    local format = archive_formats.formatForName(containerPath)
+    if not format then
+        return nil, "not a registered archive format: " .. containerPath
+    end
+    local bytes, rerr = readLooseBinary(containerPath)
+    if not bytes then
+        return nil, rerr
+    end
+    local entries, lerr = archive_formats.list(format, bytes)
+    if not entries then
+        return nil, lerr
+    end
+    local byPath, byPathLower = {}, {}
+    for _, e in ipairs(entries) do
+        byPath[e.path] = e
+        byPathLower[e.path:lower()] = e
+    end
+    rec = {
+        format = format, entries = entries, byPath = byPath, byPathLower = byPathLower,
+        mtime = attr.modification, size = attr.size,
+    }
+    if attr.size <= ARCHIVE_BYTES_BUDGET then
+        rec.bytes = bytes
+    end
+    ARCHIVE_CACHE[containerPath] = rec
+    return rec
+end
+
+-- Looks up a member entry in an archive record by path: exact (case-sensitive)
+-- match first, then a case-insensitive fallback (zip member names are
+-- case-sensitive, but the loader lowercases lookup keys — archive_files.md Q5).
+local function findMember(rec, memberPath)
+    return rec.byPath[memberPath] or rec.byPathLower[memberPath:lower()]
+end
+
+-- Extracts one member from a container, using cached bytes when available and
+-- re-reading the container otherwise. Returns (bytes) or (nil, reason).
+local function readArchiveMember(containerPath, memberPath, maxBytes)
+    local rec, err = getArchiveMeta(containerPath)
+    if not rec then
+        return nil, err
+    end
+    local entry = findMember(rec, memberPath)
+    if not entry then
+        return nil, ("member not found in archive %s: %q"):format(containerPath, memberPath)
+    end
+    local bytes = rec.bytes
+    if not bytes then
+        local b, rerr = readLooseBinary(containerPath)
+        if not b then
+            return nil, rerr
+        end
+        bytes = b
+    end
+    return archive_formats.read(rec.format, bytes, entry.path, maxBytes or ARCHIVE_MEMBER_MAX_BYTES)
+end
+
+--- Reads the entire contents of a file in binary mode ("rb"), transparently
+--- extracting a virtual archive member when the path points inside an archive
+--- (e.g. `mods/utilmod.zip/data/Item.tsv`). For a loose file this is exactly the
+--- old behaviour (byte-identical, no EOL translation) — the content pipeline
+--- normalises EOL itself and needs the true bytes for magic-byte sniffing and
+--- binary assets (see TODO/content_pipeline.md §3.4). An archive member is bounded
+--- by opt_maxBytes (default ARCHIVE_MEMBER_MAX_BYTES) to cap a zip bomb.
+--- @param file_path string The path to the file to read
+--- @param opt_maxBytes number|nil Optional per-member extraction cap (archive only)
+--- @return string|nil The file contents, or nil on error
+--- @return string|nil Error message if read failed, nil on success
+local function readFileBinary(file_path, opt_maxBytes)
+    if type(file_path) ~= "string" then
+        return nil, "file_path not a string: "..type(file_path)
+    end
+    local container, member = resolveArchivePath(file_path)
+    if member then
+        return readArchiveMember(container, member, opt_maxBytes)
+    end
+    return readLooseBinary(file_path)
 end
 
 --- Creates a small memoizing binary file reader: an object with a single
@@ -368,13 +526,27 @@ end
 
 --- Returns the size of a file in bytes, without reading its contents.
 --- Used by the content pipeline to record a passthrough binary's size in its
---- raw_files descriptor (an O(1) stat, never a full read — see §3.5).
+--- raw_files descriptor (an O(1) stat, never a full read — see §3.5). For a
+--- virtual archive member, returns the member's uncompressed size from the
+--- central directory (a metadata read, never an extraction — archive_files.md §3).
 --- @param file_path string The path to the file
 --- @return number|nil The size in bytes, or nil on error
 --- @return string|nil Error message on failure, nil on success
 local function getFileSize(file_path)
     if type(file_path) ~= "string" then
         return nil, "file_path not a string: "..type(file_path)
+    end
+    local container, member = resolveArchivePath(file_path)
+    if member then
+        local rec, err = getArchiveMeta(container)
+        if not rec then
+            return nil, err
+        end
+        local entry = findMember(rec, member)
+        if not entry then
+            return nil, ("member not found in archive %s: %q"):format(container, member)
+        end
+        return entry.size
     end
     local attr, err = lfs.attributes(file_path)
     if not attr then
@@ -876,6 +1048,13 @@ local function mkdir(path)
     return true
 end
 
+-- Clears the per-process archive cache, so a re-run never serves a stale build
+-- artefact. Registered with global_reset, mirroring the other resettable caches.
+local function resetArchiveCache()
+    for k in pairs(ARCHIVE_CACHE) do ARCHIVE_CACHE[k] = nil end
+end
+global_reset.register(resetArchiveCache)
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -895,8 +1074,10 @@ local API = {
     getVersion = getVersion,
     hasExtension = hasExtension,
     readFileBinary = readFileBinary,
+    resolveArchivePath = resolveArchivePath,
     isAbsolutePath = isAbsolutePath,
     isDir = isDir,
+    isFile = isFile,
     isRootDir = isRootDir,
     isSamePath = isSamePath,
     mkdir = mkdir,

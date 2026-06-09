@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Archive members are now readable as virtual files (`file_util` archive
+  awareness).** A path like `mods/utilmod.zip/data/Item.tsv` transparently reads
+  the member `data/Item.tsv` inside the container `mods/utilmod.zip`. The new
+  `file_util.resolveArchivePath` splits such a path at the first segment whose
+  extension is a registered archive format **and** which is a real file on disk
+  (so a directory literally named `foo.zip/` is still a directory), and
+  `readFileBinary` / `getFileSize` became archive-aware: a member is read by
+  extracting it (bounded by a per-member size cap to bound a zip bomb) and sized
+  from the central directory (metadata only, never an extraction). Because the
+  loader funnels all binary reads and size queries through exactly these two
+  functions, this lights up the whole load path with no change to
+  `content_pipeline`, `files_desc`, or `storeRawFile`. A loose-file path is
+  untouched (a few cheap string checks, no extra `stat`). A small per-process
+  archive cache (container path + mtime/size → parsed central directory, and the
+  raw bytes within a budget) avoids re-parsing the zip on every member access and
+  is cleared by `global_reset`. Not yet wired into collection — a `Files.tsv`
+  reference to a member resolves once collection expands archives (next phase).
+  See `TODO/archive_files.md`.
+
 - **Archive / data-set format registry (`archive_formats.lua`) — reading the
   member files inside a container archive (zip first).** A "game mod" is often
   distributed as a single packed `.zip`, and a bigger mod may include that zip as
