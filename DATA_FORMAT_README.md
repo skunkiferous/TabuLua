@@ -1241,6 +1241,7 @@ There are two ways a file is routed through a transcoder:
 | `tsv:lua` | `.tsv` | explicit | yes² | the file's own header |
 | `tsv:json-typed` | `.tsv` | explicit | yes² | the file's own header |
 | `tsv:json-natural` | `.tsv` | explicit | yes² | the file's own header |
+| `lua:tabulua` | `.lua` | explicit | yes | the file's own header (row 1) |
 
 > A transcode stage may declare an **input-extension guard**: an explicitly
 > selected transcoder verifies the file actually has the expected extension and
@@ -1254,9 +1255,9 @@ on-disk source back in its own format from the reformatted wide table; a
 **non-reversible** one leaves the source untouched (the derived TSV is not the
 source of truth, so it is never written back over the original).
 
-- `.eav`, `.xml` (`xml:tabulua`), `.tsv.gz` / `.csv.gz`, the `json:*`, and the
-  `tsv:*` transcoders are reversible — the reformatter rewrites the source in its
-  own format from the reformatted wide table.
+- `.eav`, `.xml` (`xml:tabulua`), `.tsv.gz` / `.csv.gz`, the `json:*`, the
+  `tsv:*`, and `lua:tabulua` transcoders are reversible — the reformatter rewrites
+  the source in its own format from the reformatted wide table.
 - ² The `tsv:*` files share the `.tsv` extension with native data, so the
   reformatter routes a `transcoder`-assigned `.tsv` to the transcoder's `encode`
   (re-rendering each cell as a Lua literal / typed-JSON / natural-JSON value)
@@ -1441,6 +1442,36 @@ reformatter rewrites the source in its chosen encoding rather than as native TSV
 A Lua application can therefore export its data with `--file=tsv --data=lua` and
 read it straight back; the typed-JSON variant is value-lossless, while the
 natural-JSON variant carries the usual conventional-JSON caveats.
+
+### Lua file format (`lua:tabulua`)
+
+The `--file=lua` export is a single Lua table — `return { <header>, <row>, … }`, a
+sequence of sequences whose first element is the `name:type` header and whose later
+elements are rows of native Lua values:
+
+```lua
+return {
+{"name:identifier","n:integer","loot:{name}"},
+{"sword",100,{"gem","coin"}},
+{"shield",50,{"wood"}}
+}
+```
+
+The `lua:tabulua` transcoder reads it back as a wide, typed table. For a Lua
+application this is the natural round-trip pair: it can read its own exported data
+with the native `load`, no TSV reader required, and the engine reads the same file
+with this stage. Two things make it distinct:
+
+- **Id-only, never auto-fired.** A `.lua` is a **code library** to the loader by
+  default (manifest bootstrap / `loadCodeLibrary`). A *data* `.lua` is
+  distinguished solely by `transcoder=lua:tabulua` in `Files.tsv`; without it, a
+  `.lua` stays a code library exactly as before. (`inputExtensions={"lua"}` is a
+  guard, not a matcher.)
+- **Executed under a sandbox + quota.** Unlike the parse-only transcoders, this one
+  *runs* the file (it is Lua source). It executes in the same restricted sandbox
+  with an instruction quota that code libraries use, so a data file that loops
+  instead of returning a literal table aborts rather than hanging the load. It is
+  **schema-free** (row 1 carries the column types) and **reversible**.
 
 ### Compressed data files (gzip)
 

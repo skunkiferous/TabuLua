@@ -2,8 +2,33 @@
 
 ## Status
 
-**Phase 1 DONE (the three `tsv:*` transcoders, *reversible*); Phase 2
-(`lua:tabulua`) not started.** Phase 1 shipped `tsv_transcoders.lua` (forward
+**DONE — Phases 1 & 2 shipped (all four transcoders, reversible).** Phase 2
+shipped `lua_transcoder.lua` (`luaToTSV` + reversible `tsvToLua`) and registered
+the `lua:tabulua` stage in `builtin_content_stages.lua` (id-only,
+`inputExtensions={"lua"}`, `reversible=true`). The `.lua` data file is *executed*
+(it is `return { … }` source), so unlike the parse-only transcoders it runs under
+`sandbox.protect` + a size-scaled instruction quota + `sandbox_env.new()` — the same
+bounded-execution machinery `manifest_info.loadCodeLibrary` uses — so a hostile data
+file that loops aborts instead of hanging. **No manifest-loader change was needed:**
+the data-vs-code-library gate ([manifest_loader.lua:477-487](../manifest_loader.lua#L477-L487))
+already checks `lcFn2Transcoder[key]` in its or-chain, so a `transcoder=lua:tabulua`
+`.lua` routes to `processSingleTSVFile`; a `.lua` without a transcoder stays a code
+library. And **no reformatter change was needed either:** the reformatter routes
+`.tsv`/`.csv` files down its native-TSV rewrite branch and everything else into the
+reversible-transcoder branch, so a `.lua` (which is neither) falls straight through
+to the latter and is round-tripped via `lua:tabulua`'s `encode` for free — unlike
+`tsv:*`, which shares the `.tsv` extension and so needed a guard to keep it off the
+native-rewrite branch (which would otherwise overwrite it with plain TSV). Tests:
+`spec/lua_transcoder_spec.lua` (unit; incl. the quota-abort and non-table cases) +
+`spec/lua_transcode_integration_spec.lua` (load-as-data routing, fn2Transcoder
+threading, reformatter round-trip). Docs: CHANGELOG, DATA_FORMAT_README, MODULES.
+Full suite green (2894). **Nothing left in scope** (`sql`/`mpk` are explicitly
+out-of-scope, see Scope).
+
+---
+
+**Phase 1 (the three `tsv:*` transcoders, *reversible*).** Shipped
+`tsv_transcoders.lua` (forward
 `luaToTSV`/`jsonTypedToTSV`/`jsonNaturalToTSV` + reverse `tsvToLua`/`tsvToJsonTyped`/
 `tsvToJsonNatural`), registered the `tsv:lua` / `tsv:json-typed` /
 `tsv:json-natural` stages in `builtin_content_stages.lua` (id-only,
@@ -42,7 +67,7 @@ each export, as an *input*:
 | `tsv` / `lua` | ✅ via `tsv:lua` (Phase 1) — cells are Lua literals with `{ }`, decoded back to native |
 | `tsv` / `json-typed` | ✅ via `tsv:json-typed` (Phase 1) |
 | `tsv` / `json-natural` | ✅ via `tsv:json-natural` (Phase 1) |
-| `lua` / `lua` | ❌ `.lua` is treated as a code library, never loaded as data (Phase 2) |
+| `lua` / `lua` | ✅ via `lua:tabulua` (Phase 2) — id-only, so a data `.lua` is opted in explicitly; without it a `.lua` stays a code library |
 | `sql` / * | ❌ **won't support** (see Scope) |
 | `mpk` / `mpk` | ❌ **won't support** (see Scope) |
 

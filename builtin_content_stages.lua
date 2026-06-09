@@ -34,6 +34,11 @@ local xml_transcoder = require("xml_transcoder")
 -- so never auto-fire), schema-free, and reversible (see tsv_transcoders.lua).
 local tsv_transcoders = require("tsv_transcoders")
 
+-- Lua-file (.lua, `return { <header>, <row>, … }`) transcoder. Id-selected: a .lua
+-- is a code library by default, so a data .lua must be opted in explicitly with
+-- transcoder=lua:tabulua — it never auto-fires (see lua_transcoder.lua).
+local lua_transcoder = require("lua_transcoder")
+
 -- Codec registry. The decode stage calls compression.decompress("gzip", …)
 -- lazily, so the libdeflate rock is only loaded if a .gz is actually processed
 -- (see compression.lua). Requiring this module has no side effects and pulls in
@@ -292,6 +297,25 @@ content_pipeline.register(NAME, {
     reversible = true,
     encode = tsv_transcoders.tsvToJsonNatural,
     transform = tsv_transcoders.jsonNaturalToTSV,
+})
+
+-- Lua-file transcoder (TODO/export_format_reimport.md, Phase 2). The .lua export is
+-- a single `return { <header>, <row>, … }` table; id-only because a .lua is a CODE
+-- LIBRARY to the loader by default — a data .lua must be opted in with
+-- transcoder=lua:tabulua, so it never auto-fires. inputExtensions={"lua"} is the
+-- guard. Reversible: the reformatter rewrites the .lua source from the reformatted
+-- wide TSV via `encode`. A .lua misses the reformatter's native-TSV rewrite branch
+-- (unlike the tsv:* stages), so no reformatter change is needed here — the
+-- id-selected reversibleTranscode path round-trips it like .xml/.eav. The forward
+-- transform is schema-free — the header (row 1) carries the column types.
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "lua:tabulua",
+    inputExtensions = {"lua"},
+    outputKind = "text",
+    reversible = true,
+    encode = lua_transcoder.tsvToLua,
+    transform = lua_transcoder.luaToTSV,
 })
 
 -- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md

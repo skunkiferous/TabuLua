@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   `encode`, so the reformatter rewrites the source in its chosen cell encoding).
   See `DATA_FORMAT_README.md` and `TODO/export_format_reimport.md`.
 
+- **Re-importing the `.lua` export — the `lua:tabulua` input transcoder.** A
+  `--file=lua` export is a single `return { <header>, <row>, … }` table; the new
+  `lua:tabulua` content-pipeline stage (`lua_transcoder.lua`) reads it back as a
+  wide, typed table — the natural round-trip pair for a Lua application, which can
+  read its own exported data with the native `load`. It is **id-only** (a `.lua` is
+  a code library to the loader by default, so a data `.lua` must be opted in with
+  `transcoder=lua:tabulua` — it never auto-fires), **schema-free** (row 1 is the
+  `name:type` header), and **reversible**. The file is executed under the same
+  sandbox + instruction-quota machinery code libraries use (a hostile data file
+  that loops aborts instead of hanging the load).
+
 ### Changed
 
 - **Reformatter: a `transcoder`-assigned `.tsv`/`.csv` is no longer rewritten as

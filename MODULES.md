@@ -7,7 +7,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
-| [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV + XML + TSV-cell transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only, tsv_transcoders, xml_transcoder |
+| [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV + XML + TSV-cell + Lua-file transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, lua_transcoder, read_only, tsv_transcoders, xml_transcoder |
 | [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
 | [cog_discovery](#cog_discovery) | Auto-scans package roots for COG-eligible doc/template files (extension + `needsCog`-gated), with `.cogignore` opt-out | content_pipeline, file_util, lua_cog, read_only |
 | [comparators](#comparators) | Value comparison and equality functions | read_only, sparse_sequence, table_utils |
@@ -31,6 +31,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [json_transcoders](#json_transcoders) | Content-pipeline JSON↔TSV transcoders in three layouts (`json:objects` / `json:rows` / `json:columns`) × natural/`:typed` codecs, id-selected via the `Files.tsv` `transcoder` column; **reversible** so JSON inputs round-trip in the reformatter | deserialization, error_reporting, parsers, raw_tsv, read_only, serialization, tsv_model |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
+| [lua_transcoder](#lua_transcoder) | Content-pipeline transcoder reading/writing TabuLua's `--file=lua` export (`return { <header>, <row>, … }`) as a wide TSV; id-selected (`lua:tabulua`), schema-free, reversible, executed under the sandbox + instruction quota | error_reporting, parsers, raw_tsv, read_only, sandbox, sandbox_env, serialization, string_utils, tsv_model |
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
@@ -89,7 +90,7 @@ Pure-Lua RFC 4648 Base64 encode/decode. Provides `encode()`, `decode()`, and `is
 
 Seeds the [content_pipeline](#content_pipeline) registry with the built-in content stages (the content-pipeline analog of [builtin_wiring](#builtin_wiring) for the type-wiring registry). Registers: a core `normalize`-phase EOL-normalise stage; the `macro`-phase COG stage (`transform` = `lua_cog.processContentBV`, `sinkTransform` = `lua_cog.stripCog`); a `decode`-phase gzip stage (delegating to [compression](#compression), reversible); and the `transcode`-phase stages — the three JSON layouts from [json_transcoders](#json_transcoders) (id-selected, with an `inputExtensions={"json"}` guard), the auto-matched, reversible `.eav` stage from [eav_transcoder](#eav_transcoder), and the id-selected (`xml:tabulua`), reversible XML stage from [xml_transcoder](#xml_transcoder) (`inputExtensions={"xml"}`). Also declares the COG-scan-eligible extension set. Snapshots the registry and restores it via `global_reset`.
 
-**Dependencies:** compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, read_only, xml_transcoder
+**Dependencies:** compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, lua_transcoder, read_only, tsv_transcoders, xml_transcoder
 
 ---
 
@@ -308,6 +309,15 @@ Content-pipeline JSON↔TSV transcoders. Several JSON layouts encode the same ta
 Cogwheel-style code generation and templating system. Processes `###[[[...###]]]` blocks for dynamic content generation.
 
 **Dependencies:** file_util, named_logger, read_only, string_utils
+
+---
+
+### lua_transcoder
+**File:** [lua_transcoder.lua](lua_transcoder.lua)
+
+Content-pipeline `transcode` stage that reads TabuLua's `--file=lua` export — a single `return { <header>, <row>, … }` table (sequence of sequences, row 1 = `name:type` header) — back in as a wide, typed TSV, and re-encodes a wide TSV to that Lua document (the inverse of `exporter.exportLua`). Registered as `id="lua:tabulua"` with **no `extensions`**: a `.lua` is a **code library** to the loader by default, so a data `.lua` must be opted in with a `Files.tsv` `transcoder` column (`inputExtensions={"lua"}` is a guard, not a matcher); it never auto-fires. Unlike the parse-only transcoders it **executes** the file — under `sandbox.protect` with a size-scaled instruction quota and a [sandbox_env](#sandbox_env) env, exactly like `manifest_info.loadCodeLibrary`, so a hostile data file that loops aborts instead of hanging the load. It is **schema-free** (column names/types come from row 1, not a `typeName`): `luaToTSV` (forward) re-serialises each cell to the native in-cell form through the column's own [parsers](#parsers) parser; `tsvToLua` (reverse, the reversible `encode`) re-parses the wide TSV with [tsv_model](#tsv_model) and re-emits each cell via [serialization](#serialization)`.serialize`. A `.lua` misses the reformatter's native-TSV rewrite branch, so the reformatter round-trips it through the id-selected `reversibleTranscode` path with no reformatter change.
+
+**Dependencies:** error_reporting, parsers, raw_tsv, read_only, sandbox, sandbox_env, serialization, string_utils, tsv_model
 
 ---
 
@@ -740,12 +750,13 @@ raw_tsv
         └── eav_transcoder
     └── json_transcoders
     └── tsv_transcoders
+    └── lua_transcoder
     └── tsv_diff
     └── ollama_batch
 
 content_pipeline (text-stage registry)
     └── cog_discovery
-    └── builtin_content_stages   (also ← compression, json_transcoders, eav_transcoder, tsv_transcoders, xml_transcoder)
+    └── builtin_content_stages   (also ← compression, json_transcoders, eav_transcoder, tsv_transcoders, lua_transcoder, xml_transcoder)
         └── doc_generator
 
 compression (lazy codec registry, standalone)
