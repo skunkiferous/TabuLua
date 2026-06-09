@@ -9,7 +9,28 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Re-importing TabuLua's own TSV export variants — three new `tsv:*` input
+  transcoders.** The reformatter can *write* a wide TSV whose cells are Lua
+  literals, typed JSON or natural JSON (`--file=tsv --data=lua|json-typed|json-natural`),
+  but until now those files could not be *read back*. New content-pipeline
+  `transcode` stages `tsv:lua`, `tsv:json-typed` and `tsv:json-natural`
+  (`tsv_transcoders.lua`) close that gap: they share the native TSV skeleton (same
+  `name:type` header) and decode each cell from its alternate encoding back to the
+  native value via the existing deserializers, emitting the wide TSV the loader
+  expects. They are **id-selected** via the `Files.tsv` `transcoder` column (never
+  auto-fire — they share the `.tsv` extension with native data), **schema-free**
+  (types come from the file's own header), and **reversible** (each declares an
+  `encode`, so the reformatter rewrites the source in its chosen cell encoding).
+  See `DATA_FORMAT_README.md` and `TODO/export_format_reimport.md`.
+
 ### Changed
+
+- **Reformatter: a `transcoder`-assigned `.tsv`/`.csv` is no longer rewritten as
+  native TSV.** Such a file's cells are in an alternate encoding (the new `tsv:*`
+  transcoders) and `raw_files` holds only the derived wide TSV, so the reformatter
+  now routes it to the id-selected `reversibleTranscode` path (re-rendering its
+  cells through the transcoder's `encode`) instead of clobbering it with native
+  TSV. Plain `.tsv`/`.csv` files with no `transcoder` are unaffected.
 
 ### Removed
 

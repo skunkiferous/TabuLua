@@ -2,7 +2,24 @@
 
 ## Status
 
-**Planned — not started.** A short follow-up carved out of the
+**Phase 1 DONE (the three `tsv:*` transcoders, *reversible*); Phase 2
+(`lua:tabulua`) not started.** Phase 1 shipped `tsv_transcoders.lua` (forward
+`luaToTSV`/`jsonTypedToTSV`/`jsonNaturalToTSV` + reverse `tsvToLua`/`tsvToJsonTyped`/
+`tsvToJsonNatural`), registered the `tsv:lua` / `tsv:json-typed` /
+`tsv:json-natural` stages in `builtin_content_stages.lua` (id-only,
+`inputExtensions={"tsv"}`, `reversible=true`), and added the one engine change the
+shared `.tsv` extension required: the reformatter now routes a
+`transcoder`-assigned `.tsv`/`.csv` to the id-selected `reversibleTranscode` path
+instead of the native rewrite (so it is round-tripped through the transcoder's
+`encode`, not clobbered with native TSV). This folded the optional Phase 3
+(reversibility) into Phase 1 because that reformatter guard was needed regardless
+and made the round-trip free. Tests: `spec/tsv_transcoder_spec.lua` (unit forward /
+reverse / round-trip) + `spec/tsv_transcode_integration_spec.lua` (load, fn2Transcoder
+threading, reformatter round-trip). Docs: CHANGELOG, DATA_FORMAT_README, MODULES.
+Full suite green. **Remaining: Phase 2 — `lua:tabulua` (the `.lua` file format),
+which needs the manifest-loader data-vs-code-library routing work described below.**
+
+A short follow-up carved out of the
 [archive_files.md](archive_files.md) review (2026-06): an audit of the
 [reformatter](../reformatter.lua) export matrix showed that several formats TabuLua
 *writes* cannot be *read back* by the production loader. This doc closes the
@@ -22,10 +39,10 @@ each export, as an *input*:
 | `tsv` / *(native, no `--data`)* | ✅ the canonical input format |
 | `json` / `json-typed`, `json-natural` | ✅ via `json:*` ([json_input_round_trip.md](json_input_round_trip.md)) |
 | `xml` / `xml` | ✅ via `xml:tabulua` ([xml_input_round_trip.md](xml_input_round_trip.md)) |
-| `tsv` / `lua` | ❌ cells are Lua literals **with `{ }`**; native parse expects brace-less |
-| `tsv` / `json-typed` | ❌ cells are typed-JSON, not native |
-| `tsv` / `json-natural` | ❌ cells are natural-JSON, not native |
-| `lua` / `lua` | ❌ `.lua` is treated as a code library, never loaded as data |
+| `tsv` / `lua` | ✅ via `tsv:lua` (Phase 1) — cells are Lua literals with `{ }`, decoded back to native |
+| `tsv` / `json-typed` | ✅ via `tsv:json-typed` (Phase 1) |
+| `tsv` / `json-natural` | ✅ via `tsv:json-natural` (Phase 1) |
+| `lua` / `lua` | ❌ `.lua` is treated as a code library, never loaded as data (Phase 2) |
 | `sql` / * | ❌ **won't support** (see Scope) |
 | `mpk` / `mpk` | ❌ **won't support** (see Scope) |
 

@@ -410,7 +410,16 @@ local function reformat(tsv_files, raw_files, badVal, fn2Transcoder)
             goto continue
         end
         local new_content = tostring(tsv)
-        if hasExtension(file_name, "tsv") or hasExtension(file_name, "csv") then
+        -- A .tsv/.csv with a Files.tsv `transcoder` id (e.g. tsv:lua) is NOT a
+        -- native TSV source: its on-disk cells are in an alternate encoding (Lua /
+        -- typed-JSON / natural-JSON) and raw_files holds only the derived wide TSV.
+        -- Writing the reformatted native TSV here would silently clobber the chosen
+        -- encoding, so route it to the id-selected reversibleTranscode branch below
+        -- (which round-trips it through the stage's `encode`, or leaves it untouched
+        -- if the stage is not reversible). TODO/export_format_reimport.md.
+        local nativeTSV = (hasExtension(file_name, "tsv") or hasExtension(file_name, "csv"))
+            and not fn2Transcoder[file_name]
+        if nativeTSV then
             -- Manifests are reformatted too: user-defined fields are preserved in
             -- the tsv_model, and __comment placeholders restore comment lines.
             if new_content ~= old_content then

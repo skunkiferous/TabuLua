@@ -29,6 +29,11 @@ local eav_transcoder = require("eav_transcoder")
 -- stray .xml), schema-free, namespaced, and reversible (see xml_transcoder.lua).
 local xml_transcoder = require("xml_transcoder")
 
+-- TSV-with-alternate-cell-encoding transcoders (tsv:lua / tsv:json-typed /
+-- tsv:json-natural). Id-selected (they share the .tsv extension with native data,
+-- so never auto-fire), schema-free, and reversible (see tsv_transcoders.lua).
+local tsv_transcoders = require("tsv_transcoders")
+
 -- Codec registry. The decode stage calls compression.decompress("gzip", …)
 -- lazily, so the libdeflate rock is only loaded if a .gz is actually processed
 -- (see compression.lua). Requiring this module has no side effects and pulls in
@@ -246,6 +251,47 @@ content_pipeline.register(NAME, {
     reversible = true,
     encode = xml_transcoder.tsvToXml,
     transform = xml_transcoder.xmlToTSV,
+})
+
+-- TSV-with-alternate-cell-encoding transcoders (TODO/export_format_reimport.md).
+-- Like the JSON layouts they are id-only (no `extensions`): they share the .tsv
+-- extension with native data files, so auto-matching would be ambiguous and
+-- dangerous — the author opts a specific file in with transcoder=tsv:lua /
+-- tsv:json-typed / tsv:json-natural in Files.tsv. inputExtensions={"tsv"} is the
+-- guard (catches a mis-pointed transcoder column), NOT a matcher. They are
+-- reversible: the reformatter rewrites the source from the reformatted wide TSV via
+-- `encode`. Because these share the .tsv extension, the reformatter routes a
+-- transcoder-assigned .tsv to the id-selected reversibleTranscode path rather than
+-- down the native-TSV rewrite (reformatter.lua). The forward transform is
+-- schema-free — column names/types come from the file's own header.
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "tsv:lua",
+    inputExtensions = {"tsv"},
+    outputKind = "text",
+    reversible = true,
+    encode = tsv_transcoders.tsvToLua,
+    transform = tsv_transcoders.luaToTSV,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "tsv:json-typed",
+    inputExtensions = {"tsv"},
+    outputKind = "text",
+    reversible = true,
+    encode = tsv_transcoders.tsvToJsonTyped,
+    transform = tsv_transcoders.jsonTypedToTSV,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "tsv:json-natural",
+    inputExtensions = {"tsv"},
+    outputKind = "text",
+    reversible = true,
+    encode = tsv_transcoders.tsvToJsonNatural,
+    transform = tsv_transcoders.jsonNaturalToTSV,
 })
 
 -- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md

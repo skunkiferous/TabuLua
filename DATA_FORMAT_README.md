@@ -1238,6 +1238,9 @@ There are two ways a file is routed through a transcoder:
 | `json:rows:typed` | `.json` | explicit | yes | the file's `typeName` schema |
 | `json:columns:typed` | `.json` | explicit | yes | the file's `typeName` schema |
 | `xml:tabulua` | `.xml` | explicit | yes | the file's own `<header>` |
+| `tsv:lua` | `.tsv` | explicit | yes² | the file's own header |
+| `tsv:json-typed` | `.tsv` | explicit | yes² | the file's own header |
+| `tsv:json-natural` | `.tsv` | explicit | yes² | the file's own header |
 
 > A transcode stage may declare an **input-extension guard**: an explicitly
 > selected transcoder verifies the file actually has the expected extension and
@@ -1251,9 +1254,16 @@ on-disk source back in its own format from the reformatted wide table; a
 **non-reversible** one leaves the source untouched (the derived TSV is not the
 source of truth, so it is never written back over the original).
 
-- `.eav`, `.xml` (`xml:tabulua`), `.tsv.gz` / `.csv.gz`, and the `json:*`
-  transcoders are reversible — the reformatter rewrites the source in its own
-  format from the reformatted wide table.
+- `.eav`, `.xml` (`xml:tabulua`), `.tsv.gz` / `.csv.gz`, the `json:*`, and the
+  `tsv:*` transcoders are reversible — the reformatter rewrites the source in its
+  own format from the reformatted wide table.
+- ² The `tsv:*` files share the `.tsv` extension with native data, so the
+  reformatter routes a `transcoder`-assigned `.tsv` to the transcoder's `encode`
+  (re-rendering each cell as a Lua literal / typed-JSON / natural-JSON value)
+  rather than down the native-TSV rewrite, which would otherwise silently strip
+  the chosen cell encoding. Like JSON, the round-trip is **normalizing** (the cell
+  values are canonicalised); `tsv:json-natural` carries the same conventional-JSON
+  caveats as the `json-natural` layouts.
 - ¹ The JSON round-trip is **normalizing**, not byte-identical: the rewritten
   JSON is canonical (object keys in the schema's header order, canonical number
   and whitespace formatting) and parses back to the same data. The `:typed`
@@ -1406,6 +1416,31 @@ the reformatter from the reformatted wide table — a true XML ⇄ TSV round-tri
 > `urn:tabulua:table:1` namespace on the root `<file>` element. XML files
 > exported by older versions (bare `<file>`) must be re-exported before they can
 > be read back via `xml:tabulua`.
+
+### TSV with alternate cell encodings (`tsv:lua` / `tsv:json-typed` / `tsv:json-natural`)
+
+These read back the three TSV export variants whose **container** is the ordinary
+wide TSV — same `name:type` header, same columns and rows — but whose **cell
+values** are rendered in an alternate codec instead of TabuLua's native brace-less
+form:
+
+| `transcoder` | cell value example |
+|--------------|--------------------|
+| `tsv:lua` | `{attack=80,defense=40}` (a Lua literal) |
+| `tsv:json-typed` | `[0,["attack",{"int":"80"}],["defense",{"int":"40"}]]` (self-describing typed JSON) |
+| `tsv:json-natural` | `{"attack":80,"defense":40}` (conventional JSON) |
+
+In every variant the header cells are themselves serialised (`"name:identifier"`),
+so they are read back through the same codec. Because they share the `.tsv`
+extension with native data files, they are **id-only** — never auto-fire — and the
+author opts a specific file in with `transcoder=tsv:lua` (etc.) in `Files.tsv`.
+Like XML they are **schema-free**: column names and types come from the file's own
+header, not a `typeName`. They are reversible (see footnote ² above) — the
+reformatter rewrites the source in its chosen encoding rather than as native TSV.
+
+A Lua application can therefore export its data with `--file=tsv --data=lua` and
+read it straight back; the typed-JSON variant is value-lossless, while the
+natural-JSON variant carries the usual conventional-JSON caveats.
 
 ### Compressed data files (gzip)
 
