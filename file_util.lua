@@ -1099,12 +1099,17 @@ local function mkdir(path)
     return true
 end
 
--- Clears the per-process archive cache, so a re-run never serves a stale build
--- artefact. Registered with global_reset, mirroring the other resettable caches.
-local function resetArchiveCache()
+-- Clears the per-process archive cache. Registered with global_reset (mirroring
+-- the other resettable caches), AND exposed publicly as clearArchiveCache so a
+-- caller that knows a load run is finished can drop the cached archive bytes
+-- promptly — bounding retention to a single run rather than holding every archive
+-- ever opened for the life of the process (archive_files.md Q6). The cache is only
+-- ever populated during a load (member reads), so the loader brackets each run
+-- with a clear; export/reformat never touch it.
+local function clearArchiveCache()
     for k in pairs(ARCHIVE_CACHE) do ARCHIVE_CACHE[k] = nil end
 end
-global_reset.register(resetArchiveCache)
+global_reset.register(clearArchiveCache)
 
 -- Provides a tostring() function for the API
 local function apiToString()
@@ -1114,6 +1119,7 @@ end
 -- The public, versioned, API of this module
 local API = {
     changeExtension = changeExtension,
+    clearArchiveCache = clearArchiveCache,
     collectFiles = collectFiles,
     expandArchives = expandArchives,
     copyFileStreamed = copyFileStreamed,

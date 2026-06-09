@@ -942,6 +942,11 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     badVal = initializeBadVal(badVal)
     -- Reset file-registered types tracking for this processing run
     fileRegisteredTypes = {}
+    -- The archive cache only earns its keep WITHIN a load (a zip's N members would
+    -- otherwise each re-parse the whole archive). Clear it at the start of each run
+    -- so cached bytes never outlive the load that populated them, bounding memory to
+    -- one run's archives without re-reading anything mid-load (file_util.lua Q6).
+    file_util.clearArchiveCache()
 
     local file2dir = {}
     local files = collectAndLogFiles(directories, file2dir, opt_excludeDirs)
