@@ -188,13 +188,54 @@ local function newHeaderColumn(params, col_idx, column)
             logger:debug(params.source_name .. "." .. cn ..": Defaulting to string")
         end
     end
-    local col_type = col_type_spec
+
+    -- Tier-A0 schema overlay (TODO/mod_overrides.md §3): a mod may declare a
+    -- SchemaOverlay file targeting this file. `widenTo` makes this column parse
+    -- against a strictly wider type, so a value the declared type would reject
+    -- still parses. Only loosening is allowed: narrowing (or an unknown /
+    -- expression type) is rejected, an identical type is a no-op warning.
+    --
+    -- Crucially, the overlay is a *load-time view*, never baked into the source:
+    -- `type_spec` / `default_expr` keep the file's DECLARED values (so the
+    -- reformatter round-trips the parent file unchanged — §3.6 / §7.1), while
+    -- the effective widened type drives `type` / `parser` and the effective
+    -- default drives cell parsing via `effective_default_expr`.
+    local overlay = params.schema_overlay and params.schema_overlay[col_name]
+    local effective_spec = col_type_spec
+    if overlay and overlay.widenTo and overlay.widenTo ~= "" then
+        local widenTo = overlay.widenTo
+        if col_type_spec:sub(1, 1) == '=' then
+            badVal(widenTo, "schema overlay: cannot widen column '" .. cn
+                .. "' whose type is an expression")
+        elseif widenTo == col_type_spec then
+            logger:warn(params.source_name .. "." .. cn
+                .. ": schema overlay widenTo '" .. widenTo
+                .. "' is identical to the column type (no-op)")
+        elseif not parsers.parseType(error_reporting.nullBadVal, widenTo, false) then
+            badVal(widenTo, "schema overlay: widenTo '" .. widenTo
+                .. "' on column '" .. cn .. "' is not a valid type")
+        else
+            local ok, wider = pcall(parsers.extendsOrRestrict, col_type_spec, widenTo)
+            if ok and wider then
+                logger:info(params.source_name .. "." .. cn
+                    .. ": schema overlay widened '" .. col_type_spec
+                    .. "' to '" .. widenTo .. "'")
+                effective_spec = widenTo
+            else
+                badVal(widenTo, "schema overlay: widenTo '" .. widenTo
+                    .. "' is not wider than column '" .. cn .. "' type '"
+                    .. col_type_spec .. "' (narrowing is not allowed)")
+            end
+        end
+    end
+
+    local col_type = effective_spec
     if params.expr_eval then
-        local ct, problem = params.expr_eval(params.header, col_type_spec)
+        local ct, problem = params.expr_eval(params.header, effective_spec)
         if not ct then
-            badVal(col_type_spec, "Cannot evaluate column type: " .. problem)
+            badVal(effective_spec, "Cannot evaluate column type: " .. problem)
         elseif type(ct) ~= "string" then
-            badVal(col_type_spec, "Column type was not evaluated to a string, but " .. type(ct))
+            badVal(effective_spec, "Column type was not evaluated to a string, but " .. type(ct))
         else
             col_type = ct
         end
@@ -205,6 +246,9 @@ local function newHeaderColumn(params, col_idx, column)
     -- it is more efficient, than repeatedly creating temporary read-only copies.
     result.name = col_name
     result.idx = col_idx
+    -- type_spec is the DECLARED spec (drives serialization / record registration);
+    -- type / parser are the EFFECTIVE values (drive parsing). With no overlay the
+    -- two coincide, so behaviour is unchanged.
     result.type_spec = col_type_spec
     result.type = col_type
     -- result.parser will be nil, if col_type is not a valid parser type
@@ -217,8 +261,15 @@ local function newHeaderColumn(params, col_idx, column)
             default_expr = parent_col.default_expr
         end
     end
-    -- default_expr is nil if no default value was specified (and not inherited)
+    -- default_expr is nil if no default value was specified (and not inherited).
+    -- It is the DECLARED default (serialized verbatim, never overwritten by an
+    -- overlay). A tier-A0 `newDefault` is recorded separately as the effective
+    -- default used for empty cells (see processCell / the missing-column path);
+    -- nil when no overlay overrides it.
     result.default_expr = default_expr
+    if overlay and overlay.newDefault ~= nil and overlay.newDefault ~= "" then
+        result.effective_default_expr = overlay.newDefault
+    end
     -- valid_name is true if the column name is a valid identifier (or exploded path)
     result.valid_name = valid_name
     -- is_exploded is true if the column name contains dots (e.g., "location.level")
@@ -274,11 +325,15 @@ local function processCell(expr_eval, badVal)
         else
             badVal.col_types[#badVal.col_types] = col.type_spec
         end
-        -- Apply default value if cell is empty and column has a default expression
+        -- Apply default value if cell is empty and column has a default expression.
+        -- A tier-A0 schema overlay's newDefault (effective_default_expr) takes
+        -- precedence over the declared default; with no overlay this is nil and
+        -- the declared default_expr is used unchanged.
         local original_value = value
         local used_default = false
-        if (value == nil or value == "") and col.default_expr then
-            value = col.default_expr
+        local default_expr = col.effective_default_expr or col.default_expr
+        if (value == nil or value == "") and default_expr then
+            value = default_expr
             used_default = true
         end
         local evaluated = value
@@ -355,7 +410,7 @@ end
 -- table_subscribers allows defining "callable" subscribers for specific columns.
 -- The parser returns the parsed-value or nil if the value cannot be parsed.
 local function newHeader(options_extractor, expr_eval, parser_finder, source_name, header_row,
-    badVal, dataset, table_subscribers, parent_header)
+    badVal, dataset, table_subscribers, parent_header, schema_overlay)
     assert(type(badVal.col_types) == "table", "badVal.col_types: "..tostring(badVal.col_types))
     assert(#badVal.col_types == 1, "#badVal.col_types: "..tostring(#badVal.col_types))
     assert(badVal.col_types[1] == '', "badVal.col_types[1]: "..tostring(badVal.col_types[1]))
@@ -397,7 +452,7 @@ local function newHeader(options_extractor, expr_eval, parser_finder, source_nam
     local params = {options_extractor=options_extractor, expr_eval=expr_eval, header=header,
         parser_finder=parser_finder, source_name=source_name, badVal=badVal,
         opt_index=col_opt_index,table_subscribers=table_subscribers,
-        parent_header=parent_header}
+        parent_header=parent_header, schema_overlay=schema_overlay}
     for col_idx, ch in ipairs(hr) do
         local col = newHeaderColumn(params, col_idx, ch)
         header[col_idx] = col
@@ -563,7 +618,7 @@ end
 -- As a convenience, the result is callable, with the line(no/key) and optional column(idx/name).
 -- to get either the whole row or a single cell, if the column is specified.
 local function processTSV(options_extractor, expr_eval, parser_finder, source_name, raw_tsv,
-    badVal, table_subscribers, transposed, parent_header)
+    badVal, table_subscribers, transposed, parent_header, opt_schema_overlay)
     transposed = (transposed == true) or (type(source_name) == "string"
         and source_name:sub(-#TRANSPOSED_TSV_EXT) == TRANSPOSED_TSV_EXT)
     badVal.source_name = source_name
@@ -602,7 +657,7 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
         local dataset = {}
         local header = newHeader(options_extractor, expr_eval,
         parser_finder, source_name, raw_tsv[header_idx],
-        badVal, dataset, table_subscribers, parent_header)
+        badVal, dataset, table_subscribers, parent_header, opt_schema_overlay)
         if not header then
             badVal.col_types[#badVal.col_types] = nil
             return nil
@@ -721,10 +776,13 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
                             -- Row is shorter than header and column is not nullable
                             local missing_msg = "row has " .. #row .. " columns but header defines "
                                 .. #header .. " -- column '" .. header[ci].name .. "' is missing"
-                            if header[ci].default_expr then
+                            -- Effective default includes a tier-A0 overlay newDefault.
+                            local missing_default = header[ci].effective_default_expr
+                                or header[ci].default_expr
+                            if missing_default then
                                 -- Column has a default; only warn (don't increment errors)
                                 -- and process normally when dependencies are met
-                                if canProcessCell(header, done_idx, header[ci].default_expr) then
+                                if canProcessCell(header, done_idx, missing_default) then
                                     local rk = badVal.row_key
                                     local row_part = (rk ~= nil and rk ~= "") and " (" .. tostring(rk) .. ")" or ""
                                     badVal.logger:warn(badVal.source_name .. " on line "

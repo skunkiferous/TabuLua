@@ -1,0 +1,8 @@
+column:name	newDefault:string|nil
+# ^ Tier-A0 schema overlay (mod_overrides.md §3) on core Spell.tsv. Core declares
+# ^ `cooldown:float:5.0`, so spells that leave the cell empty default to 5.0s.
+# ^ This balance mod lowers the global default to 3.0s by overriding the column
+# ^ default — without editing Spell.tsv. Only spells whose cooldown cell is empty
+# ^ are affected (those that set an explicit cooldown keep it); the override only
+# ^ changes the value used for empty cells.
+cooldown	3.0

@@ -1,0 +1,9 @@
+column:name	widenTo:type_spec|nil
+# ^ Tier-A0 schema overlay (mod_overrides.md §3). This expansion package is a
+# ^ mod on tutorial.core; here it widens core Item.tsv's `price` column without
+# ^ forking the file. `price` is `gold` (an alias for uint) in core, so it
+# ^ rejects negative values; a "permissive prices" mod widens it to `gold|int`
+# ^ so a later discount/debt patch could declare negative prices. Widening is
+# ^ safe by construction: every value valid as `gold` is still valid as
+# ^ `gold|int`, so no existing core row stops parsing. The overlay only loosens.
+price	gold|int

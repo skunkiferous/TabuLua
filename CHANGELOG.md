@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Mod-style schema overlays (tier A0 — `TODO/mod_overrides.md` Phase 1).** A
+  dependent package can now *loosen* a parent file's column metadata without
+  forking it, via a `SchemaOverlay` file. A file declaring
+  `typeName=SchemaOverlay` and `schemaOverlayOf=Target.tsv` in `Files.tsv`
+  (the target resolved by basename, like `joinInto` / `edgesFor`) targets the
+  parent's columns with three safe-by-construction operations:
+  - **`widenTo`** replaces a column's type with a strictly *wider* one, so a
+    value the declared type rejected now parses (e.g. `gold` → `gold|int` to
+    allow negative prices). Narrowing — or an unknown / expression type — is
+    rejected at load; an identical type warns and is a no-op. Multiple overlays
+    on one column compose as the **union** of their widenings.
+  - **`newDefault`** overrides the value used for that column's empty cells
+    (literal or `=expr`); last overlay in load order wins.
+  - **`suppressValidator` + `validatorLevel`** match a parent row/file
+    validator by its expression text and downgrade it (`warn`) or remove it
+    (`none`); lowest severity across overlays wins. An unmatched suppressor
+    warns.
+
+  Overlays are a **load-time view, never baked into the source**: a column's
+  declared `type_spec` / `default_expr` are preserved (so the reformatter
+  round-trips the parent file unchanged — see §3.6 / §7.1), while the effective
+  widened type drives parsing and a separate effective default drives empty
+  cells. New module `schema_overlay.lua`; the `SchemaOverlay` record type, the
+  `overlay_level` enum (`error|warn|none`) and the `schemaOverlayOf` descriptor
+  column register through the type-wiring registry. Collection runs as a
+  pre-parse pass (so widening takes effect before target cells parse) and the
+  validator-severity overrides run just before validation. The tutorial
+  expansion package ships two example overlays on the core package
+  (`ItemPricePolicy.tsv` widens `Item.price`; `SpellTuning.tsv` lowers the
+  `Spell.cooldown` default).
+
 ### Changed
 
 ### Removed

@@ -823,7 +823,15 @@ sections 3–6 works, a mod may be blocked by *design decisions* baked into the 
 Each phase is independently shippable.
 
 **Phase 1 — schema overlay (`schemaOverlayOf`, default override, type widening,
-validator-severity override).**
+validator-severity override). ✅ LANDED (post-v0.27.0).** Implemented in
+`schema_overlay.lua`; `SchemaOverlay` / `overlay_level` / `schemaOverlayOf`
+register via the type-wiring registry; overlays are a load-time view only
+(declared `type_spec` / `default_expr` preserved, so the reformatter never
+bakes them — §3.6 / §7.1). Tutorial overlays shipped in `tutorial/expansion`.
+Validator suppression currently targets per-file row/file validators (the
+`lcFn2{Row,File}Validators` lists); validators embedded in a `custom_type_def`
+`validate` field are out of scope for this phase. The notes below are the
+original plan.
 
 - New built-in row type `SchemaOverlay` (registered via `type_wiring.register` `onLoad`)
   and `Files.tsv` column `schemaOverlayOf:filepath|nil` (contributed via

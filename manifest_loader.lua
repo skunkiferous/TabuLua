@@ -62,6 +62,11 @@ local runPackageValidators = validator_executor.runPackageValidators
 local processor_executor = require("processor_executor")
 local runFilePreProcessors = processor_executor.runFilePreProcessors
 
+-- Tier-A0 schema overlays (TODO/mod_overrides.md §3). collectOverlays runs as
+-- a pre-parse pass (so widenTo / newDefault take effect before target cells
+-- parse); applyValidatorOverrides runs just before validation.
+local schema_overlay = require("schema_overlay")
+
 -- The type-wiring registry replaces the three hand-written branches that
 -- previously dispatched Type / enum / custom_type_def behaviour from the
 -- per-file load loop. builtin_wiring.lua registers the three onLoad
@@ -331,7 +336,7 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
     extends, raw_files, files_cache,
-    options_extractor, expr_eval, loadEnv, badVal, opt_transcoder)
+    options_extractor, expr_eval, loadEnv, badVal, opt_transcoder, opt_schemaOverlays)
     badVal.source = file_name
     local lcFNKey = computeFilenameKey(file_name, file2dir)
     local fileType = lcFn2Type[lcFNKey]
@@ -373,8 +378,13 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
         end
     end
 
+    -- Tier-A0 schema overlay overrides for this target file (widenTo /
+    -- newDefault), keyed by column name; nil when no mod overlays this file.
+    -- They must be applied as the header parses, so they flow into processTSV.
+    local schemaColumnOverrides = schema_overlay.columnOverridesFor(opt_schemaOverlays, lcFNKey)
     local file = processTSV(options_extractor, expr_eval, parseType,
-        file_name, rawtsv, badVal, table_subscribers, false, parent_header)
+        file_name, rawtsv, badVal, table_subscribers, false, parent_header,
+        schemaColumnOverrides)
     badVal.line_no = 0
     badVal.row_key = ""
     files_cache[file_name] = file
@@ -457,7 +467,7 @@ end
 -- Load all the non-description files
 local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
-    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder, opt_schemaOverlays)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
     lcFn2Transcoder = lcFn2Transcoder or {}
 
@@ -484,7 +494,8 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
                 lcFn2Type, lcFn2Ctx, lcFn2Col,
                 lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
                 extends, raw_files, files_cache,
-                options_extractor, expr_eval, loadEnv, badVal, lcFn2Transcoder[key])
+                options_extractor, expr_eval, loadEnv, badVal, lcFn2Transcoder[key],
+                opt_schemaOverlays)
         else
             processUnknownFile(file_name, raw_files, badVal)
         end
@@ -536,6 +547,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2FileValidators = metaMaps.lcFn2FileValidators
     local lcFn2PreProcessors = metaMaps.lcFn2PreProcessors
     local lcFn2Transcoder = metaMaps.lcFn2Transcoder
+    local lcFn2SchemaOverlayOf = metaMaps.lcFn2SchemaOverlayOf or {}
     -- Note: the type-wiring registry replaces the former typesSet / enumsSet /
     -- customTypesSet precomputation. Each wired onLoad fires from the per-file
     -- load loop via type_wiring.applyWiring, walking the file's extends chain.
@@ -595,10 +607,23 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     for _, desc_file in ipairs(desc_files) do
         tsv_files[desc_file[1].__source] = desc_file
     end
+    -- Tier-A0 schema overlays: collect every overlay file (now that `files` is
+    -- in load order, so newDefault last-writer-wins is correct) and parse them
+    -- ahead of the main load loop. The resulting per-target column overrides
+    -- (widenTo / newDefault) are threaded into each target file's parse.
+    local overlayFiles = {}
+    for _, fn in ipairs(files) do
+        if lcFn2SchemaOverlayOf[computeFilenameKey(fn, file2dir)] then
+            overlayFiles[#overlayFiles + 1] = fn
+        end
+    end
+    local schemaOverlays = schema_overlay.collectOverlays(overlayFiles, file2dir,
+        computeFilenameKey, lcFn2SchemaOverlayOf, lcFn2Transcoder,
+        raw_files, loadEnv, badVal)
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
-    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder, schemaOverlays)
     -- Note: graph wiring (completion pre-processors + structural file
     -- validators) is now applied per-file through type_wiring.applyWiring
     -- inside processSingleTSVFile — see builtin_wiring.lua's register()
@@ -628,6 +653,11 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         if tc then fn2Transcoder[file_name] = tc end
     end
     joinMeta.fn2Transcoder = fn2Transcoder
+    -- Tier-A0 schema overlays, for the validator-severity overrides applied
+    -- just before runAllValidators (the per-file validator lists only exist
+    -- after the load loop, so the suppressValidator / validatorLevel part of
+    -- an overlay cannot run in the pre-parse pass that handled widen/default).
+    joinMeta.schemaOverlays = schemaOverlays
     return tsv_files, joinMeta
 end
 
@@ -1041,6 +1071,11 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     -- threaded through unchanged.
     local processorsOk, processorWarnings = runAllPreProcessors(
         tsv_files, joinMeta, loadEnv, badVal)
+
+    -- Tier-A0 schema overlays: downgrade / remove parent validators a mod has
+    -- declared a suppressValidator for, before the validators run against the
+    -- (possibly patched) data. Mutates the per-file validator lists in joinMeta.
+    schema_overlay.applyValidatorOverrides(joinMeta.schemaOverlays, joinMeta, badVal)
 
     -- Run all validators (row, file, package) after files are loaded
     local validatorsOk, validationWarnings = runAllValidators(

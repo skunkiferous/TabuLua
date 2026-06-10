@@ -34,7 +34,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [lua_transcoder](#lua_transcoder) | Content-pipeline transcoder reading/writing TabuLua's `--file=lua` export (`return { <header>, <row>, … }`) as a wide TSV; id-selected (`lua:tabulua`), schema-free, reversible, executed under the sandbox + instruction quota | error_reporting, parsers, raw_tsv, read_only, sandbox, sandbox_env, serialization, string_utils, tsv_model |
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -59,6 +59,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [regex_utils](#regex_utils) | Lua pattern to PCRE translation | predicates, read_only, sparse_sequence |
 | [round_trip](#round_trip) | Round-trip serialization/deserialization testing | deserialization, read_only, serialization |
 | [sandbox_env](#sandbox_env) | Single owner of the sandbox "safe API surface" | comparators, predicates, read_only, string_utils, table_utils |
+| [schema_overlay](#schema_overlay) | Tier-A0 mod schema overlays: collects `SchemaOverlay` files and applies their column `widenTo` / `newDefault` (pre-parse) and validator `suppress`/downgrade (pre-validation) to a parent file, without baking into the source | content_pipeline, named_logger, parsers, raw_tsv, read_only, tsv_model, validator_executor |
 | [schema_validator](#schema_validator) | Validates typed JSON and XML export formats | read_only |
 | [serialization](#serialization) | Data serialization (Lua, JSON, XML, SQL, MessagePack) | named_logger, predicates, read_only, sandbox, sparse_sequence |
 | [sparse_sequence](#sparse_sequence) | Sparse array implementation | read_only |
@@ -576,6 +577,16 @@ Round-trip serialization/deserialization testing utilities. Provides deep equali
 The single owner of the sandbox "safe API surface" — the curated set of Lua builtins, `math`, `string`/`table` subsets, and TabuLua helpers exposed to user code running inside the kikito sandbox. `new(extras)` builds a fresh environment for the five internal sandboxes (validators, processors, code libraries, custom-type `validate` expressions, `transformCells`); `cogGlobals()` builds the same set minus the helper block for cell expressions and COG scripts. Replaces five hand-rolled, drift-prone environment tables.
 
 **Dependencies:** comparators, predicates, read_only, string_utils, table_utils
+
+---
+
+### schema_overlay
+
+**File:** [schema_overlay.lua](schema_overlay.lua)
+
+Tier-A0 mod-style schema overlays (`TODO/mod_overrides.md` §3). A child package declares a `SchemaOverlay` file (`schemaOverlayOf=Target.tsv`) that *loosens* a parent file's column metadata without forking it. `collectOverlays` parses every overlay file in a pre-parse pass and folds the rows into a per-target map: `widenTo` (strictly-wider type, union-composed), `newDefault` (last-writer-wins), and `suppressValidator` + `validatorLevel` (lowest severity wins). `columnOverridesFor` feeds the widen/default overrides into `tsv_model.processTSV` as the target file's header parses; `applyValidatorOverrides` rebinds or drops the matched parent validators just before validation. Overlays are a load-time view only — the declared `type_spec` / `default_expr` are preserved so the reformatter never bakes them into the source.
+
+**Dependencies:** content_pipeline, named_logger, parsers, raw_tsv, read_only, tsv_model, validator_executor
 
 ---
 

@@ -207,6 +207,26 @@ parsers.registerAlias(nullBadVal, 'type_wiring_def',
     .. 'rowValidators:{validator_spec}|nil,typeName:name}')
 type_wiring.register("type_wiring_def", {onLoad = onLoadTypeWiringDef})
 
+-- SchemaOverlay — built-in record type for tier-A0 schema overlay files
+-- (see TODO/mod_overrides.md §3). A file declaring `typeName=SchemaOverlay`
+-- (or extending it) and `schemaOverlayOf=Target.tsv` in Files.tsv loosens
+-- the target file's column metadata: override a column default, widen a
+-- column type, or downgrade/suppress a parent validator. Each data row
+-- targets one column (or one validator). The rows are consumed by
+-- schema_overlay.collectOverlays in a pre-parse pass — there is no onLoad,
+-- registering the alias here only marks the typeName as known so the loader
+-- skips trying to register it as a record type from each overlay file's
+-- (possibly partial) header.
+--
+-- `validatorLevel` uses a dedicated enum `overlay_level` rather than the
+-- existing `error_level` because it adds a `none` member meaning "remove the
+-- validator entirely" (error_level is {error,warn} and is reused by
+-- validator_spec, so it must not gain a third member).
+parsers.registerEnumParser(nullBadVal, {"error", "warn", "none"}, "overlay_level")
+parsers.registerAlias(nullBadVal, 'SchemaOverlay',
+    '{column:name,newDefault:string|nil,widenTo:type_spec|nil,'
+    .. 'suppressValidator:expression|nil,validatorLevel:overlay_level|nil}')
+
 -- ============================================================
 -- Module-level: re-declare the ten optional Files.tsv columns that
 -- used to be hard-coded in files_desc.lua. After the L4 shrink, only
@@ -283,6 +303,18 @@ type_wiring.registerModule("pre_processors", {
     descriptorColumns = {
         {name = "preProcessors", type = "{processor_spec}|nil",
          fieldOnMeta = "lcFn2PreProcessors",  parse = listOrNil},
+    },
+})
+
+-- Mod-style schema overlay selection (see TODO/mod_overrides.md §3, Phase 1).
+-- A file with `schemaOverlayOf` set (and typeName=SchemaOverlay) targets a
+-- parent file by basename — same lookup convention as joinInto / edgesFor —
+-- and loosens that file's column metadata before its cells are parsed. The
+-- value lowercases for case-insensitive basename matching.
+type_wiring.registerModule("schema_overlay", {
+    descriptorColumns = {
+        {name = "schemaOverlayOf", type = "filepath|nil",
+         fieldOnMeta = "lcFn2SchemaOverlayOf", parse = lowerOrNil},
     },
 })
 
