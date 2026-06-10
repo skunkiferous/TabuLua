@@ -853,7 +853,20 @@ original plan.
 Independently useful: even without any row-patching machinery, a mod can change defaults
 and loosen constraints. It also unblocks Phase 2's "negative price" use case.
 
-**Phase 2 — row patches: `patchOf` + `typeName=patch`, `patchOp` enum, no filter.**
+**Phase 2 — row patches: `patchOf` + `typeName=patch`, `patchOp` enum, no filter.
+✅ LANDED (post-v0.27.0).** Implemented in `patch_executor.lua`; `patch` keyword
+(aliased to `{}` so it parses + registerFileType auto-skips), `patch_op` enum, and
+`patchOf` register via the type-wiring registry. `applyPatches` runs as an explicit
+pipeline step (after own-package pre-processors, before validators) rather than a
+post-validator `enginePostPass`, since validators must see the patched state.
+Targets are mutated in place via `read_only.unwrap` (append / `table.remove` / cell
+write); `tsv_model.newDataCell` / `newDataRow` build added rows. To honour §7.1, the
+reformatter **skips patched targets** (`joinMeta.patchedTargets`) so patches never
+bake into parent source. NOTE: an overlay file's column 1 (`column`) is its primary
+key, so multiple operations on one column go on ONE row (the §3 example's two
+`price` rows would trip the duplicate-PK check). Tutorial: `tutorial/expansion/
+ItemPatch.tsv` + the extended `ItemPricePolicy.tsv` demo the §4.5 overlay+patch combo.
+The notes below are the original plan.
 
 - Reserve **`patch`** as a typeName keyword in `Files.tsv` (marks a file as a patch
   document; engine skips parent-row-type validation for it).

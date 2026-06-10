@@ -67,6 +67,12 @@ local runFilePreProcessors = processor_executor.runFilePreProcessors
 -- parse); applyValidatorOverrides runs just before validation.
 local schema_overlay = require("schema_overlay")
 
+-- Tier-A row patches (TODO/mod_overrides.md §4). applyPatches runs after
+-- own-package pre-processors and before validators, mutating each patched
+-- parent dataset in place and returning the set of targets the reformatter
+-- must not rewrite.
+local patch_executor = require("patch_executor")
+
 -- The type-wiring registry replaces the three hand-written branches that
 -- previously dispatched Type / enum / custom_type_def behaviour from the
 -- per-file load loop. builtin_wiring.lua registers the three onLoad
@@ -620,6 +626,19 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local schemaOverlays = schema_overlay.collectOverlays(overlayFiles, file2dir,
         computeFilenameKey, lcFn2SchemaOverlayOf, lcFn2Transcoder,
         raw_files, loadEnv, badVal)
+    -- Tier-A row patches: build the apply plan in load order (so newDefault /
+    -- last-writer-wins is deterministic). Each entry pairs a patch file with the
+    -- basename of the parent file it targets; patch_executor.applyPatches consumes
+    -- it after the load loop (it needs the fully parsed datasets).
+    local lcFn2PatchOf = metaMaps.lcFn2PatchOf or {}
+    local patchPlan = {}
+    for _, fn in ipairs(files) do
+        local target = lcFn2PatchOf[computeFilenameKey(fn, file2dir)]
+        if target then
+            local targetBase = (target:match("[/\\]([^/\\]+)$") or target):lower()
+            patchPlan[#patchPlan + 1] = {file = fn, target = targetBase}
+        end
+    end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
@@ -658,6 +677,9 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- after the load loop, so the suppressValidator / validatorLevel part of
     -- an overlay cannot run in the pre-parse pass that handled widen/default).
     joinMeta.schemaOverlays = schemaOverlays
+    -- Tier-A row patch plan (load-ordered), consumed by patch_executor.applyPatches
+    -- in processFiles after pre-processors and before validators.
+    joinMeta.patchPlan = patchPlan
     return tsv_files, joinMeta
 end
 
@@ -1072,6 +1094,16 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     local processorsOk, processorWarnings = runAllPreProcessors(
         tsv_files, joinMeta, loadEnv, badVal)
 
+    -- Tier-A row patches (TODO/mod_overrides.md §4): apply add / remove / update /
+    -- replace ops from patch files to their target parent datasets, in load order.
+    -- Runs after own-package pre-processors and before validators, so validators
+    -- (and the exporter) see the patched state. patchedTargets is the set of
+    -- parent files the reformatter must not rewrite (patches are never baked into
+    -- parent source — §7.1).
+    local patchesOk, patchedTargets = patch_executor.applyPatches(
+        tsv_files, joinMeta.patchPlan, loadEnv, badVal)
+    joinMeta.patchedTargets = patchedTargets
+
     -- Tier-A0 schema overlays: downgrade / remove parent validators a mod has
     -- declared a suppressValidator for, before the validators run against the
     -- (possibly patched) data. Mutates the per-file validator lists in joinMeta.
@@ -1107,11 +1139,11 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         -- loaded dataset. Exposed so the export-time doc generator can expand COG
         -- doc templates against the same data the load-time COG blocks saw.
         loadEnv = loadEnv,
-        -- `validationPassed` covers BOTH pre-processors and validators: true iff
-        -- every error-level processor and every error-level validator succeeded.
-        -- (Pre-processors run before validators in the pipeline, but for callers
+        -- `validationPassed` covers pre-processors, row patches, and validators:
+        -- true iff every error-level processor, patch op, and validator succeeded.
+        -- (These run in pipeline order before/around validators, but for callers
         -- they are folded into the same pass/fail signal.)
-        validationPassed = processorsOk and validatorsOk and postPassesOk,
+        validationPassed = processorsOk and patchesOk and validatorsOk and postPassesOk,
         validationWarnings = validationWarnings,
     }
 end

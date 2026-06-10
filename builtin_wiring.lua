@@ -318,6 +318,27 @@ type_wiring.registerModule("schema_overlay", {
     },
 })
 
+-- Mod-style row patches (see TODO/mod_overrides.md §4, Phase 2). A file with
+-- `typeName=patch` and `patchOf=Target.tsv` declares add / remove / update /
+-- replace operations against a parent file's rows. `patchOf` targets the parent
+-- by basename (same convention as joinInto / schemaOverlayOf). `patch_op` is the
+-- enum of operations carried by the patch file's `patchOp` column.
+parsers.registerEnumParser(nullBadVal, {"add", "remove", "update", "replace"}, "patch_op")
+type_wiring.registerModule("row_patch", {
+    descriptorColumns = {
+        {name = "patchOf", type = "filepath|nil",
+         fieldOnMeta = "lcFn2PatchOf", parse = lowerOrNil},
+    },
+})
+-- `patch` is a reserved typeName keyword, not a row record type: it marks a file
+-- as a patch document so the loader does not try to register its (subset) header
+-- as a record type or validate its rows against a parent row type. Registering it
+-- as an alias to the empty record makes `typeName=patch` parse as a type_spec and
+-- makes parsers.parseType("patch") truthy, so registerFileType skips it just like
+-- any already-known type. The patch file's own cells are still parsed against its
+-- own header column types.
+parsers.registerAlias(nullBadVal, 'patch', '{}')
+
 -- Content-pipeline transcoder selection (see TODO/content_pipeline.md Phase 3).
 -- A non-data text/binary file (e.g. a .json) is normally copied through as an
 -- asset; setting `transcoder` to a registered transcoder id (e.g. json:objects)

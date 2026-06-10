@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Mod-style row patches (tier A — `TODO/mod_overrides.md` Phase 2).** A
+  dependent package can now **add / remove / update / replace** rows of a parent
+  file without forking it, via a patch file: `typeName=patch` and
+  `patchOf=Target.tsv` in `Files.tsv` (target resolved by basename). Column 1 is
+  the parent's primary key; a `patchOp:patch_op` column (enum
+  `add | remove | update | replace`) carries the operation:
+  - **`add`** inserts a new row (empty cells take the parent column's default);
+    an existing key is an error.
+  - **`remove`** deletes the row by key (missing key warns, no-op).
+  - **`update`** changes only the named non-empty cells — an empty cell means
+    "leave unchanged" (a local override of the usual "empty = default"); `=nil`
+    clears a nullable column; a missing key is an error.
+  - **`replace`** rewrites a row wholesale (remove + add).
+
+  Each patch value is parsed against the patch file's own column type, then
+  re-validated against the **parent** column's parser at apply time, so a tier-A0
+  `widenTo` overlay already in effect lets a patch set a value the parent type
+  would otherwise reject (e.g. a negative price). Patches apply in **package load
+  order** (last writer wins) after own-package pre-processors and **before
+  validators**, so validators — and the exporter — see the patched state.
+  Patches are **never baked into parent source**: the parent dataset is mutated
+  in place for the build/validation, but the reformatter skips patched targets
+  (§7.1), and `update` writes leave each cell's on-disk text untouched. New
+  module `patch_executor.lua`; the `patch` typeName keyword, the `patch_op` enum
+  and the `patchOf` descriptor column register through the type-wiring registry;
+  `tsv_model` gained `newDataCell` / `newDataRow` builders for constructing added
+  rows. The tutorial expansion package ships `ItemPatch.tsv` (patches core items,
+  including an overlay-enabled negative price — the §4.5 overlay+patch combo).
+
 - **Mod-style schema overlays (tier A0 — `TODO/mod_overrides.md` Phase 1).** A
   dependent package can now *loosen* a parent file's column metadata without
   forking it, via a `SchemaOverlay` file. A file declaring

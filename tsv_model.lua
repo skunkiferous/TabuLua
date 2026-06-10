@@ -307,6 +307,41 @@ local cell_mt = {
     __type = "cell"
 }
 
+-- Builds a read-only data cell {value, evaluated, parsed, reformatted} carrying
+-- the shared `cell` metatable, so getmetatable(cell) == "cell" and consumers
+-- read it exactly like a parsed cell. For code that constructs rows OUTSIDE the
+-- parse loop — e.g. patch_executor adding rows to a parent file (TODO/mod_overrides.md
+-- §4). `value` is the original on-disk text (drives reformatting), `parsed` the
+-- typed value (drives the model).
+local function newDataCell(value, evaluated, parsed, reformatted)
+    return readOnly({value, evaluated, parsed, reformatted}, cell_mt)
+end
+
+-- Builds a read-only data row from an array of cells, in column order, with the
+-- same name/index access and exploded-field assembly that processTSV's rows
+-- have. `header` is the (read-only) file header; `opt_idx` is the 1-based raw
+-- line index stored as `__idx`. Used by patch_executor to add rows to a parent
+-- dataset; the cells should be built with newDataCell against the parent's
+-- column parsers.
+local function newDataRow(header, cells, opt_idx)
+    local raw = {__idx = opt_idx}
+    for i, c in ipairs(cells) do raw[i] = c end
+    local header_mt = getmetatable(header)
+    local exploded_map = header_mt and header_mt.__exploded_map or {}
+    local row_index = function(r, c)
+        local col = header[c]
+        if col then return r[col.idx] end
+        if exploded_map[c] then return assembleExplodedValue(r, exploded_map[c]) end
+        return nil
+    end
+    local row_tostring = function(row)
+        local tmp = {}
+        for _, cell in ipairs(row) do tmp[#tmp + 1] = cell.reformatted or '' end
+        return table.concat(tmp, "\t")
+    end
+    return readOnly(raw, {__tostring = row_tostring, __index = row_index})
+end
+
 -- Returns true, if the value is an expression
 local function isExpression(value)
     return type(value) == "string" and value:sub(1,1) == '='
@@ -945,6 +980,8 @@ local API = {
         canProcessCell=canProcessCell,
     },
     isExpression=isExpression,
+    newDataCell=newDataCell,
+    newDataRow=newDataRow,
     processTSV=processTSV,
     EXPRESSION_MAX_OPERATIONS=EXPRESSION_MAX_OPERATIONS,
     TRANSPOSED_TSV_EXT = TRANSPOSED_TSV_EXT,

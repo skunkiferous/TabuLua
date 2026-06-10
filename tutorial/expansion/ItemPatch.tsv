@@ -1,0 +1,11 @@
+name:name	patchOp:patch_op	price:gold|int|nil	weight:float|nil
+# ^ Tier-A row patch (mod_overrides.md §4) on core Item.tsv. This expansion is a
+# ^ mod on tutorial.core; it changes a few core item cells without forking the file.
+# ^ Column 1 is the parent primary key (name); patchOp carries the operation.
+# ^ Empty cells in an `update` row mean "leave unchanged" (note the blank weight
+# ^ on healthPotion and blank price on manaPotion).
+# ^ DEMO of the §4.5 overlay+patch combo: ItemPricePolicy.tsv widened price to
+# ^ gold|int, so this patch can set a NEGATIVE price (a "we pay you to haul it
+# ^ away" clearance item) that the core gold (uint) type would otherwise reject.
+healthPotion	update	-5	
+manaPotion	update		0.4

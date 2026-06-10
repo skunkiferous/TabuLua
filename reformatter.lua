@@ -399,9 +399,19 @@ end
 --- @param fn2Transcoder table|nil Optional map of full file path -> Files.tsv
 ---   `transcoder` id, so an id-selected reversible transcoder (e.g. xml:tabulua,
 ---   which has no `extensions`) can be found for the round-trip rewrite.
-local function reformat(tsv_files, raw_files, badVal, fn2Transcoder)
+local function reformat(tsv_files, raw_files, badVal, fn2Transcoder, patchedTargets)
     fn2Transcoder = fn2Transcoder or {}
+    patchedTargets = patchedTargets or {}
     for file_name, tsv in pairs(tsv_files) do
+        -- A parent file modified in place by a tier-A row patch (mod_overrides.md
+        -- §4 / §7.1) must NOT be rewritten: its in-memory dataset now reflects the
+        -- mod's add/remove/update ops, so serialising it would bake those changes
+        -- into the parent's source. The patch FILE itself round-trips normally.
+        if patchedTargets[file_name] then
+            logger:debug("Leaving patched target untouched (mod patches not baked): "
+                .. file_name)
+            goto continue
+        end
         -- An archive member (utilmod.zip/data/Item.tsv) is a READ-ONLY input in v1:
         -- the reformatter must never try to splice bytes back into a container (and
         -- a write to the .zip-as-directory path would fail outright). Writing back
@@ -531,7 +541,8 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         local tsv_files = result.tsv_files
         local raw_files = result.raw_files
         reformat(tsv_files, raw_files, badVal,
-            result.joinMeta and result.joinMeta.fn2Transcoder)
+            result.joinMeta and result.joinMeta.fn2Transcoder,
+            result.joinMeta and result.joinMeta.patchedTargets)
         local errors = badVal.errors
         if errors > 0 then
             logger:error("Reformatting errors: " .. errors)
