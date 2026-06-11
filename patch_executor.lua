@@ -21,6 +21,13 @@ local newDataCell = tsv_model.newDataCell
 local newDataRow = tsv_model.newDataRow
 local expressionEvaluatorGenerator = tsv_model.expressionEvaluatorGenerator
 
+local validator_executor = require("validator_executor")
+local wrapRowsForValidation = validator_executor.wrapRowsForValidation
+local evaluateInValidatorEnv = validator_executor.evaluateInValidatorEnv
+
+-- Operation quota for a tier-B `where` / transform expression (per evaluation).
+local BULK_QUOTA = 10000
+
 -- ============================================================
 -- Tier-A row patches (see TODO/mod_overrides.md §4, Phase 2).
 --
@@ -197,11 +204,49 @@ local function buildRow(targetHeader, patchRow, patchHeader, expr_eval,
     return newDataRow(targetHeader, cells, opt_idx)
 end
 
+-- Writes a value into a parent row's cell, in place, re-validating it against
+-- the parent column's parser. `parseCtx` is the parser context: "parsed" for an
+-- already-typed value (a tier-A patch cell or a tier-B `=expr` result), "tsv" for
+-- a raw literal string (a tier-B literal transform cell). A nil value clears the
+-- cell (requires a nullable parent type). `.value` / `.reformatted` are left
+-- untouched so the parent file round-trips to its original source text. Returns
+-- true on success.
+local function setCellRaw(rawRow, parentCol, value, parseCtx, badVal, label)
+    local rawCell = unwrap(rawRow[parentCol.idx])
+    if type(rawCell) ~= "table" then
+        badVal(parentCol.name, label .. ": target cell missing for column '"
+            .. parentCol.name .. "'")
+        return false
+    end
+    if value == nil then
+        if not isNullable(parentCol.type_spec) then
+            badVal(parentCol.name, label .. ": cannot set column '" .. parentCol.name
+                .. "' to nil (type '" .. parentCol.type_spec .. "' is not nullable)")
+            return false
+        end
+        rawCell[2] = nil
+        rawCell[3] = nil
+        return true
+    end
+    if parentCol.parser then
+        local parsed = parentCol.parser(badVal, value, parseCtx)
+        if parsed == nil then
+            badVal(parentCol.name, label .. ": value for column '" .. parentCol.name
+                .. "' is not a valid '" .. parentCol.type_spec .. "'")
+            return false
+        end
+        rawCell[2] = parsed
+        rawCell[3] = parsed
+    else
+        rawCell[2] = value
+        rawCell[3] = value
+    end
+    return true
+end
+
 -- Applies an `update` patch row's non-empty cells to an existing parent row,
 -- in place. Empty patch cells leave the target unchanged; a non-empty cell with
 -- a nil value (e.g. `=nil`) clears the column (requires a nullable parent type).
--- Cell `.value` / `.reformatted` are left untouched so the parent file still
--- round-trips to its original source text.
 local function applyUpdate(rowProxy, patchRow, patchHeader, targetHeader,
     skipIdx, badVal)
     local rawRow = unwrap(rowProxy)
@@ -216,40 +261,9 @@ local function applyUpdate(rowProxy, patchRow, patchHeader, targetHeader,
                     logger:warn(badVal.source_name .. ": patch column '"
                         .. patchCol.name .. "' has no matching column in the target"
                         .. " file (ignored)")
-                else
-                    local rawCell = unwrap(rawRow[targetCol.idx])
-                    if type(rawCell) ~= "table" then
-                        badVal(patchCol.name, "update: target cell missing for column '"
-                            .. targetCol.name .. "'")
-                        ok = false
-                    else
-                        local value = parsedOf(patchCell)
-                        if value == nil then
-                            if not isNullable(targetCol.type_spec) then
-                                badVal(targetCol.name, "update: cannot set column '"
-                                    .. targetCol.name .. "' to nil (type '"
-                                    .. targetCol.type_spec .. "' is not nullable)")
-                                ok = false
-                            else
-                                rawCell[2] = nil
-                                rawCell[3] = nil
-                            end
-                        elseif targetCol.parser then
-                            local parsed = targetCol.parser(badVal, value, "parsed")
-                            if parsed == nil then
-                                badVal(targetCol.name, "update: value for column '"
-                                    .. targetCol.name .. "' is not a valid '"
-                                    .. targetCol.type_spec .. "'")
-                                ok = false
-                            else
-                                rawCell[2] = parsed
-                                rawCell[3] = parsed
-                            end
-                        else
-                            rawCell[2] = value
-                            rawCell[3] = value
-                        end
-                    end
+                elseif not setCellRaw(rawRow, targetCol, parsedOf(patchCell),
+                    "parsed", badVal, "update") then
+                    ok = false
                 end
             end
         end
@@ -369,6 +383,147 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
     return ok
 end
 
+-- Applies one tier-B bulk/filter patch file to its target (mod_overrides.md §5).
+-- Each rule row carries a unique rule name (column 1), a `patchOp` (update |
+-- remove), a `where` selector expression, and — for update rules — transform
+-- cells. `where` is evaluated per parent row in the validator sandbox (truthy =
+-- match, with `self`/`row`/`rows`/helpers/published contexts); matched rows are
+-- removed (deferred + compaction, like tier A) or have each non-empty transform
+-- cell applied. A transform cell starting with `=` is an expression evaluated
+-- against the matched target row; otherwise it is a literal parsed by the parent
+-- column. Returns true if all error-level rules/cells succeeded.
+local function applyOneBulkPatch(bulkFileName, bulkTsv, targetName, targetTsv,
+    loadEnv, badVal)
+    local bulkHeader = bulkTsv[1]
+    local targetHeader = targetTsv[1]
+    badVal.source_name = bulkFileName
+    badVal.line_no = 0
+    badVal.col_idx = 0
+
+    local whereCol = bulkHeader["where"]
+    if not whereCol then
+        badVal("where", "bulk_patch file '" .. bulkFileName
+            .. "' has no 'where' column")
+        return false
+    end
+    local opCol = bulkHeader["patchOp"]
+    if not opCol then
+        badVal("patchOp", "bulk_patch file '" .. bulkFileName
+            .. "' has no 'patchOp' column")
+        return false
+    end
+
+    -- Transform columns = every bulk column except the rule name (1), where, patchOp.
+    local transformCols = {}
+    for ci = 1, #bulkHeader do
+        local c = bulkHeader[ci]
+        if ci ~= 1 and c ~= whereCol and c ~= opCol then
+            transformCols[#transformCols + 1] = c
+        end
+    end
+
+    -- Snapshot the target's data rows (raw) + a parallel wrapped (parsed-value)
+    -- view for the selector/transform sandbox, plus each raw row's array index.
+    local targetArray = unwrap(targetTsv)
+    local dataRows, idxOf = {}, {}
+    for i = 2, #targetArray do
+        local r = targetArray[i]
+        if type(r) == "table" then
+            dataRows[#dataRows + 1] = r
+            idxOf[r] = i
+        end
+    end
+    local wrapped = wrapRowsForValidation(dataRows)
+    local removedIdx, anyRemoved = {}, false
+    local ok = true
+
+    local function ctxFor(i)
+        local w = wrapped[i]
+        return {self = w, row = w, rows = wrapped, file = wrapped,
+            count = #dataRows, fileName = targetName}
+    end
+
+    for ri = 2, #bulkTsv do
+        local ruleRow = bulkTsv[ri]
+        if type(ruleRow) == "table" then
+            badVal.line_no = ri
+            local ruleName = parsedOf(ruleRow[1])
+            badVal.row_key = (ruleName ~= nil) and tostring(ruleName) or ""
+            local op = parsedOf(ruleRow[opCol.idx])
+            local whereRaw = parsedOf(ruleRow[whereCol.idx])
+            if whereRaw == nil or whereRaw == "" then
+                badVal(tostring(ruleName), "bulk_patch rule has an empty 'where' selector")
+                ok = false
+            elseif op ~= "update" and op ~= "remove" then
+                badVal(tostring(op), "bulk_patch patchOp must be 'update' or 'remove'"
+                    .. " (got '" .. tostring(op) .. "')")
+                ok = false
+            else
+                -- `where` is always an expression; tolerate an optional leading '='.
+                local whereExpr = (type(whereRaw) == "string")
+                    and whereRaw:gsub("^=", "") or tostring(whereRaw)
+                local matchedCount, broke = 0, false
+                for i = 1, #dataRows do
+                    local matchOk, matched = evaluateInValidatorEnv(
+                        whereExpr, ctxFor(i), BULK_QUOTA, loadEnv)
+                    if not matchOk then
+                        badVal(tostring(ruleName), "bulk_patch 'where' failed: "
+                            .. tostring(matched))
+                        ok = false
+                        broke = true
+                        break -- selector is broken; skip the rest of this rule
+                    elseif matched ~= nil and matched ~= false then
+                        matchedCount = matchedCount + 1
+                        if op == "remove" then
+                            removedIdx[idxOf[dataRows[i]]] = true
+                            anyRemoved = true
+                        else
+                            for _, tcol in ipairs(transformCols) do
+                                local cell = ruleRow[tcol.idx]
+                                if not isEmptyCell(cell) then
+                                    local parentCol = targetHeader[tcol.name]
+                                    badVal.col_name = tcol.name
+                                    if not parentCol then
+                                        logger:warn(bulkFileName .. ": transform column '"
+                                            .. tcol.name .. "' has no matching column in"
+                                            .. " the target (ignored)")
+                                    else
+                                        local raw = cell.value
+                                        if type(raw) == "string" and raw:sub(1, 1) == '=' then
+                                            local exprOk, v = evaluateInValidatorEnv(
+                                                raw:sub(2), ctxFor(i), BULK_QUOTA, loadEnv)
+                                            if not exprOk then
+                                                badVal(tcol.name, "bulk_patch transform '"
+                                                    .. tcol.name .. "' failed: " .. tostring(v))
+                                                ok = false
+                                            elseif not setCellRaw(unwrap(dataRows[i]),
+                                                parentCol, v, "parsed", badVal, "bulk update") then
+                                                ok = false
+                                            end
+                                        elseif not setCellRaw(unwrap(dataRows[i]),
+                                            parentCol, raw, "tsv", badVal, "bulk update") then
+                                            ok = false
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                if not broke and matchedCount == 0 then
+                    logger:warn(bulkFileName .. " line " .. ri .. ": bulk_patch rule '"
+                        .. tostring(ruleName) .. "' matched zero rows in target '"
+                        .. basename(targetName) .. "' (no-op; check the 'where' selector)")
+                end
+            end
+        end
+    end
+    if anyRemoved then
+        compactRemoved(targetArray, removedIdx)
+    end
+    return ok
+end
+
 -- Applies every declared row patch to its target dataset, in package load order.
 --
 -- `patchPlan` is an array of {file=<full patch file name>, target=<lowercased
@@ -401,8 +556,15 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal)
                     .. "' not found (must match a loaded file by basename)")
                 ok = false
             else
-                if not applyOnePatch(entry.file, patchTsv, targetName,
-                    tsv_files[targetName], expr_eval, badVal) then
+                local applied
+                if entry.kind == "bulk" then
+                    applied = applyOneBulkPatch(entry.file, patchTsv, targetName,
+                        tsv_files[targetName], loadEnv, badVal)
+                else
+                    applied = applyOnePatch(entry.file, patchTsv, targetName,
+                        tsv_files[targetName], expr_eval, badVal)
+                end
+                if not applied then
                     ok = false
                 end
                 patchedTargets[targetName] = true

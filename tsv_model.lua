@@ -254,6 +254,24 @@ local function newHeaderColumn(params, col_idx, column)
     -- result.parser will be nil, if col_type is not a valid parser type
     -- In that case, the column cannot be parsed
     result.parser = col_parser
+    -- An `expression`-typed column holds raw expression TEXT, not a value to
+    -- compute, so a leading '=' must NOT trigger load-time evaluation (that would
+    -- run the expression in the wrong phase / against the wrong `self`). Flagged
+    -- here so processCell skips evaluation and stores the raw string. Recognised
+    -- for `expression` and any union containing it (e.g. `expression|nil`).
+    if col_type == "expression" then
+        result.skip_cell_eval = true
+    else
+        local members = parsers.unionTypes(col_type)
+        if members then
+            for _, m in ipairs(members) do
+                if m == "expression" then
+                    result.skip_cell_eval = true
+                    break
+                end
+            end
+        end
+    end
     -- Inherit default from parent header if this column has no default
     if not default_expr and params.parent_header then
         local parent_col = params.parent_header[col_name]
@@ -372,7 +390,11 @@ local function processCell(expr_eval, badVal)
             used_default = true
         end
         local evaluated = value
-        if expr_eval then
+        -- `expression`-typed columns (col.skip_cell_eval) store raw expression
+        -- text: a leading '=' must not be evaluated at load (it runs later, in a
+        -- different phase/context). For those, skip evaluation and let the raw
+        -- string flow to the column parser.
+        if expr_eval and not col.skip_cell_eval then
             -- Non-expression values should be returned unchanged
             -- We assume "computed" values are always in "parsed" format
 

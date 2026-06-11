@@ -39,6 +39,19 @@ describe("parsers - validator types", function()
       assert.are.equal("x > 0", parsed)
     end)
 
+    it("should tolerate a leading '=' and keep it in the stored text", function()
+      -- An `expression` column holds expression TEXT; the '=' "evaluate-me" sigil
+      -- is ignored for the syntax check (so `=x > 0` and `x > 0` are both valid)
+      -- but the original text is returned unchanged, so callers that key off the
+      -- '=' (e.g. tier-B bulk patches) still see it. (mod_overrides.md §5)
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local parser = parsers.parseType(badVal, "expression")
+      local parsed = parser(badVal, "=x > 0")
+      assert.are.equal("=x > 0", parsed)
+      assert.are.equal(0, #log_messages, "no error for a '='-prefixed expression")
+    end)
+
     it("should parse a valid or-pattern expression", function()
       local log_messages = {}
       local badVal = mockBadVal(log_messages)

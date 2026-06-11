@@ -40,6 +40,24 @@ While the actual type definition will contain all the details about that type, t
 - A colon (`:`) separates the field name and the field type
 - The field type uses our own type-definition syntax, described below
 
+### Omitting the type
+
+If the type is left empty, the column defaults to **`string`**. Two forms:
+
+- `name:` — a trailing colon with no type. Defaults to `string` silently. Use this
+  when you deliberately want an untyped (string) column.
+- `name` — no colon at all. Also defaults to `string`, but logs a **warning** on
+  every load (a missing `:` is usually a mistake), so prefer the explicit `name:`.
+
+The default is `string`, not `string|nil` — but an empty cell in a `string` column
+is still valid (it parses to the empty string `""`, not an error), so a plain
+`string` column tolerates blanks. Use `string|nil` only when you must distinguish a
+*nil* value from an *empty string*.
+
+> Note: the reformatter **canonicalises** an omitted type to its explicit form, so an
+> in-place reformat rewrites `name:` to `name:string`. The two are equivalent; the
+> bare form is just less to type when authoring.
+
 ## Default Values
 
 Columns can specify a default value that applies when a cell is empty. The syntax extends the column header format:
@@ -669,7 +687,7 @@ There are multiple types extending `string`:
 
 | Type | Description |
 |------|-------------|
-| `expression` | A string containing a valid Lua expression (syntax-validated at parse time by compiling with `load()`) |
+| `expression` | A string holding a Lua expression (syntax-validated at parse time via `load()`). An `expression` column stores the expression **text** — a leading `=` is tolerated (and ignored for the syntax check) so `=foo` and `foo` are accepted alike, and a `=`-prefixed cell is **not** evaluated at load (unlike a value column, where `=` means "compute this cell now"). The text is consumed later by whatever owns the expression (a validator, a tier-B `bulk_patch` selector/transform, etc.). |
 | `error_level` | Enum: `"error"` or `"warn"` |
 | `validator_spec` | Union: `expression\|{expr:expression,level:error_level\|nil}` — either a plain expression string (defaults to error level) or a record with explicit level |
 | `super_type` | Alias for `type_spec\|nil`; used in the `superType` column of `Files.tsv` |

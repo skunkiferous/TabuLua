@@ -328,6 +328,11 @@ type_wiring.registerModule("row_patch", {
     descriptorColumns = {
         {name = "patchOf", type = "filepath|nil",
          fieldOnMeta = "lcFn2PatchOf", parse = lowerOrNil},
+        -- Tier-B filter/transform patches (mod_overrides.md §5, Phase 3): a file
+        -- with `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` selects parent
+        -- rows by a `where` expression and updates/removes the matches.
+        {name = "bulkPatchOf", type = "filepath|nil",
+         fieldOnMeta = "lcFn2BulkPatchOf", parse = lowerOrNil},
     },
 })
 -- `patch` is a reserved typeName keyword, not a row record type: it marks a file
@@ -338,6 +343,16 @@ type_wiring.registerModule("row_patch", {
 -- any already-known type. The patch file's own cells are still parsed against its
 -- own header column types.
 parsers.registerAlias(nullBadVal, 'patch', '{}')
+
+-- `bulk_patch` is the reserved typeName keyword for tier-B filter/transform patch
+-- files (mod_overrides.md §5). Like `patch`, it is aliased to the empty record so
+-- it parses as a type_spec and registerFileType auto-skips it. A bulk_patch file's
+-- column 1 is a unique RULE NAME, a `where:expression` column selects parent rows,
+-- and the remaining columns transform (or, with patchOp=remove, drop) the matches.
+-- The file is parsed with cell-evaluation DISABLED (see manifest_loader) so its
+-- `=expr` transform/where cells survive as raw strings, evaluated at apply time
+-- against the matched TARGET row rather than at load against the rule row.
+parsers.registerAlias(nullBadVal, 'bulk_patch', '{}')
 
 -- Content-pipeline transcoder selection (see TODO/content_pipeline.md Phase 3).
 -- A non-data text/binary file (e.g. a .json) is normally copied through as an

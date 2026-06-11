@@ -790,8 +790,17 @@ function M.registerDerivedParsers()
     -- At runtime: evaluated in sandboxed environment
     registration.extendParser(ownBadVal, 'string', 'expression',
     function (badVal, value, reformatted, _context)
-        -- Validate that the expression is syntactically valid Lua
-        local code = "return (" .. value .. ")"
+        -- Validate that the expression is syntactically valid Lua. A leading '='
+        -- (TabuLua's "evaluate-me" sigil) is tolerated and ignored for this check,
+        -- so an `expression` column accepts `=foo` as readily as `foo` — both name
+        -- the same expression. The original text is stored UNCHANGED, so callers
+        -- that key off the '=' (e.g. tier-B bulk patches distinguishing an
+        -- expression from a literal) still see it on the cell value.
+        local toCheck = value
+        if type(toCheck) == "string" and toCheck:sub(1, 1) == '=' then
+            toCheck = toCheck:sub(2)
+        end
+        local code = "return (" .. toCheck .. ")"
         local compiled, err = load(code)
         if not compiled then
             -- Try loadstring for Lua 5.1/LuaJIT compatibility

@@ -388,6 +388,11 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     -- newDefault), keyed by column name; nil when no mod overlays this file.
     -- They must be applied as the header parses, so they flow into processTSV.
     local schemaColumnOverrides = schema_overlay.columnOverridesFor(opt_schemaOverlays, lcFNKey)
+    -- Note: tier-B bulk_patch files (mod_overrides.md §5) need their `where` /
+    -- transform `=expr` cells kept RAW (evaluated at apply time, not at load). That
+    -- is handled at the COLUMN level: those columns are `expression`-typed, and
+    -- processCell skips load-time evaluation for expression columns (col.skip_cell_eval).
+    -- No whole-file lever is required here.
     local file = processTSV(options_extractor, expr_eval, parseType,
         file_name, rawtsv, badVal, table_subscribers, false, parent_header,
         schemaColumnOverrides)
@@ -631,12 +636,22 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- basename of the parent file it targets; patch_executor.applyPatches consumes
     -- it after the load loop (it needs the fully parsed datasets).
     local lcFn2PatchOf = metaMaps.lcFn2PatchOf or {}
+    local lcFn2BulkPatchOf = metaMaps.lcFn2BulkPatchOf or {}
     local patchPlan = {}
     for _, fn in ipairs(files) do
-        local target = lcFn2PatchOf[computeFilenameKey(fn, file2dir)]
+        local key = computeFilenameKey(fn, file2dir)
+        -- A file is a tier-A row patch (`patchOf`) or a tier-B bulk patch
+        -- (`bulkPatchOf`); both go in the one load-ordered plan, tagged by kind,
+        -- so they compose at apply time (§5).
+        local target = lcFn2PatchOf[key]
+        local kind = "patch"
+        if not target then
+            target = lcFn2BulkPatchOf[key]
+            kind = "bulk"
+        end
         if target then
             local targetBase = (target:match("[/\\]([^/\\]+)$") or target):lower()
-            patchPlan[#patchPlan + 1] = {file = fn, target = targetBase}
+            patchPlan[#patchPlan + 1] = {file = fn, target = targetBase, kind = kind}
         end
     end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,

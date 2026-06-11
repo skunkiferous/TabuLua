@@ -1,0 +1,17 @@
+ruleName:name	patchOp:patch_op	where:expression	price:expression|nil
+# ^ Tier-B filter/transform patch (mod_overrides.md §5) on core Item.tsv. Instead of
+# ^ naming individual items (that's tier-A ItemPatch.tsv), a bulk_patch SELECTS rows
+# ^ with a `where` expression and transforms the matches.
+# ^  - Column 1 (ruleName) is a unique label for the rule (not a parent key).
+# ^  - patchOp is `update` (transform matches) or `remove` (drop matches).
+# ^  - where: evaluated per core Item row in the validator sandbox; `row`/`self` is
+# ^    the candidate row, and the validator helpers (any, count, all, ...) are in scope.
+# ^  - transform cells: a value starting with `=` is an expression evaluated against
+# ^    the MATCHED row (self = that row); otherwise it is a literal. These cells are
+# ^    NOT evaluated at load (bulk_patch files load with cell-eval disabled) so the
+# ^    expression runs at apply time against the target, not against this rule row.
+# ^  - a transform column is typed `expression|nil`: an `expression` cell is stored
+# ^    raw (an `=` prefix is tolerated, never evaluated at load), and the value is
+# ^    re-validated against the PARENT column's type when applied. Empty = skip.
+# ^ This rule adds a 100-gold "luxury surcharge" to every Epic-rarity core item.
+epic_surcharge	update	row.rarity == 'Epic'	=row.price + 100

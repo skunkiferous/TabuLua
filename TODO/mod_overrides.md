@@ -900,7 +900,23 @@ The notes below are the original plan.
   by the parent's parser; missing parent file; `op=add` with existing key; `op=update`
   or `op=remove` with missing key; `=nil` against a non-nullable parent column.
 
-**Phase 3 — filter/transform (tier B).**
+**Phase 3 — filter/transform (tier B). ✅ LANDED (post-v0.27.0).** Encoding locked
+to the separate-file candidate below: `typeName=bulk_patch` + `bulkPatchOf:filepath|nil`,
+column 1 = unique rule name, required `where:expression` selector, `patchOp` ∈
+{update, remove}. The `where` selector and transform columns are **`expression`**-typed:
+an `expression` column stores the cell text raw — a leading `=` is tolerated and the
+cell is NOT load-evaluated (column-level, via `col.skip_cell_eval` in processCell).
+At apply, a transform cell starting with `=` is evaluated against the matched target
+row (`self`=that row) in the validator sandbox; otherwise it is a literal parsed by
+the parent column. (Earlier drafts used a whole-file "SkipEval" lever — abandoned:
+`patch`/`bulk_patch` alias to `{}`, the supertype of every record, so an
+`isMemberOfTag` tag would match ALL record files. Column-level expression handling
+supersedes it. Two supporting changes landed: the `expression` parser tolerates a
+leading `=`, and `expression` columns skip load-time evaluation.) Implemented in `patch_executor.applyOneBulkPatch` (reuses tier-A deferred-
+removal/compaction); `validator_executor` gained `evaluateInValidatorEnv` +
+`wrapRowsForValidation`. Zero-match → warn; throwing `where` → error. Composes with
+tier-A `patch` files (one load-ordered plan, kind-tagged). Tutorial: `ItemBulk.tsv`.
+Filter-shortcut sugar (§5.1) still deferred. The notes below are the original plan.
 
 > **Encoding is currently open** — §5's original "empty primary key" sketch
 > violates TabuLua's primary-key uniqueness/required rules. Lock the encoding

@@ -240,6 +240,36 @@ local function executeValidator(expr, context, quota, extraEnv)
     return interpretValidatorResult(result)
 end
 
+--- Evaluates an arbitrary expression in the validator sandbox and returns its
+--- RAW value (unlike executeValidator, which maps the result to valid/invalid).
+--- Used by tier-B bulk patches (TODO/mod_overrides.md §5) to evaluate a `where`
+--- selector (truthy = match) and transform `=expr` cells (the value to set),
+--- with the same helper block, `self`/`row`/`rows` bindings and published
+--- contexts validators get.
+--- @param expr string The expression (no leading '=')
+--- @param context table Context for self/row/rows/file/etc.
+--- @param quota number Maximum operations allowed
+--- @param extraEnv table|nil Additional environment variables (contexts, libraries)
+--- @return boolean ok True if the expression compiled and ran without raising
+--- @return any value The raw result (when ok), else an error message string
+local function evaluateInValidatorEnv(expr, context, quota, extraEnv)
+    local code = "return (" .. expr .. ")"
+    local env = createValidatorEnv(context, extraEnv)
+
+    local opt = {quota = quota, env = env}
+    local compile_ok, protected = pcall(sandbox.protect, code, opt)
+    if not compile_ok then
+        return false, "failed to compile expression: " .. tostring(protected)
+    end
+
+    local exec_ok, result = pcall(protected)
+    if not exec_ok then
+        return false, "expression execution error: " .. tostring(result)
+    end
+
+    return true, result
+end
+
 --- Runs row validators on a single row.
 --- @param validators table Array of validator_spec
 --- @param row table The row data (parsed values accessible by column name)
@@ -415,6 +445,8 @@ local API = {
     getVersion = getVersion,
     normalizeValidatorSpec = normalizeValidatorSpec,
     executeValidator = executeValidator,
+    evaluateInValidatorEnv = evaluateInValidatorEnv,
+    wrapRowsForValidation = wrapRowsForValidation,
     runRowValidators = runRowValidators,
     runFileValidators = runFileValidators,
     runPackageValidators = runPackageValidators,

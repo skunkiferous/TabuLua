@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Mod-style filter/transform patches (tier B — `TODO/mod_overrides.md` Phase 3).**
+  A dependent package can now patch parent rows **by a selector** instead of by key,
+  via a `bulk_patch` file: `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` in
+  `Files.tsv`. Column 1 is a unique **rule name**; a required `where:expression`
+  selects parent rows (evaluated per row in the validator sandbox — `self`/`row` is
+  the candidate, with the validator helpers `any`/`count`/`all`/… and published
+  contexts in scope); a `patchOp` of `update` or `remove` says what to do with the
+  matches. For `update`, the remaining transform cells are applied to each matched
+  row — a cell starting with `=` is an **expression evaluated against the matched
+  target row** (`self` = that row, so `=row.price * 2` does what you'd expect),
+  otherwise it is a literal parsed by the parent column. A selector matching zero
+  rows warns (likely a typo); a throwing selector is a reported error. Bulk patches
+  compose with tier-A row patches on the same target, applied together in package
+  load order. Like tier A, they mutate the parent in place for the build/validation
+  but are never baked into parent source (the reformatter skips patched targets).
+
+  The `where` selector and transform columns are `expression`-typed, which now
+  keeps their `=expr` cells **raw** (an `expression` column tolerates a leading `=`
+  and is never load-evaluated — `processCell` skips it), so they survive to be
+  evaluated at apply time against the target rather than at load against the rule
+  row. (Two supporting improvements landed with this: the `expression` parser
+  tolerates a leading `=`, and `expression`-typed columns are no longer
+  load-evaluated — which also hardens `suppressValidator`. Also documented:
+  omitting a column type defaults it to `string` — see `DATA_FORMAT_README.md`.)
+  `validator_executor` gained `evaluateInValidatorEnv` (raw-value evaluation in the
+  validator sandbox) and exposes `wrapRowsForValidation`; `patch_executor` gained
+  `applyOneBulkPatch`. The tutorial expansion ships `ItemBulk.tsv` (an Epic-rarity
+  surcharge on core items via `=row.price + 100`).
+
 - **Mod-style row patches (tier A — `TODO/mod_overrides.md` Phase 2).** A
   dependent package can now **add / remove / update / replace** rows of a parent
   file without forking it, via a patch file: `typeName=patch` and
