@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Package-scoped pre-processors (tier C — `TODO/mod_overrides.md` Phase 5).** A
+  package manifest may now declare `preProcessors:{processor_spec}|nil`. These
+  **tier-C** processors run after all files are parsed **and after tier-A/B patches
+  are applied**, but before validators — so they (and the validators after them) see
+  the fully merged-and-patched state of every loaded file via `files` (keyed like
+  package validators). Their write helpers (`setCell` / `clearCell`, plus `copy` and
+  `rowByKey(file, key)`) are **scoped**: a processor may only mutate files its package
+  owns or has declared patches for; writing any other file is a reported error.
+  **Cross-package ordering** follows package load order, refined by each spec's
+  optional `requires:{name}` field ("these packages' tier-C processors must run before
+  mine"): the engine topologically schedules the packages, breaking ties by load
+  order; a `requires` cycle is a hard error, and requiring an unloaded package warns
+  (the constraint is vacuous) without failing the load. A parent's **own** file-level
+  pre-processor flagged `rerunAfterPatches: true` is re-executed in this same phase
+  against the patched data, so idempotent derived data (inverse back-references, etc.)
+  reaches rows that mods added via patches (§6.2). Like every other mod-override
+  effect, tier-C writes are never baked into source (they go through `setCell`, which
+  leaves the on-disk text untouched). New `processor_executor` exports
+  `runPackagePreProcessors` / `selectRerunProcessors`; `processor_spec` gains a
+  `requires` field.
+
 - **Mod-style list/map deltas (tier A — `TODO/mod_overrides.md` Phase 4).** A row
   patch's `update` row can now **merge into** a parent list or map cell instead of
   replacing it, via verb-prefix companion columns (§4.3). For a list column `<col>`:

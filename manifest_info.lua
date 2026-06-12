@@ -8,7 +8,7 @@ local logger = require( "named_logger").getLogger(NAME)
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 -- Returns the module version
 local function getVersion()
@@ -90,6 +90,14 @@ local MANIFEST_SPEC = [[{
     # Each validator is either a simple expression string (error level) or
     # a structured record {expr:expression, level:error_level|nil}
     package_validators:{validator_spec}|nil,
+    # Package-scoped pre-processors (tier-C mod overrides, mod_overrides.md §6).
+    # Run after all files are parsed AND after tier-A/B patches are applied, but
+    # before validators. Each processor sees the full merged-and-patched state of
+    # every loaded file via `files`; its write helpers (setCell / clearCell) are
+    # scoped to files this package owns plus files it has declared patches for.
+    # Cross-package ordering follows package load order, refined by each spec's
+    # optional `requires` field.
+    preProcessors:{processor_spec}|nil,
     # Variant groups declare sets of mutually exclusive variant names.
     # Each group is a tuple of (group_name, {allowed_values}).
     # When variants are passed to processFiles(), exactly one value from each
@@ -214,6 +222,11 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         manifest.package_validators = readOnly(manifest.package_validators)
     else
         manifest.package_validators = nil
+    end
+    if manifest.preProcessors and next(unwrap(manifest.preProcessors)) then
+        manifest.preProcessors = readOnly(manifest.preProcessors)
+    else
+        manifest.preProcessors = nil
     end
     if manifest.variant_groups and next(unwrap(manifest.variant_groups)) then
         manifest.variant_groups = readOnly(manifest.variant_groups)

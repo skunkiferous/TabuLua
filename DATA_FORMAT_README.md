@@ -1091,6 +1091,9 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `fileValidators` | `{validator_spec}\|nil` | Validators run on the complete file |
 | `preProcessors` | `{processor_spec}\|nil` | Pre-processors run on parsed rows before validation (see [Pre-Processors](#pre-processors)) |
 | `variant` | `name\|nil` | Variant tag for conditional file inclusion (see [Variant-Based Conditional File Inclusion](#variant-based-conditional-file-inclusion)) |
+| `schemaOverlayOf` | `filepath\|nil` | Marks this file as a tier-A0 schema overlay on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `patchOf` | `filepath\|nil` | Marks this file as a tier-A row patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `bulkPatchOf` | `filepath\|nil` | Marks this file as a tier-B filter/transform patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
 
 ### Publishing Data
 
@@ -1519,6 +1522,7 @@ Since the file has only a single data row and multiple values can be quite long,
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
+| `preProcessors` | `{processor_spec}\|nil` | Package-scoped (tier-C) pre-processors that mutate the merged-and-patched state of every file after patches and before validators (see [Mod Overrides](#mod-overrides)) |
 | `variant_groups` | `{{name,{name},name\|nil}}\|nil` | Declares groups of mutually exclusive variant names with optional default (see [Variant Group Validation](#variant-group-validation)) |
 
 ### Custom Manifest Fields
@@ -1717,7 +1721,7 @@ A `processor_spec` is either a simple expression string (defaults to error
 level, priority 100, no re-run after patches) or a structured record:
 
 ```lua
-{expr=expression, level=error_level|nil, priority=number|nil, rerunAfterPatches=boolean|nil}
+{expr=expression, level=error_level|nil, priority=number|nil, rerunAfterPatches=boolean|nil, requires={name}|nil}
 ```
 
 | Field | Default | Meaning |
@@ -1725,7 +1729,8 @@ level, priority 100, no re-run after patches) or a structured record:
 | `expr` | (required) | Lua expression run in the processor sandbox |
 | `level` | `"error"` | `"error"` aborts on failure; `"warn"` collects a warning |
 | `priority` | `100` | Lower runs first within the file (same convention as `loadOrder`) |
-| `rerunAfterPatches` | `false` | Reserved for the future mod-override re-run phase |
+| `rerunAfterPatches` | `false` | When `true`, this file processor is **re-run** after mod-override patches are applied, against the patched data — so derived data (inverse back-references, etc.) reaches rows that mods added. Such a processor must be **idempotent**. See [Mod Overrides → Tier C](#tier-c--package-scoped-pre-processors) |
+| `requires` | `{}` | Only meaningful for **package-scoped** (tier-C) processors: names other packages whose tier-C processors must run before this one. See [Mod Overrides → Tier C](#tier-c--package-scoped-pre-processors) |
 
 ### Sandbox Environment
 
@@ -2032,6 +2037,264 @@ Row validators run per-row, so complex validators will slow parsing. File and pa
   Validator: all items must reference valid category
   Error: Items reference non-existent categories
 ```
+
+## Mod Overrides
+
+**Mod overrides** let a child (dependent) package **change data declared by a parent
+package without forking the parent's files**. The motivating cases are mod-on-game,
+regional config over base config, or a customer tenant on top of product defaults: the
+parent ships authoritative data, and a child amends it non-invasively. Every override is
+expressed as ordinary TSV the parent never sees, so the parent package stays untouched and
+upgradable.
+
+There are four tiers; a child package can use any combination:
+
+| Tier | Mechanism | `Files.tsv` / manifest field | What it does |
+|------|-----------|------------------------------|--------------|
+| **A0** | Schema overlay | `schemaOverlayOf` (file) | Loosen a parent column: change its default, widen its type, or downgrade/suppress one of its validators. |
+| **A** | Row patch | `patchOf` (file) | Add / remove / update / replace specific parent rows by primary key, including list/map cell deltas. |
+| **B** | Bulk patch | `bulkPatchOf` (file) | Update or remove parent rows selected by a `where` expression (e.g. "double the price of every medicine"). |
+| **C** | Package pre-processor | `preProcessors` (manifest) | Full programmatic mutation of the merged-and-patched state — the escape hatch for what A/B can't express declaratively. |
+
+### Pipeline Order
+
+Overrides slot into the load pipeline at fixed points:
+
+```
+parse schema overlays  →  widen types / change defaults (before parent cells are typed)
+parse all files        →  parent + child files loaded
+own-package pre-processors
+apply patches          →  tier-A row patches + tier-B bulk patches, in package load order
+package pre-processors  →  tier-C processors + rerunAfterPatches re-runs
+validators             →  re-run once, against the fully overridden state
+```
+
+Two consequences worth internalising:
+
+- **Schema overlays run first**, before any cell is type-checked — so a column a mod widened
+  to accept negative numbers is already widened by the time a patch sets a negative value.
+- **Validators run once, at the end, against the final state.** A parent validator is
+  re-applied to the patched data, so a mod that introduces a violation is caught loudly
+  (unless a tier-A0 overlay downgraded that validator).
+
+### No-Bake Invariant
+
+Overrides mutate the in-memory model for building and validation, but they are **never
+written back into the parent's source files**. The reformatter skips any file that was
+patched, and schema overlays keep the parent's *declared* type and default in the source
+text. Exporters (JSON/SQL/…) **do** see the overridden data; only the on-disk parent TSV
+stays byte-for-byte the author's original. This is the same "derived data is not
+source-of-truth" rule that governs `=expr` defaults and pre-processor output.
+
+### Conflict Resolution
+
+When two packages override the same thing, **package load order decides** (derived from
+`dependencies` / `load_after`), and the **last writer wins** for row/cell patches. Schema
+overlays compose more gently: defaults are last-wins, type widenings are *unioned*, and a
+suppressed validator takes the *lowest* severity any overlay asked for — so multiple mods
+loosening the same column rarely conflict.
+
+---
+
+### Tier A0 — Schema Overlay
+
+A schema overlay only ever **loosens** a parent column, so no parent row that used to parse
+can stop parsing. Declare it in `Files.tsv` with `typeName=SchemaOverlay` and
+`schemaOverlayOf` naming the parent file:
+
+```tsv
+fileName:filepath   typeName:type_spec   schemaOverlayOf:filepath|nil   loadOrder:number
+ItemPricePolicy.tsv SchemaOverlay        Item.tsv                       2
+```
+
+Each row of the overlay file targets **one parent column** (column 1, `column:name`, is the
+primary key — so all changes to one column go on a single row):
+
+```tsv
+column:name   widenTo:type_spec|nil   newDefault:string|nil   suppressValidator:expression|nil   validatorLevel:overlay_level|nil
+price         gold|int                                        self.price > 0 or 'price must be positive'   warn
+cooldown                              3.0
+```
+
+| Field | Effect | Safety |
+|-------|--------|--------|
+| `widenTo` | Replace the column type with a wider one (must **strictly extend** the parent's — `gold` → `gold\|int`). Narrowing is rejected at load; an identical type warns as a no-op. | Every value valid under the old type is still valid. |
+| `newDefault` | Replace the default applied to **empty** cells (literal or `=expr`). | Populated cells are untouched. |
+| `suppressValidator` + `validatorLevel` | Match a parent validator by its expression text; `validatorLevel` is one of `error \| warn \| none` (`overlay_level`). `none` removes it, `warn`/`error` rebinds its severity. | The validator still runs; only its consequence changes. |
+
+What overlays **cannot** do (these are migration-tool territory, not overrides): narrow a
+type, rename/drop a column, change the primary key, add a column (use `joinInto`), or
+*tighten* a validator. Scope note: validator suppression targets a file's row/file
+validators; validators embedded in a `custom_type_def` are out of scope.
+
+### Tier A — Row Patches
+
+A **patch file** (`typeName=patch`, `patchOf=Target.tsv`) adds, removes, or edits specific
+parent rows. Column 1 is the parent's primary-key column (same name); a `patchOp:patch_op`
+column carries the operation:
+
+```tsv
+name:name   patchOp:patch_op   price:gold|int|nil   weight:float|nil   element:Element|nil
+sword2      add                150                  1.5                Fire
+oldSword    remove
+sword       update                                  =self.weight*2     =nil
+```
+
+`patch_op` is the enum `add | remove | update | replace`:
+
+| op | Meaning |
+|----|---------|
+| `add` | Insert a new row; the key must not already exist. Empty cells use the parent column's default. |
+| `remove` | Delete the row with the matching key; other cells ignored. A missing key warns (no-op). |
+| `update` | Edit named cells of an existing row. **An empty cell means "leave unchanged"** (not "use default"). A missing key is an error. |
+| `replace` | Wholesale `remove` + `add`. |
+
+Key rules:
+
+- **Empty = leave unchanged** in an `update` row. To explicitly set a nullable column to
+  `nil`, use the expression **`=nil`** (the parent column must be nullable, or it errors).
+- A given parent primary key appears **at most once** per patch file — coalesce all edits to
+  one row into one patch row.
+- The patch column declares its **own** type (conventionally the parent's type made
+  nullable). The value is parsed there, then **re-validated against the parent's column** at
+  apply time — so a tier-A0 widening already in effect is what lets a patch set an otherwise
+  out-of-range value.
+
+#### List and Map Cell Deltas
+
+To **merge into** a parent collection cell instead of replacing it, use verb-prefix
+**companion columns** named after the target column. For a list column `<col>`:
+
+| Companion column | Effect |
+|------------------|--------|
+| `append_<col>` / `prepend_<col>` | Insert values at the tail / head (order preserved). |
+| `remove_<col>` / `remove_last_<col>` | Drop the first / last occurrence of each value. |
+| `replace_<col>` | Replace the whole list (same as listing `<col>` in the `update` row). |
+| `replace_oldvalue_<col>` + `replace_newvalue_<col>` | Replace a value **in place, by value** (position preserved); `replace_last_oldvalue_<col>` / `replace_last_newvalue_<col>` target the last match. |
+
+Map columns support `append_<col>` (merge entries), `remove_<col>` (drop keys), and
+`replace_<col>` only (maps are unordered — no `prepend_`, no in-place pair). If a parent
+column is *literally* named like a companion (e.g. a real `append_tags` column), the literal
+match wins and a warning fires so you can disambiguate. Sub-record fields are patched by
+their dotted path (`stats.attack`) with no special syntax — they are ordinary exploded
+columns.
+
+### Tier B — Bulk Patches
+
+A **bulk patch** (`typeName=bulk_patch`, `bulkPatchOf=Target.tsv`) edits parent rows chosen
+by a selector rather than by key. Column 1 is a unique **rule name**; a required
+`where:expression` selects rows; `patchOp` is `update` or `remove`; the remaining
+`expression`-typed columns are the transforms:
+
+```tsv
+ruleName:name   patchOp:patch_op   where:expression                 price:expression|nil
+epicSurcharge   update             row.rarity == 'Epic'             =row.price + 100
+dropBroken      remove             row.tags has 'deprecated'
+```
+
+- `where` is evaluated for **every** parent row, in the validator sandbox (`self` / `row` is
+  the candidate, with helpers like `any` / `count` / `all` and published contexts available).
+- For an `update`, each non-empty transform cell is applied to each matched row: a value
+  starting with `=` is an **expression evaluated against the matched target row** (`self` =
+  that row, so `=row.price + 100` does what you expect); otherwise it is a literal parsed by
+  the parent column.
+- A selector that matches **zero** rows warns (likely a typo); a `where` that throws is a
+  reported error and that rule is skipped.
+
+Tier-A and tier-B files can target the same parent and compose — all patches apply together
+in package load order.
+
+### Tier C — Package-Scoped Pre-Processors
+
+When the declarative tiers can't express an override, a package can run a **programmatic
+pre-processor** declared in its **manifest** (not a `Files.tsv` column):
+
+```tsv
+preProcessors:{processor_spec}|nil   {expr="(function() … end)()",requires={"otherMod.id"}}
+```
+
+These run **after** all patches are applied and **before** validators, so they see — and the
+validators see the effects of — the fully merged-and-patched state. The sandbox is the
+package-validator sandbox (`files` keyed by lowercased basename, the read-side helpers, `ctx`,
+`packageId`) **plus** the processor write helpers `setCell` / `clearCell` / `copy` and a
+two-argument `rowByKey(file, key)`:
+
+```lua
+-- bump every Epic item's price across the merged data
+(function()
+  for _, r in ipairs(files['item.tsv']) do
+    if r.rarity == 'Epic' then setCell(r, 'price', r.price + 100) end
+  end
+  return true
+end)()
+```
+
+`processor_spec` is documented under [Pre-Processors](#pre-processors); the two fields that
+matter at package scope are `requires` (ordering, below) and `rerunAfterPatches` (which makes
+a *parent's own file-level* processor re-run here, against the patched data — so derived data
+like inverse back-references reaches mod-added rows; those processors must be idempotent).
+
+#### Cross-Package Ordering
+
+Tier-C processors run in **package load order** by default. A processor can add an explicit
+edge with `requires={"pkg.id", …}` — "every tier-C processor from `pkg.id` must run before
+me". The engine topologically schedules the packages (ties broken by load order, so the
+schedule is deterministic). A **cycle** in the `requires` graph is a hard error; a `requires`
+naming a package that **isn't loaded** is a warning (the constraint is vacuous) and the load
+continues.
+
+#### Write Scope — and Why It's Limited
+
+A tier-C processor may **read** every file, but it may only **write**:
+
+1. files its **own** package declares, and
+2. parent files it has **declared a patch for** (tier A or B).
+
+Attempting `setCell` on any other file is a reported error. The rationale follows directly
+from the override design:
+
+- **Read is wide, write is narrow** — the same asymmetry as file validators (see everything,
+  change nothing) vs. file pre-processors (write only their own file). Reading is safe;
+  writing is the conflict-prone operation, so it is the one that is fenced.
+- **A patch is an auditable, declared intent.** A patch file is plain TSV — reviewable in a
+  PR, diffable across versions, greppable. Requiring a patch declaration before a programmatic
+  write means **every cross-package mutation is announced somewhere a human or tool can see**,
+  instead of being buried inside an opaque expression. The patch supplies the declarative
+  *what/where*; the processor supplies the *how*.
+- **Conflict tracking depends on it.** Load-order "last writer wins" and the `requires`
+  schedule are keyed on which packages modify which files. A processor silently writing a file
+  it never declared would be an invisible writer that escapes that bookkeeping.
+- **It preserves the non-invasive boundary** that the whole feature exists to provide: a mod
+  shapes its own data freely and refines the parent files it has *announced* it modifies — but
+  it cannot silently rewrite arbitrary parent or sibling-mod files.
+
+#### Opening a File Without Changing It
+
+If a tier-C processor needs to write a parent file for which you have **no actual patch to
+make**, grant write scope by declaring a **content-free patch file**. Write scope comes from
+the `patchOf` *declaration*, not from the patch's content, and an empty patch applies as a
+no-op. The cleanest form is a **header-only patch** — a valid patch header (primary-key
+column + `patchOp`) with **zero data rows**:
+
+`Files.tsv`
+```tsv
+fileName:filepath   typeName:type_spec   patchOf:filepath|nil   loadOrder:number
+Open.tsv            patch                Item.tsv               2
+```
+
+`Open.tsv` (header only, no rows)
+```tsv
+name:name	patchOp:patch_op
+```
+
+This loads cleanly, changes nothing, and authorises the package's tier-C processor to write
+`Item.tsv`. (A no-op `update` row — naming a real key with all other cells blank — works too,
+but must name existing keys.) Note two things: the empty patch is still a **visible, declared
+intent**, which is exactly the property the scope rule protects; and declaring it marks the
+target as a patched file, so the reformatter will not rewrite that source in place (correct
+here anyway, since your processor mutated it).
+
+---
 
 ## Graph Types
 

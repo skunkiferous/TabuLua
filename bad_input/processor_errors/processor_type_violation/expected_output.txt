@@ -1,4 +1,4 @@
-TS	ERROR	[processor_executor]	[ERROR] Pre-processor failed in {DIR}/Data.tsv: processor execution error: setCell: value for column 'score' is not a valid 'integer'
+TS	ERROR	[processor_executor]	Pre-processor failed in {DIR}/Data.tsv: processor execution error: setCell: value for column 'score' is not a valid 'integer'
 TS	ERROR	[reformatter]	Reformatting errors: 1
 TS	ERROR	[reformatter]	score, col 2 in {DIR}/Data.tsv on line 0: 'setCell(rows[1], 'score', 'not_an_integer')' (processor execution error: setCell: value for column 'score' is not a valid 'integer')
 TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

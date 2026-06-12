@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 -- Module name
 local NAME = "manifest_loader"
@@ -61,6 +61,8 @@ local runPackageValidators = validator_executor.runPackageValidators
 
 local processor_executor = require("processor_executor")
 local runFilePreProcessors = processor_executor.runFilePreProcessors
+local runPackagePreProcessors = processor_executor.runPackagePreProcessors
+local selectRerunProcessors = processor_executor.selectRerunProcessors
 
 -- Tier-A0 schema overlays (TODO/mod_overrides.md §3). collectOverlays runs as
 -- a pre-parse pass (so widenTo / newDefault take effect before target cells
@@ -911,6 +913,226 @@ local function runAllPreProcessors(tsv_files, joinMeta, loadEnv, badVal)
     return allOk, allWarnings
 end
 
+-- Builds a map from each loaded data file (full tsv_files key) to the id of the
+-- package that owns it. Ownership is by directory: a file belongs to the package
+-- whose root (the manifest's directory) is the longest path prefix of the file's
+-- directory — the same rule files_desc.matchDescriptorFiles uses for Files.tsv.
+local function buildFileToPackage(packages, tsv_files)
+    local paths = {}
+    local path2pkg = {}
+    for pid, pkg in pairs(packages) do
+        local root = (file_util.getParentPath(pkg.path) or ""):lower()
+        paths[#paths + 1] = root
+        path2pkg[root] = pid
+    end
+    local fn2pkg = {}
+    for file_name in pairs(tsv_files) do
+        local parent = (file_util.getParentPath(file_name) or ""):lower()
+        local pid = path2pkg[parent]
+        if not pid then
+            -- Subdirectory of a package: longest matching root prefix wins.
+            local best = ""
+            for _, root in ipairs(paths) do
+                if #root > #best and parent:sub(1, #root) == root then
+                    best = root
+                end
+            end
+            pid = path2pkg[best]
+        end
+        fn2pkg[file_name] = pid
+    end
+    return fn2pkg
+end
+
+-- Topologically orders the loaded packages, refining the load order by the
+-- `requires` edges declared on tier-C package processors (mod_overrides.md §6.1).
+-- An edge Q->P means "package Q's tier-C processors must run before P's". Edges
+-- to packages that are not loaded are dropped with a warning (the requirement is
+-- vacuous). A cycle in the requires graph is a hard error. Ties are broken by
+-- load order so the schedule is deterministic.
+-- Returns an ordered array of package ids, or nil on a cycle (after reporting).
+local function schedulePackageProcessors(package_order, pkgProcessors, badVal)
+    local loadIdx = {}
+    for i, pid in ipairs(package_order) do
+        loadIdx[pid] = i
+    end
+    local loaded = {}
+    for _, pid in ipairs(package_order) do
+        loaded[pid] = true
+    end
+
+    -- Build edges Q -> P (Q before P) and in-degrees over all loaded packages.
+    local adj = {}
+    local indeg = {}
+    for _, pid in ipairs(package_order) do
+        adj[pid] = {}
+        indeg[pid] = 0
+    end
+    local seenEdge = {}
+    for pid, processors in pairs(pkgProcessors) do
+        for _, spec in ipairs(processors) do
+            local req = processor_executor.normalizeProcessorSpec(spec).requires
+            for _, q in ipairs(req) do
+                if not loaded[q] then
+                    logger:warn(string.format(
+                        "Package '%s' pre-processor requires package '%s', "
+                        .. "which is not loaded; ordering constraint ignored", pid, q))
+                elseif q ~= pid then
+                    local edgeKey = q .. "\0" .. pid
+                    if not seenEdge[edgeKey] then
+                        seenEdge[edgeKey] = true
+                        adj[q][#adj[q] + 1] = pid
+                        indeg[pid] = indeg[pid] + 1
+                    end
+                end
+            end
+        end
+    end
+
+    -- Kahn's algorithm, always emitting the ready node with the smallest load
+    -- index for a deterministic, load-order-respecting schedule.
+    local emitted = {}
+    local result = {}
+    local remaining = #package_order
+    while remaining > 0 do
+        local pick = nil
+        for _, pid in ipairs(package_order) do
+            if not emitted[pid] and indeg[pid] == 0 then
+                if pick == nil or loadIdx[pid] < loadIdx[pick] then
+                    pick = pid
+                end
+            end
+        end
+        if pick == nil then
+            -- No ready node but packages remain => a requires cycle.
+            local stuck = {}
+            for _, pid in ipairs(package_order) do
+                if not emitted[pid] then stuck[#stuck + 1] = pid end
+            end
+            badVal.source_name = "package pre-processors"
+            badVal("requires", "cyclic `requires` ordering among tier-C package "
+                .. "pre-processors: " .. table.concat(stuck, ", "))
+            return nil
+        end
+        emitted[pick] = true
+        result[#result + 1] = pick
+        remaining = remaining - 1
+        for _, p in ipairs(adj[pick]) do
+            indeg[p] = indeg[p] - 1
+        end
+    end
+    return result
+end
+
+-- Cross-package pre-processor phase (tier-C mod overrides, mod_overrides.md §6).
+-- Runs AFTER patches are applied and BEFORE validators, so processors see (and
+-- validators see the effects of) the fully merged-and-patched state. For each
+-- package, in requires-refined load order, it (a) re-runs that package's own
+-- file-level processors flagged rerunAfterPatches against the patched data
+-- (§6.2), then (b) runs the package's manifest-declared tier-C processors with
+-- write access scoped to files it owns or has declared patches for.
+-- Returns (ok, warnings).
+local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+    local lcFn2PreProcessors = joinMeta.lcFn2PreProcessors or {}
+    local patchPlan = joinMeta.patchPlan or {}
+
+    -- Which packages declare tier-C (manifest-scoped) processors?
+    local pkgProcessors = {}
+    for _, pid in ipairs(package_order) do
+        local manifest = packages[pid]
+        if manifest and manifest.preProcessors and #manifest.preProcessors > 0 then
+            pkgProcessors[pid] = manifest.preProcessors
+        end
+    end
+
+    -- Which files have rerunAfterPatches-flagged file-level processors?
+    local rerunByFile = {}
+    local anyRerun = false
+    for file_name in pairs(tsv_files) do
+        local lcfn = computeFilenameKeyForValidation(file_name)
+        local rerun = selectRerunProcessors(lcFn2PreProcessors[lcfn])
+        if #rerun > 0 then
+            rerunByFile[file_name] = rerun
+            anyRerun = true
+        end
+    end
+
+    -- Nothing to do: skip all the ownership/scheduling work.
+    if not next(pkgProcessors) and not anyRerun then
+        return true, {}
+    end
+
+    local fn2pkg = buildFileToPackage(packages, tsv_files)
+
+    -- Resolve patch targets (basename) to full file names, and accumulate the
+    -- write scope of each package: files it owns + files it patches.
+    local base2fn = {}
+    for file_name in pairs(tsv_files) do
+        local base = (file_name:match("[/\\]([^/\\]+)$") or file_name):lower()
+        base2fn[base] = file_name
+    end
+    local writableByPkg = {}
+    local function grantWrite(pid, fn)
+        if not pid or not fn then return end
+        writableByPkg[pid] = writableByPkg[pid] or {}
+        writableByPkg[pid][fn] = true
+    end
+    for file_name, pid in pairs(fn2pkg) do
+        grantWrite(pid, file_name)
+    end
+    for _, entry in ipairs(patchPlan) do
+        local ownerPid = fn2pkg[entry.file]
+        grantWrite(ownerPid, base2fn[entry.target])
+    end
+
+    local order = schedulePackageProcessors(package_order, pkgProcessors, badVal)
+    if not order then
+        return false, {}
+    end
+
+    local allWarnings = {}
+    local allOk = true
+
+    for _, pid in ipairs(order) do
+        -- (a) Re-run this package's rerun-flagged file processors (§6.2).
+        for file_name, rerun in pairs(rerunByFile) do
+            if fn2pkg[file_name] == pid then
+                local tsv_file = tsv_files[file_name]
+                local ok, warnings = runFilePreProcessors(
+                    rerun, extractDataRows(tsv_file), tsv_file[1], file_name, badVal, loadEnv)
+                if not ok then allOk = false end
+                for _, w in ipairs(warnings) do
+                    allWarnings[#allWarnings + 1] = w
+                end
+            end
+        end
+
+        -- (b) Run this package's tier-C processors (§6).
+        local processors = pkgProcessors[pid]
+        if processors then
+            local writable = writableByPkg[pid] or {}
+            local fileEntries = {}
+            for file_name, tsv_file in pairs(tsv_files) do
+                local key = computeFilenameKeyForValidation(file_name)
+                fileEntries[key] = {
+                    rows = extractDataRows(tsv_file),
+                    header = tsv_file[1],
+                    fileName = file_name,
+                    writable = writable[file_name] == true,
+                }
+            end
+            local ok, warnings = runPackagePreProcessors(
+                processors, fileEntries, pid, badVal, loadEnv)
+            if not ok then allOk = false end
+            for _, w in ipairs(warnings) do
+                allWarnings[#allWarnings + 1] = w
+            end
+        end
+    end
+
+    return allOk, allWarnings
+end
+
 -- Runs all validators (row, file, package) after files are loaded
 -- Returns true if all error-level validators passed
 local function runAllValidators(tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
@@ -1119,6 +1341,14 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         tsv_files, joinMeta.patchPlan, loadEnv, badVal)
     joinMeta.patchedTargets = patchedTargets
 
+    -- Tier-C cross-package pre-processors (mod_overrides.md §6): a child package's
+    -- manifest-declared processors mutate the merged-and-patched state (scoped to
+    -- files it owns or patched), and any parent file processor flagged
+    -- rerunAfterPatches re-derives against the patched data. Runs after patches,
+    -- before validators, in requires-refined package load order.
+    local pkgProcessorsOk, pkgProcessorWarnings = runAllPackagePreProcessors(
+        tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+
     -- Tier-A0 schema overlays: downgrade / remove parent validators a mod has
     -- declared a suppressValidator for, before the validators run against the
     -- (possibly patched) data. Mutates the per-file validator lists in joinMeta.
@@ -1136,9 +1366,15 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     -- registered post-pass — see builtin_wiring.lua.
     local postPassesOk = type_wiring.runEnginePostPasses(tsv_files, joinMeta, badVal)
 
-    -- Combine pre-processor warnings with validator warnings for callers
+    -- Combine pre-processor warnings (own-package and cross-package) with
+    -- validator warnings for callers
     if processorWarnings and #processorWarnings > 0 then
         for _, w in ipairs(processorWarnings) do
+            validationWarnings[#validationWarnings + 1] = w
+        end
+    end
+    if pkgProcessorWarnings and #pkgProcessorWarnings > 0 then
+        for _, w in ipairs(pkgProcessorWarnings) do
             validationWarnings[#validationWarnings + 1] = w
         end
     end
@@ -1154,11 +1390,13 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         -- loaded dataset. Exposed so the export-time doc generator can expand COG
         -- doc templates against the same data the load-time COG blocks saw.
         loadEnv = loadEnv,
-        -- `validationPassed` covers pre-processors, row patches, and validators:
-        -- true iff every error-level processor, patch op, and validator succeeded.
-        -- (These run in pipeline order before/around validators, but for callers
-        -- they are folded into the same pass/fail signal.)
-        validationPassed = processorsOk and patchesOk and validatorsOk and postPassesOk,
+        -- `validationPassed` covers pre-processors (own-package and tier-C
+        -- cross-package), row patches, and validators: true iff every error-level
+        -- processor, patch op, and validator succeeded. (These run in pipeline
+        -- order before/around validators, but for callers they are folded into
+        -- the same pass/fail signal.)
+        validationPassed = processorsOk and patchesOk and pkgProcessorsOk
+            and validatorsOk and postPassesOk,
         validationWarnings = validationWarnings,
     }
 end

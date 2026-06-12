@@ -830,10 +830,14 @@ function M.registerDerivedParsers()
 
     -- Processor specification: either a simple expression string (defaults to error level)
     -- or a structured record. Mirrors validator_spec, but adds processor-specific fields
-    -- so that pre-processors can opt into priority-based ordering and re-runs after
-    -- mod-override patches. See pre_processors documentation for full semantics.
+    -- so that pre-processors can opt into priority-based ordering, re-runs after
+    -- mod-override patches, and cross-package ordering. The `requires` field is only
+    -- meaningful for tier-C package-scoped processors (mod_overrides.md §6.1): it names
+    -- other packages whose tier-C processors must run before this one. `name` is used
+    -- (not `package_id`, an alias registered later in manifest_info) so the alias has no
+    -- load-order dependency. See pre_processors documentation for full semantics.
     registration.registerAlias(ownBadVal, 'processor_spec',
-        'expression|{expr:expression,level:error_level|nil,priority:number|nil,rerunAfterPatches:boolean|nil}')
+        'expression|{expr:expression,level:error_level|nil,priority:number|nil,rerunAfterPatches:boolean|nil,requires:{name}|nil}')
 
     -- Helper type for creating "Files.tsv"
     registration.registerAlias(ownBadVal, 'super_type', 'type_spec|nil')

@@ -5,7 +5,7 @@ local NAME = "processor_executor"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -77,13 +77,14 @@ end
 
 --- Normalises a processor_spec into a consistent record.
 --- Mirrors validator_executor.normalizeValidatorSpec but additionally extracts
---- processor-specific fields (priority, rerunAfterPatches).
+--- processor-specific fields (priority, rerunAfterPatches, requires).
 --- @param spec string|table Either a simple expression string or a record
---- @return table {expr=string, level=string, priority=number, rerunAfterPatches=boolean}
+--- @return table {expr=string, level=string, priority=number, rerunAfterPatches=boolean, requires=table}
 local function normalizeProcessorSpec(spec)
     local base = normalizeValidatorSpec(spec)
     local priority = DEFAULT_PRIORITY
     local rerun = false
+    local requires = {}
     if type(spec) == "table" then
         if type(spec.priority) == "number" then
             priority = spec.priority
@@ -91,12 +92,21 @@ local function normalizeProcessorSpec(spec)
         if spec.rerunAfterPatches == true then
             rerun = true
         end
+        -- `requires` is a list of package ids that must have run their tier-C
+        -- processors before this one (mod_overrides.md §6.1). Only meaningful at
+        -- package scope; ignored (but harmless) on file-level processors.
+        if type(spec.requires) == "table" then
+            for _, pid in ipairs(spec.requires) do
+                requires[#requires + 1] = pid
+            end
+        end
     end
     return {
         expr = base.expr,
         level = base.level,
         priority = priority,
         rerunAfterPatches = rerun,
+        requires = requires,
     }
 end
 
@@ -119,8 +129,11 @@ local row_context = setmetatable({}, {__mode = "k"})
 --- @param row table Read-only row proxy from the parsed dataset
 --- @param header table The file header (for column lookup in setCell)
 --- @param fileName string Name of the file (for diagnostics)
+--- @param writable boolean|nil Whether setCell is permitted on this row. nil
+---   means writable (the per-file processor case); package-scoped processors pass
+---   false for files outside the package's write scope (mod_overrides.md §6).
 --- @return table A processor-row proxy
-local function wrapRowForProcessor(row, header, fileName)
+local function wrapRowForProcessor(row, header, fileName, writable)
     local proxy = setmetatable({}, {
         __index = function(_, k)
             local val = row[k]
@@ -139,6 +152,7 @@ local function wrapRowForProcessor(row, header, fileName)
         rawRow = unwrap(row),
         header = header,
         fileName = fileName,
+        writable = writable ~= false,
     }
     return proxy
 end
@@ -155,10 +169,10 @@ end
 --- @param header table The file header
 --- @param fileName string Name of the file
 --- @return table Array of processor-row proxies (a plain Lua table)
-local function wrapRowsForProcessor(rows, header, fileName)
+local function wrapRowsForProcessor(rows, header, fileName, writable)
     local wrapped = {}
     for i, r in ipairs(rows) do
-        local wrappedRow = wrapRowForProcessor(r, header, fileName)
+        local wrappedRow = wrapRowForProcessor(r, header, fileName, writable)
         wrapped[i] = wrappedRow
         local pkCell = r[1]
         if type(pkCell) == "table" and getmetatable(pkCell) == "cell" then
@@ -194,6 +208,13 @@ local function setCellImpl(wrappedRow, column, value)
     local ctx = row_context[wrappedRow]
     if not ctx then
         error("setCell: first argument is not a processor row", 2)
+    end
+    -- Write scoping (mod_overrides.md §6): a package-scoped processor may only
+    -- mutate files the package owns or has declared patches for. Rows of other
+    -- files are wrapped read-only and rejected here.
+    if ctx.writable == false then
+        error("setCell: file '" .. tostring(ctx.fileName)
+            .. "' is outside this package's write scope (not owned and not patched by it)", 2)
     end
     local header = ctx.header
     -- Header is keyed both by numeric idx and by column name, so the lookup
@@ -525,15 +546,166 @@ local function runFilePreProcessors(processors, rows, header, fileName, badVal, 
                     fileName = fileName,
                 }
                 logger:warn(string.format(
-                    "[WARN] Pre-processor warning in %s: %s", fileName, msg))
+                    "Pre-processor warning in %s: %s", fileName, msg))
             else
                 badVal.source_name = fileName
                 badVal(spec.expr, msg)
                 logger:error(string.format(
-                    "[ERROR] Pre-processor failed in %s: %s", fileName, msg))
+                    "Pre-processor failed in %s: %s", fileName, msg))
                 allOk = false
                 -- Continue running remaining processors so all errors surface;
                 -- matches validator behaviour of "log and proceed" across specs.
+            end
+        end
+    end
+
+    return allOk, warnings
+end
+
+-- ============================================================
+-- Package-scoped pre-processors (tier-C mod overrides, §6)
+-- ============================================================
+
+--- Returns the subset of `processors` whose normalized spec has
+--- `rerunAfterPatches = true`. Used by the cross-package phase to re-run the
+--- parent's own idempotent file processors against the patched data
+--- (mod_overrides.md §6.2). Preserves textual order; the caller (or
+--- runFilePreProcessors) re-applies priority sorting.
+--- @param processors table|nil Array of processor_spec records
+--- @return table Array of the rerun-flagged specs (possibly empty)
+local function selectRerunProcessors(processors)
+    local result = {}
+    if not processors then
+        return result
+    end
+    for _, spec in ipairs(processors) do
+        if normalizeProcessorSpec(spec).rerunAfterPatches then
+            result[#result + 1] = spec
+        end
+    end
+    return result
+end
+
+--- Builds the per-package wrapped-file map. Each entry of `fileEntries` is
+--- `{rows, header, fileName, writable}`; the result maps the same key to a
+--- PK-indexed array of processor-row proxies. Rows of non-writable files are
+--- wrapped read-only so setCell on them is rejected by setCellImpl (§6 scoping).
+--- @param fileEntries table Map of fileKey -> {rows, header, fileName, writable}
+--- @return table Map of fileKey -> wrapped (PK-indexed) row array
+local function wrapPackageFiles(fileEntries)
+    local wrappedFiles = {}
+    for key, entry in pairs(fileEntries) do
+        wrappedFiles[key] = wrapRowsForProcessor(
+            entry.rows, entry.header, entry.fileName, entry.writable)
+    end
+    return wrappedFiles
+end
+
+--- Creates the sandbox environment for a package-scoped processor expression.
+--- Unlike the per-file env this exposes `files` (the whole loaded set, keyed the
+--- same way package validators key it) rather than a single `rows`, plus the
+--- scoped write helpers and `rowByKey(file, key)`.
+--- @param wrappedFiles table Map of fileKey -> wrapped row array
+--- @param packageId string The owning package id (for diagnostics / `packageId`)
+--- @param ctx table Writable context shared across this package's processors
+--- @param extraEnv table|nil Additional environment variables (contexts, libraries)
+--- @return table The sandboxed environment
+local function createPackageProcessorEnv(wrappedFiles, packageId, ctx, extraEnv)
+    local env = sandbox_env.new(PROCESSOR_READ_HELPERS)
+
+    env.setCell = function(row, column, value)
+        return setCellImpl(row, column, value)
+    end
+    env.clearCell = function(row, column)
+        return setCellImpl(row, column, nil)
+    end
+    env.copy = function(v)
+        return deepCopyUnwrapped(v)
+    end
+    -- O(1) primary-key lookup into any visible file. `file` is either the file
+    -- key (string) or a wrapped-file array; the wrapped arrays are themselves
+    -- PK-indexed by wrapRowsForProcessor, so this is just a typed lookup.
+    env.rowByKey = function(file, key)
+        local arr = file
+        if type(file) == "string" then
+            arr = wrappedFiles[file]
+        end
+        if type(arr) ~= "table" or key == nil then
+            return nil
+        end
+        return arr[type(key) == "string" and key or tostring(key)]
+    end
+    env.dataIndex = dataIndexOf
+
+    env.ctx = ctx
+    env.files = wrappedFiles
+    env.package = wrappedFiles
+    env.packageId = packageId
+
+    if extraEnv then
+        for k, v in pairs(extraEnv) do
+            if env[k] == nil then
+                env[k] = v
+            end
+        end
+    end
+
+    return env
+end
+
+--- Runs a single package's tier-C pre-processors, in priority order, against
+--- the already-loaded-and-patched file set. Mutations go through the scoped
+--- setCell, so a processor can only write files the package owns or patched.
+--- Cross-package ordering (load order + `requires`) is the caller's concern;
+--- this function only orders one package's own processors by priority.
+--- @param processors table Array of processor_spec records (this package's)
+--- @param fileEntries table Map of fileKey -> {rows, header, fileName, writable}
+--- @param packageId string The owning package id
+--- @param badVal table Error reporting object
+--- @param extraEnv table|nil Additional environment variables
+--- @return boolean ok True if every error-level processor succeeded
+--- @return table Array of warning messages
+local function runPackagePreProcessors(processors, fileEntries, packageId, badVal, extraEnv)
+    if not processors or #processors == 0 then
+        return true, {}
+    end
+
+    local normalized = {}
+    for i, spec in ipairs(processors) do
+        normalized[i] = {spec = normalizeProcessorSpec(spec), originalIdx = i}
+    end
+    table.sort(normalized, function(a, b)
+        if a.spec.priority == b.spec.priority then
+            return a.originalIdx < b.originalIdx
+        end
+        return a.spec.priority < b.spec.priority
+    end)
+
+    local wrappedFiles = wrapPackageFiles(fileEntries)
+    local procCtx = {}
+    local warnings = {}
+    local allOk = true
+    local label = "package:" .. tostring(packageId)
+
+    for _, entry in ipairs(normalized) do
+        local spec = entry.spec
+        local env = createPackageProcessorEnv(wrappedFiles, packageId, procCtx, extraEnv)
+        local ok, msg = executeProcessor(spec.expr, env, PROCESSOR_QUOTA)
+        if not ok then
+            if spec.level == "warn" then
+                warnings[#warnings + 1] = {
+                    processor = spec.expr,
+                    message = msg,
+                    packageId = packageId,
+                }
+                logger:warn(string.format(
+                    "Package pre-processor warning in %s: %s", label, msg))
+            else
+                badVal.source_name = label
+                badVal(spec.expr, msg)
+                logger:error(string.format(
+                    "Package pre-processor failed in %s: %s", label, msg))
+                allOk = false
             end
         end
     end
@@ -551,6 +723,8 @@ local API = {
     getVersion = getVersion,
     normalizeProcessorSpec = normalizeProcessorSpec,
     runFilePreProcessors = runFilePreProcessors,
+    runPackagePreProcessors = runPackagePreProcessors,
+    selectRerunProcessors = selectRerunProcessors,
     -- Quota exposed for testing/customization
     PROCESSOR_QUOTA = PROCESSOR_QUOTA,
     DEFAULT_PRIORITY = DEFAULT_PRIORITY,

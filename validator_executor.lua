@@ -309,14 +309,14 @@ local function runRowValidators(validators, row, rowIndex, fileName, badVal, ext
                     rowIndex = rowIndex,
                 }
                 logger:warn(string.format(
-                    "[WARN] Row validation warning in %s row %d: %s",
+                    "Row validation warning in %s row %d: %s",
                     fileName, rowIndex, errorMsg))
             else
                 -- Error level - stop and report
                 badVal.line_no = rowIndex
                 badVal(errorMsg, "validator: " .. normalized.expr)
                 logger:error(string.format(
-                    "[ERROR] Row validation failed in %s row %d: %s",
+                    "Row validation failed in %s row %d: %s",
                     fileName, rowIndex, errorMsg))
                 return false, warnings
             end
@@ -364,14 +364,14 @@ local function runFileValidators(validators, rows, fileName, badVal, extraEnv)
                     fileName = fileName,
                 }
                 logger:warn(string.format(
-                    "[WARN] File validation warning in %s: %s",
+                    "File validation warning in %s: %s",
                     fileName, errorMsg))
             else
                 -- Error level - stop and report
                 badVal.source_name = fileName
                 badVal(normalized.expr, errorMsg)
                 logger:error(string.format(
-                    "[ERROR] File validation failed in %s: %s",
+                    "File validation failed in %s: %s",
                     fileName, errorMsg))
                 return false, warnings
             end
@@ -418,14 +418,14 @@ local function runPackageValidators(validators, files, packageId, badVal, extraE
                     packageId = packageId,
                 }
                 logger:warn(string.format(
-                    "[WARN] Package validation warning in %s: %s",
+                    "Package validation warning in %s: %s",
                     packageId, errorMsg))
             else
                 -- Error level - stop and report
                 badVal.source_name = "package:" .. packageId
                 badVal(normalized.expr, errorMsg)
                 logger:error(string.format(
-                    "[ERROR] Package validation failed in %s: %s",
+                    "Package validation failed in %s: %s",
                     packageId, errorMsg))
                 return false, warnings
             end

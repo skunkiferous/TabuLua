@@ -502,13 +502,23 @@ Type checking predicate functions for validation (is_string, is_number, is_table
 
 **File:** [processor_executor.lua](processor_executor.lua)
 
-Sandboxed execution of file pre-processors that mutate parsed rows before any
+Sandboxed execution of pre-processors that mutate parsed rows before any
 validator runs. Exposes the write helpers `setCell`, `clearCell`, `rowByKey`,
 and `dataIndex` to the sandbox, in addition to all read-side helpers inherited
-from `validator_helpers`. Pre-processor authors are required to be idempotent
-when their spec opts into the future mod-override re-run; the default is a
-single run per file. Updates only `cell.parsed`/`cell.evaluated` so the
+from `validator_helpers`. Updates only `cell.parsed`/`cell.evaluated` so the
 reformatter preserves the original on-disk text. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors) for the user-facing description.
+
+Two scopes are supported. **File-level** pre-processors (`runFilePreProcessors`,
+declared in a `Files.tsv` `preProcessors` column) operate on one file's `rows`.
+**Package-level / tier-C** pre-processors (`runPackagePreProcessors`, declared in
+the manifest's `preProcessors` field — `TODO/mod_overrides.md` §6) instead see the
+whole merged-and-patched file set as `files` and run *after* mod-override patches;
+their write helpers are scoped to files the package owns or has patched (rows of
+other files are wrapped read-only and reject `setCell`). `selectRerunProcessors`
+filters a file's processors to the ones flagged `rerunAfterPatches`, which
+`manifest_loader` re-runs against the patched data in the cross-package phase
+(§6.2); such authors must be **idempotent**. `normalizeProcessorSpec` also extracts
+the `requires` list used for cross-package ordering.
 
 **Wrapped row arrays preserve the dataset's PK index.** `wrapRowsForProcessor` returns a plain Lua array that also mirrors the dataset's column-1 PK index, so `wrappedRows[someName]` returns the wrapped row for that PK in O(1). The `rowByKey` helper delegates to this index; processor authors should reach for `rowByKey` (or the index directly) rather than scanning rows manually.
 

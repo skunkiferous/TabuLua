@@ -980,7 +980,21 @@ just exploded columns — direct match, no new mechanism (tested). Tutorial:
   (`replace_oldvalues_<col>` / `replace_newvalues_<col>`); any positional-by-index
   op (currently tier-C territory).
 
-**Phase 5 — package-scoped pre-processors (tier C).**
+**Phase 5 — package-scoped pre-processors (tier C). ✅ LANDED (post-v0.27.0).**
+Manifests gained `preProcessors:{processor_spec}|nil`; `processor_spec` gained a
+`requires:{name}` field. `processor_executor` grew `runPackagePreProcessors` (a
+package-scoped sandbox exposing the whole `files` set, with `setCell` write-scoped
+to owned + patched files via a per-row `writable` flag) and `selectRerunProcessors`.
+`manifest_loader.runAllPackagePreProcessors` runs as an explicit pipeline step
+between `applyPatches` and the validators: it builds a directory-based file→package
+ownership map (`buildFileToPackage`, same rule as `matchDescriptorFiles`), derives
+each package's write scope (owned files + patch/bulk targets it declared), and
+`schedulePackageProcessors` topologically orders packages by load order refined with
+the `requires` edges (Kahn, load-order tie-break; cycle → hard error; unloaded
+requirement → warn). For each package in that order it (a) re-runs that package's
+own `rerunAfterPatches`-flagged file processors against the patched data, then (b)
+runs its tier-C processors. Tests: `spec/package_preprocessor_spec.lua` (6). The
+notes below are the original plan.
 
 - Builds on the now-landed pre-processors feature ([pre_processors.md](pre_processors.md)),
   which already specifies the relevant `processor_spec` fields (`priority`,
