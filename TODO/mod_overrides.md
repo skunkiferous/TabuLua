@@ -937,7 +937,20 @@ Once the encoding is settled, the implementation work is:
 - Tests including "filter selects zero rows" warn, "filter throws" error,
   "rule-name collides with anything in the parent" disambiguation.
 
-**Phase 4 — list/map deltas via verb-prefix companion columns.**
+**Phase 4 — list/map deltas via verb-prefix companion columns. ✅ LANDED
+(post-v0.27.0).** In `patch_executor`: a per-file `analyzePatchPlan` classifies
+each `update`-row column as a direct cell set or a list/map delta companion
+(`parseMergeColumn` does longest-prefix matching: `append_`/`prepend_`/`remove_`/
+`remove_last_`/`replace_`/`replace_oldvalue_`/`replace_newvalue_`/
+`replace_last_*`). Literal column-name match takes precedence over the merge
+prefix (warns on collision). List vs map detected via `parsers.arrayElementType`
+/ `mapKVType` (strips `|nil`); merges applied on a `deepCopyUnwrapped` of the cell
+then written via `setCellRaw`. In-place replace pairs grouped by target+`_last_`;
+a half-pair is a header error; `oldvalue` not found errors; removed-not-present /
+`old==new` / multiple matches warn. Sub-record dotted paths (`stats.attack`) are
+just exploded columns — direct match, no new mechanism (tested). Tutorial:
+`ItemPatch.tsv` appends tags via `append_tags`. Tests:
+`spec/list_map_delta_patch_spec.lua` (12). The notes below are the original plan.
 
 - Patch executor recognises `append_<col>`, `prepend_<col>`, `remove_<col>`,
   `replace_<col>` companion columns for list parent columns; maps recognise

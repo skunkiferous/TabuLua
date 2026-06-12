@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Mod-style list/map deltas (tier A — `TODO/mod_overrides.md` Phase 4).** A row
+  patch's `update` row can now **merge into** a parent list or map cell instead of
+  replacing it, via verb-prefix companion columns (§4.3). For a list column `<col>`:
+  `append_<col>` / `prepend_<col>` (insert at tail/head, preserving order),
+  `remove_<col>` (drop the first occurrence of each value; `remove_last_<col>` drops
+  the last), `replace_<col>` (set the whole list), and the paired
+  `replace_oldvalue_<col>` / `replace_newvalue_<col>` (replace **in place, by
+  value**, position preserved — `replace_last_*` targets the last match). Map
+  columns support `append_<col>` (merge entries), `remove_<col>` (drop keys), and
+  `replace_<col>`. **Prefix-collision precedence:** a patch column whose literal
+  name matches a parent column always binds to it; the merge-prefix reading is only
+  a fall-back (a warning fires when both are possible). Sub-record fields are
+  patched by their dotted path (`stats.attack`) with no new mechanism — they are
+  ordinary exploded columns. Edge cases are reported: `replace_oldvalue_` not found
+  is an error, a half-specified in-place pair is a header error, a removed value not
+  present warns, and `old == new` / multiple matches warn. The patch header is
+  analysed once per file (`analyzePatchPlan`). Tutorial: `ItemPatch.tsv` now appends
+  tags to core items via `append_tags`.
+
 - **Mod-style filter/transform patches (tier B — `TODO/mod_overrides.md` Phase 3).**
   A dependent package can now patch parent rows **by a selector** instead of by key,
   via a `bulk_patch` file: `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` in

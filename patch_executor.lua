@@ -15,6 +15,12 @@ local logger = require("named_logger").getLogger(NAME)
 
 local parsers = require("parsers")
 local isNullable = parsers.isNullable
+local unionTypes = parsers.unionTypes
+local arrayElementType = parsers.arrayElementType
+local mapKVType = parsers.mapKVType
+
+local table_utils = require("table_utils")
+local deepCopyUnwrapped = table_utils.deepCopyUnwrapped
 
 local tsv_model = require("tsv_model")
 local newDataCell = tsv_model.newDataCell
@@ -73,6 +79,52 @@ local function isEmptyCell(cell)
     if type(cell) ~= "table" then return true end
     local v = cell.value
     return v == nil or v == ""
+end
+
+-- ============================================================
+-- Tier-A list/map delta companion columns (mod_overrides.md §4.3, Phase 4).
+-- ============================================================
+
+-- Classifies a column type as a collection (a `|nil` suffix is ignored): returns
+-- "list", elemType  OR  "map", keyType, valType  OR  nil for a non-collection.
+local function collectionInfo(type_spec)
+    local candidates = unionTypes(type_spec)
+    if not candidates then candidates = {type_spec} end
+    for _, t in ipairs(candidates) do
+        if t ~= "nil" then
+            local elem = arrayElementType(t)
+            if elem then return "list", elem end
+            local k, v = mapKVType(t)
+            if k then return "map", k, v end
+        end
+    end
+    return nil
+end
+
+-- Verb-prefix companion-column grammar. Longest prefixes are matched first so e.g.
+-- `replace_oldvalue_<col>` wins over `replace_<col>`, and `remove_last_<col>` over
+-- `remove_<col>`. Returns {verb, target, role, last} or nil. `verb` is one of
+-- append | prepend | remove | replace_whole | inplace; `role` (old|new) and `last`
+-- apply to the in-place replace pair / the find-based `_last_` variants.
+local MERGE_PREFIXES = {
+    {p = "replace_last_oldvalue_", verb = "inplace",       role = "old", last = true},
+    {p = "replace_last_newvalue_", verb = "inplace",       role = "new", last = true},
+    {p = "replace_oldvalue_",      verb = "inplace",       role = "old", last = false},
+    {p = "replace_newvalue_",      verb = "inplace",       role = "new", last = false},
+    {p = "remove_last_",           verb = "remove",                      last = true},
+    {p = "append_",                verb = "append",                      last = false},
+    {p = "prepend_",               verb = "prepend",                     last = false},
+    {p = "remove_",                verb = "remove",                      last = false},
+    {p = "replace_",               verb = "replace_whole",               last = false},
+}
+local function parseMergeColumn(name)
+    for _, m in ipairs(MERGE_PREFIXES) do
+        if #name > #m.p and name:sub(1, #m.p) == m.p then
+            return {verb = m.verb, target = name:sub(#m.p + 1),
+                role = m.role, last = m.last}
+        end
+    end
+    return nil
 end
 
 -- Builds, in one pass, the pk(string) -> row proxy map AND the pk(string) ->
@@ -244,27 +296,218 @@ local function setCellRaw(rawRow, parentCol, value, parseCtx, badVal, label)
     return true
 end
 
--- Applies an `update` patch row's non-empty cells to an existing parent row,
--- in place. Empty patch cells leave the target unchanged; a non-empty cell with
--- a nil value (e.g. `=nil`) clears the column (requires a nullable parent type).
-local function applyUpdate(rowProxy, patchRow, patchHeader, targetHeader,
-    skipIdx, badVal)
+-- Returns a fresh, mutable (unwrapped) copy of a parent row's collection cell, or
+-- nil if the cell is empty/absent. Mutate the copy, then write it back via setCellRaw.
+local function currentCollection(rawRow, col)
+    local cell = rawRow[col.idx]
+    return deepCopyUnwrapped(cell and cell.parsed)
+end
+
+-- Removes the first (or last) occurrence of `value` from a list, in place.
+local function removeOccurrence(list, value, last)
+    if last then
+        for i = #list, 1, -1 do
+            if list[i] == value then table.remove(list, i); return true end
+        end
+    else
+        for i = 1, #list do
+            if list[i] == value then table.remove(list, i); return true end
+        end
+    end
+    return false
+end
+
+-- Applies a list-merge op (append / prepend / remove / replace_whole) to a parent
+-- list column, in place. `items` is the companion cell's parsed value: a list of
+-- elements for append/prepend/remove, or the whole new list for replace_whole.
+local function applyListMerge(rawRow, m, items, badVal)
+    if type(items) ~= "table" then items = {items} end
+    if m.verb == "replace_whole" then
+        return setCellRaw(rawRow, m.targetCol, items, "parsed", badVal, "replace_")
+    end
+    local current = currentCollection(rawRow, m.targetCol) or {}
+    if m.verb == "append" then
+        for _, v in ipairs(items) do current[#current + 1] = v end
+    elseif m.verb == "prepend" then
+        -- Insert at the head preserving the listed order: prepend {a,b} on {c,d}
+        -- yields {a,b,c,d}.
+        for i = #items, 1, -1 do table.insert(current, 1, items[i]) end
+    elseif m.verb == "remove" then
+        for _, v in ipairs(items) do
+            if not removeOccurrence(current, v, m.last) then
+                logger:warn(badVal.source_name .. ": remove_" .. m.targetCol.name
+                    .. ": value '" .. tostring(v) .. "' not present (no-op)")
+            end
+        end
+    end
+    return setCellRaw(rawRow, m.targetCol, current, "parsed", badVal,
+        m.verb .. "_" .. m.targetCol.name)
+end
+
+-- Applies a map-merge op (append / remove / replace_whole) to a parent map column.
+-- For append, `value` is a map merged into the parent; for remove, a list of keys
+-- to drop; for replace_whole, the whole new map.
+local function applyMapMerge(rawRow, m, value, badVal)
+    if m.verb == "replace_whole" then
+        return setCellRaw(rawRow, m.targetCol, value, "parsed", badVal, "replace_")
+    end
+    local current = currentCollection(rawRow, m.targetCol) or {}
+    if m.verb == "append" then
+        if type(value) == "table" then
+            for k, v in pairs(value) do current[k] = v end
+        end
+    elseif m.verb == "remove" then
+        if type(value) == "table" then
+            for _, k in ipairs(value) do current[k] = nil end
+        end
+    end
+    return setCellRaw(rawRow, m.targetCol, current, "parsed", badVal,
+        m.verb .. "_" .. m.targetCol.name)
+end
+
+-- Replaces, in place and by value, the first (or last) occurrence of `oldVal` with
+-- `newVal` in a parent list column, preserving its position (op 8). `oldVal` not
+-- found is an error; multiple matches warn; old == new is a no-op warning.
+local function applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal)
+    local current = currentCollection(rawRow, pair.targetCol) or {}
+    local positions = {}
+    for i = 1, #current do
+        if current[i] == oldVal then positions[#positions + 1] = i end
+    end
+    if #positions == 0 then
+        badVal(pair.targetCol.name, "replace_oldvalue_" .. pair.targetCol.name
+            .. ": value '" .. tostring(oldVal) .. "' not found in the list")
+        return false
+    end
+    if oldVal == newVal then
+        logger:warn(badVal.source_name .. ": replace on '" .. pair.targetCol.name
+            .. "': old value equals new value (no-op)")
+        return true
+    end
+    if #positions > 1 then
+        logger:warn(badVal.source_name .. ": replace on '" .. pair.targetCol.name
+            .. "': value '" .. tostring(oldVal) .. "' occurs " .. #positions
+            .. " times; replacing the " .. (pair.last and "last" or "first"))
+    end
+    local pos = pair.last and positions[#positions] or positions[1]
+    current[pos] = newVal
+    return setCellRaw(rawRow, pair.targetCol, current, "parsed", badVal,
+        "replace_" .. pair.targetCol.name)
+end
+
+-- Analyses a patch file's header ONCE: classifies each non-key/op column as a
+-- direct cell set or a list/map delta companion (§4.3). Returns a plan
+-- { direct = {{patchIdx, targetCol}}, simple = {{patchIdx, verb, targetCol, kind}},
+--   inplace = {{targetCol, last, oldIdx, newIdx}} } plus reports header errors.
+local function analyzePatchPlan(patchHeader, targetHeader, skipIdx, badVal)
+    local plan = {direct = {}, simple = {}, inplace = {}}
+    local inplaceByKey = {}
+    for _, pc in ipairs(patchHeader) do
+        if not skipIdx[pc.idx] then
+            local tc = targetHeader[pc.name]
+            local merge = parseMergeColumn(pc.name)
+            local mtc = merge and targetHeader[merge.target]
+            local kind = mtc and collectionInfo(mtc.type_spec)
+            if tc then
+                -- Prefix-collision precedence: a literal column-name match always
+                -- wins; the merge interpretation is only a fall-back.
+                plan.direct[#plan.direct + 1] = {patchIdx = pc.idx, targetCol = tc}
+                if merge and mtc and kind then
+                    logger:warn(badVal.source_name .. ": patch column '" .. pc.name
+                        .. "' matches both a target column and a merge-prefix form;"
+                        .. " using the column (rename to disambiguate)")
+                end
+            elseif merge and mtc and kind then
+                local listOnly = (merge.verb == "prepend" or merge.verb == "inplace")
+                if kind == "map" and listOnly then
+                    logger:warn(badVal.source_name .. ": '" .. pc.name
+                        .. "': " .. merge.verb .. " is not valid on the map column '"
+                        .. merge.target .. "' (ignored)")
+                elseif merge.verb == "inplace" then
+                    local key = merge.target .. "|" .. tostring(merge.last)
+                    local pair = inplaceByKey[key]
+                    if not pair then
+                        pair = {targetCol = mtc, last = merge.last}
+                        inplaceByKey[key] = pair
+                        plan.inplace[#plan.inplace + 1] = pair
+                    end
+                    pair[merge.role .. "Idx"] = pc.idx
+                else
+                    plan.simple[#plan.simple + 1] = {patchIdx = pc.idx,
+                        verb = merge.verb, targetCol = mtc, kind = kind, last = merge.last}
+                end
+            elseif merge and mtc and not kind then
+                logger:warn(badVal.source_name .. ": '" .. pc.name
+                    .. "': target column '" .. merge.target
+                    .. "' is not a list/map (merge-prefix ignored)")
+            else
+                logger:warn(badVal.source_name .. ": patch column '" .. pc.name
+                    .. "' has no matching column in the target file (ignored)")
+            end
+        end
+    end
+    -- An in-place replace needs BOTH halves of the pair as columns.
+    local complete = {}
+    for _, pair in ipairs(plan.inplace) do
+        if pair.oldIdx and pair.newIdx then
+            complete[#complete + 1] = pair
+        else
+            badVal(pair.targetCol.name, "replace-in-place on '" .. pair.targetCol.name
+                .. "' needs both replace_" .. (pair.last and "last_" or "")
+                .. "oldvalue_ and replace_" .. (pair.last and "last_" or "")
+                .. "newvalue_ columns")
+        end
+    end
+    plan.inplace = complete
+    return plan
+end
+
+-- Applies an `update` patch row to an existing parent row, in place, using a
+-- precomputed plan: direct cell sets (empty = leave unchanged, `=nil` = clear) plus
+-- list/map delta companion columns (§4.3).
+local function applyUpdate(rowProxy, patchRow, plan, badVal)
     local rawRow = unwrap(rowProxy)
     local ok = true
-    for _, patchCol in ipairs(patchHeader) do
-        if not skipIdx[patchCol.idx] then
-            local patchCell = patchRow[patchCol.idx]
-            if not isEmptyCell(patchCell) then
-                local targetCol = targetHeader[patchCol.name]
-                badVal.col_name = patchCol.name
-                if not targetCol then
-                    logger:warn(badVal.source_name .. ": patch column '"
-                        .. patchCol.name .. "' has no matching column in the target"
-                        .. " file (ignored)")
-                elseif not setCellRaw(rawRow, targetCol, parsedOf(patchCell),
-                    "parsed", badVal, "update") then
-                    ok = false
-                end
+    -- Direct cell sets.
+    for _, d in ipairs(plan.direct) do
+        local patchCell = patchRow[d.patchIdx]
+        if not isEmptyCell(patchCell) then
+            badVal.col_name = d.targetCol.name
+            if not setCellRaw(rawRow, d.targetCol, parsedOf(patchCell),
+                "parsed", badVal, "update") then
+                ok = false
+            end
+        end
+    end
+    -- List/map delta merges (append / prepend / remove / replace_whole).
+    for _, m in ipairs(plan.simple) do
+        local patchCell = patchRow[m.patchIdx]
+        if not isEmptyCell(patchCell) then
+            badVal.col_name = m.targetCol.name
+            local applied
+            if m.kind == "list" then
+                applied = applyListMerge(rawRow, m, parsedOf(patchCell), badVal)
+            else
+                applied = applyMapMerge(rawRow, m, parsedOf(patchCell), badVal)
+            end
+            if not applied then ok = false end
+        end
+    end
+    -- In-place replace-by-value (paired oldvalue/newvalue columns).
+    for _, pair in ipairs(plan.inplace) do
+        local oldCell = patchRow[pair.oldIdx]
+        local newCell = patchRow[pair.newIdx]
+        local oldEmpty, newEmpty = isEmptyCell(oldCell), isEmptyCell(newCell)
+        if not (oldEmpty and newEmpty) then
+            badVal.col_name = pair.targetCol.name
+            if oldEmpty ~= newEmpty then
+                badVal(pair.targetCol.name, "replace-in-place on '"
+                    .. pair.targetCol.name .. "': both replace_oldvalue and"
+                    .. " replace_newvalue cells must be set (or both empty)")
+                ok = false
+            elseif not applyInplaceReplace(rawRow, pair, parsedOf(oldCell),
+                parsedOf(newCell), badVal) then
+                ok = false
             end
         end
     end
@@ -297,6 +540,9 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
     end
 
     local skipIdx = {[1] = true, [patchOpCol.idx] = true}
+    -- Classify the patch columns once (direct cell sets vs §4.3 list/map deltas),
+    -- shared by every `update` row in this file.
+    local updatePlan = analyzePatchPlan(patchHeader, targetHeader, skipIdx, badVal)
     local targetArray = unwrap(targetTsv)
     local byPk, idxByPk = indexByPk(targetArray)
     -- Removals are deferred: a removed row is tombstoned (its index recorded) and
@@ -352,8 +598,7 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                         .. "' not found in target '" .. basename(targetName) .. "'")
                     ok = false
                 else
-                    if not applyUpdate(existing, patchRow, patchHeader,
-                        targetHeader, skipIdx, badVal) then
+                    if not applyUpdate(existing, patchRow, updatePlan, badVal) then
                         ok = false
                     end
                 end
