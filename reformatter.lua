@@ -295,6 +295,11 @@ local function generateUsage()
         "                        Independent of --file=; can run alone. Diff <dir> against",
         "                        the sources to see exactly what an override changed.",
         "",
+        "  --explain-patch[=<F>] Print which mod override set each cell / row / column.",
+        "                        Optional filter <F> = <file>[:<pk>[:<column>]] narrows the",
+        "                        report (e.g. --explain-patch=Item.tsv:sword:price). Loads",
+        "                        and reports; does not require an export.",
+        "",
         "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
         "                        block) in place against the loaded data, keeping markers.",
         "                        Independent of reformat/export; nothing is exported.",
@@ -379,6 +384,9 @@ local function generateUsage()
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua --export-merged tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Write the post-override merged state of every file to merged/")
+    table.insert(lines, "")
+    table.insert(lines, "  lua reformatter.lua --explain-patch tutorial/core/ tutorial/expansion/")
+    table.insert(lines, "      Print which mod override set each cell / row / column")
 
     return table.concat(lines, "\n")
 end
@@ -696,6 +704,19 @@ local function exportMerged(tsv_files, directories, mergedDir, fn2Transcoder, ba
     logger:info("Merged export: wrote " .. count .. " file(s) to " .. mergedDir)
 end
 
+--- Parses an `--explain-patch` filter spec `<file>[:<pk>[:<col>]]` into the
+--- {file, pk, col} shape `patch_lineage:report` expects. Empty parts mean "no
+--- filter on that axis"; the file part is lowercased to match the lineage keys.
+--- A non-string spec (bare `--explain-patch`) yields an empty (unfiltered) filter.
+--- @param spec string|boolean The flag value
+--- @return table {file?, pk?, col?}
+local function parseExplainFilter(spec)
+    if type(spec) ~= "string" then return {} end
+    local file, pk, col = spec:match("^([^:]*):?([^:]*):?(.*)$")
+    local function nz(s) return (s and s ~= "") and s or nil end
+    return {file = file and file ~= "" and file:lower() or nil, pk = nz(pk), col = nz(col)}
+end
+
 --- Main entry point: loads, reformats, and optionally exports files.
 --- @param directories table Sequence of directory paths containing TSV files
 --- @param exporters table|nil Optional sequence of exporters, each either a function or {fn, subdir, tableSerializer}
@@ -747,13 +768,20 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         if mc then excludeDirs[mc] = true end
     end
 
-    local result = manifest_loader.processFiles(directories, badVal, excludeDirs, opt_variants)
+    -- --explain-patch (Phase 6b): enable patch-lineage tracking during load.
+    local explainPatch = exportParams and exportParams.explainPatch
+    local result = manifest_loader.processFiles(directories, badVal, excludeDirs,
+        opt_variants, explainPatch ~= nil)
     if result then
         local tsv_files = result.tsv_files
         local raw_files = result.raw_files
         reformat(tsv_files, raw_files, badVal,
             result.joinMeta and result.joinMeta.fn2Transcoder,
             result.joinMeta and result.joinMeta.patchedTargets)
+        -- Print the override lineage report (independent of reformat/export).
+        if explainPatch ~= nil and result.lineage then
+            print(result.lineage:report(parseExplainFilter(explainPatch)))
+        end
         local errors = badVal.errors
         if errors > 0 then
             logger:error("Reformatting errors: " .. errors)
@@ -906,6 +934,7 @@ if isMainScript then
         local exportDirSet = false      -- whether --export-dir= was given
         local mergedDir = nil           -- --export-merged[=<dir>] target (nil = off)
         local mergedSet = false         -- whether --export-merged was given
+        local explainPatch = nil        -- --explain-patch[=<filter>] (nil = off, true = all)
         local variants = {}             -- --variant=<name> values
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
@@ -978,6 +1007,11 @@ if isMainScript then
             elseif arg_i == "--export-merged" then
                 mergedDir = "merged"
                 mergedSet = true
+            elseif arg_i:match("^%-%-explain%-patch=") then
+                explainPatch = arg_i:match("^%-%-explain%-patch=(.*)$")
+                if explainPatch == "" then explainPatch = true end
+            elseif arg_i == "--explain-patch" then
+                explainPatch = true
             elseif arg_i:match("^%-%-log%-level=") then
                 local levelName = arg_i:match("^%-%-log%-level=(.+)$")
                 local level = LOG_LEVELS[levelName:lower()]
@@ -1034,6 +1068,7 @@ if isMainScript then
             if collapseExploded then offending[#offending + 1] = "--collapse-exploded" end
             if exportDirSet then offending[#offending + 1] = "--export-dir=" end
             if mergedSet then offending[#offending + 1] = "--export-merged" end
+            if explainPatch ~= nil then offending[#offending + 1] = "--explain-patch" end
             if #offending > 0 then
                 logger:error("--cog-docs cannot be combined with export options ("
                     .. table.concat(offending, ", ") .. "). It refreshes COG doc "
@@ -1072,6 +1107,10 @@ if isMainScript then
             -- --export-merged[=<dir>]: write the post-override merged snapshot.
             if mergedSet then
                 exportParams.mergedDir = normalizePath(mergedDir)
+            end
+            -- --explain-patch[=<filter>]: track + print override lineage.
+            if explainPatch ~= nil then
+                exportParams.explainPatch = explainPatch
             end
             processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
         end

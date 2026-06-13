@@ -5,11 +5,16 @@ local NAME = "patch_executor"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
+
+-- Optional patch-lineage recording (mod_overrides.md §4.4, Phase 6b). The write
+-- paths take an optional lineage object; when nil, nothing is recorded.
+local patch_lineage = require("patch_lineage")
+local lineageValueStr = patch_lineage.valueStr
 
 local logger = require("named_logger").getLogger(NAME)
 
@@ -62,6 +67,11 @@ end
 -- Lowercased basename of a path/key.
 local function basename(key)
     return (key:match("[/\\]([^/\\]+)$") or key):lower()
+end
+
+-- Case-preserving basename, for lineage display (e.g. "ItemPatch.tsv").
+local function dispName(key)
+    return key:match("[/\\]([^/\\]+)$") or key
 end
 
 -- Reads a cell's parsed value (falling back to evaluated).
@@ -465,17 +475,25 @@ end
 -- Applies an `update` patch row to an existing parent row, in place, using a
 -- precomputed plan: direct cell sets (empty = leave unchanged, `=nil` = clear) plus
 -- list/map delta companion columns (§4.3).
-local function applyUpdate(rowProxy, patchRow, plan, badVal)
+local function applyUpdate(rowProxy, patchRow, plan, badVal, linCtx)
     local rawRow = unwrap(rowProxy)
     local ok = true
+    -- Records one cell change to the lineage (no-op when tracking is off).
+    local function rec(col, action)
+        if linCtx then
+            linCtx.lineage:cell(linCtx.target, linCtx.pk, col, action, linCtx.source)
+        end
+    end
     -- Direct cell sets.
     for _, d in ipairs(plan.direct) do
         local patchCell = patchRow[d.patchIdx]
         if not isEmptyCell(patchCell) then
             badVal.col_name = d.targetCol.name
-            if not setCellRaw(rawRow, d.targetCol, parsedOf(patchCell),
-                "parsed", badVal, "update") then
+            local value = parsedOf(patchCell)
+            if not setCellRaw(rawRow, d.targetCol, value, "parsed", badVal, "update") then
                 ok = false
+            else
+                rec(d.targetCol.name, "= " .. lineageValueStr(value))
             end
         end
     end
@@ -484,13 +502,18 @@ local function applyUpdate(rowProxy, patchRow, plan, badVal)
         local patchCell = patchRow[m.patchIdx]
         if not isEmptyCell(patchCell) then
             badVal.col_name = m.targetCol.name
+            local items = parsedOf(patchCell)
             local applied
             if m.kind == "list" then
-                applied = applyListMerge(rawRow, m, parsedOf(patchCell), badVal)
+                applied = applyListMerge(rawRow, m, items, badVal)
             else
-                applied = applyMapMerge(rawRow, m, parsedOf(patchCell), badVal)
+                applied = applyMapMerge(rawRow, m, items, badVal)
             end
-            if not applied then ok = false end
+            if not applied then
+                ok = false
+            else
+                rec(m.targetCol.name, m.verb .. " " .. lineageValueStr(items))
+            end
         end
     end
     -- In-place replace-by-value (paired oldvalue/newvalue columns).
@@ -505,9 +528,14 @@ local function applyUpdate(rowProxy, patchRow, plan, badVal)
                     .. pair.targetCol.name .. "': both replace_oldvalue and"
                     .. " replace_newvalue cells must be set (or both empty)")
                 ok = false
-            elseif not applyInplaceReplace(rawRow, pair, parsedOf(oldCell),
-                parsedOf(newCell), badVal) then
-                ok = false
+            else
+                local oldVal, newVal = parsedOf(oldCell), parsedOf(newCell)
+                if not applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal) then
+                    ok = false
+                else
+                    rec(pair.targetCol.name, "replace " .. lineageValueStr(oldVal)
+                        .. " -> " .. lineageValueStr(newVal))
+                end
             end
         end
     end
@@ -517,12 +545,17 @@ end
 -- Applies one patch file's rows to its target dataset (mutating the target's
 -- underlying array). Returns true if all error-level ops succeeded.
 local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
-    expr_eval, badVal)
+    expr_eval, badVal, opt_lineage)
     local patchHeader = patchTsv[1]
     local targetHeader = targetTsv[1]
     badVal.source_name = patchFileName
     badVal.line_no = 0
     badVal.col_idx = 0
+    -- Lineage keys for `--explain-patch`: the target is keyed by lowercased
+    -- basename (so patch + overlay events for one file group together); the
+    -- source keeps its original case for readability.
+    local linTarget = basename(targetName)
+    local linSource = dispName(patchFileName)
 
     local patchOpCol = patchHeader["patchOp"]
     if not patchOpCol then
@@ -576,6 +609,9 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                         targetArray[pos] = row
                         byPk[pkStr] = row
                         idxByPk[pkStr] = pos
+                        if opt_lineage then
+                            opt_lineage:row(linTarget, pkStr, "add", linSource)
+                        end
                     else
                         ok = false
                     end
@@ -590,6 +626,9 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                     anyRemoved = true
                     byPk[pkStr] = nil
                     idxByPk[pkStr] = nil
+                    if opt_lineage then
+                        opt_lineage:row(linTarget, pkStr, "remove", linSource)
+                    end
                 end
             elseif op == "update" then
                 local existing = byPk[pkStr]
@@ -598,7 +637,9 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                         .. "' not found in target '" .. basename(targetName) .. "'")
                     ok = false
                 else
-                    if not applyUpdate(existing, patchRow, updatePlan, badVal) then
+                    local linCtx = opt_lineage and
+                        {lineage = opt_lineage, target = linTarget, pk = pkStr, source = linSource}
+                    if not applyUpdate(existing, patchRow, updatePlan, badVal, linCtx) then
                         ok = false
                     end
                 end
@@ -612,6 +653,9 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                     targetArray[pos] = row
                     byPk[pkStr] = row
                     idxByPk[pkStr] = pos
+                    if opt_lineage then
+                        opt_lineage:row(linTarget, pkStr, "replace", linSource)
+                    end
                 else
                     ok = false
                 end
@@ -638,12 +682,15 @@ end
 -- against the matched target row; otherwise it is a literal parsed by the parent
 -- column. Returns true if all error-level rules/cells succeeded.
 local function applyOneBulkPatch(bulkFileName, bulkTsv, targetName, targetTsv,
-    loadEnv, badVal)
+    loadEnv, badVal, opt_lineage)
     local bulkHeader = bulkTsv[1]
     local targetHeader = targetTsv[1]
     badVal.source_name = bulkFileName
     badVal.line_no = 0
     badVal.col_idx = 0
+    -- Lineage keys for `--explain-patch` (target lowercased, source case-preserved).
+    local linTarget = basename(targetName)
+    local linSource = dispName(bulkFileName)
 
     local whereCol = bulkHeader["where"]
     if not whereCol then
@@ -744,10 +791,20 @@ local function applyOneBulkPatch(bulkFileName, bulkTsv, targetName, targetTsv,
                                             elseif not setCellRaw(unwrap(dataRows[i]),
                                                 parentCol, v, "parsed", badVal, "bulk update") then
                                                 ok = false
+                                            elseif opt_lineage then
+                                                opt_lineage:cell(linTarget,
+                                                    tostring(parsedOf(dataRows[i][1])), parentCol.name,
+                                                    "= " .. lineageValueStr(v) .. " (bulk '"
+                                                    .. tostring(ruleName) .. "')", linSource)
                                             end
                                         elseif not setCellRaw(unwrap(dataRows[i]),
                                             parentCol, raw, "tsv", badVal, "bulk update") then
                                             ok = false
+                                        elseif opt_lineage then
+                                            opt_lineage:cell(linTarget,
+                                                tostring(parsedOf(dataRows[i][1])), parentCol.name,
+                                                "= " .. lineageValueStr(raw) .. " (bulk '"
+                                                .. tostring(ruleName) .. "')", linSource)
                                         end
                                     end
                                 end
@@ -776,7 +833,7 @@ end
 -- last-writer-wins is deterministic). Returns (ok, patchedTargets) where
 -- patchedTargets is a set of full target file names the reformatter must NOT
 -- rewrite (so patches are never baked into parent source — §7.1).
-local function applyPatches(tsv_files, patchPlan, loadEnv, badVal)
+local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage)
     local patchedTargets = {}
     if not patchPlan or #patchPlan == 0 then
         return true, patchedTargets
@@ -804,10 +861,10 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal)
                 local applied
                 if entry.kind == "bulk" then
                     applied = applyOneBulkPatch(entry.file, patchTsv, targetName,
-                        tsv_files[targetName], loadEnv, badVal)
+                        tsv_files[targetName], loadEnv, badVal, opt_lineage)
                 else
                     applied = applyOnePatch(entry.file, patchTsv, targetName,
-                        tsv_files[targetName], expr_eval, badVal)
+                        tsv_files[targetName], expr_eval, badVal, opt_lineage)
                 end
                 if not applied then
                     ok = false

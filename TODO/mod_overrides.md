@@ -1041,15 +1041,24 @@ independently of `--file=`, mutually exclusive with `--cog-docs`, and excludes i
 output tree from collection. Tests: `spec/export_merged_spec.lua` (6). Docs:
 REFORMATTER.md "Merged Export" + "Mod Overrides and Round-Trip" sections.
 
-**Phase 6b — `--explain-patch` + cell lineage.** (Not started.)
-
-- Patch lineage tracking added to cells (optional metadata, off by default for perf).
-- Lineage records: tier-A0 schema-overlay effects (`widenTo`, `newDefault`,
-  `suppressValidator`), tier-A row ops, tier-B bulk-rule matches (named by their rule
-  label), tier-A list/map deltas (including `replace_oldvalue` / `replace_newvalue`
-  pairs), and tier-C processor writes — each cell can name the package + file + row
-  responsible for its final value.
-- Reformatter learns to emit a merged copy on demand (`--export-merged`).
+**Phase 6b — `--explain-patch` + cell lineage. ✅ LANDED (post-v0.27.0).** New module
+`patch_lineage` — an optional, off-by-default collector (`new()` → `cell`/`row`/`schema`
+recorders + a filterable `report(filter)`; `valueStr` renders values compactly). It is
+threaded as an optional object through every override write path: `schema_overlay`
+(`recordLineage` for `widenTo`/`newDefault`; `applyValidatorOverrides` for matched
+`suppressValidator`), `patch_executor` (`applyOnePatch` row add/remove/replace,
+`applyUpdate` direct/list-map cell writes, `applyOneBulkPatch` transform writes — named by
+rule), and `processor_executor.setCellImpl` (tier-C writes, attributed to `package:<id>`;
+only the package-scoped env passes the lineage ctx, so file-level/graph writes are not
+recorded). `manifest_loader.processFiles` gains `opt_trackLineage`, creates the collector,
+threads it, and returns it on `result.lineage`. The reformatter flag
+`--explain-patch[=<file>[:<pk>[:<column>]]]` enables tracking and prints the report;
+target events are keyed by lowercased basename so patch + overlay entries for one file
+group together, while sources keep their original case. Off-by-default = zero cost on a
+normal run. Tests: `spec/patch_lineage_spec.lua` (8: module unit + end-to-end through
+manifest_loader, incl. off-by-default, schema/cell/delta recording, filtering). Docs:
+REFORMATTER.md "Explain Patch" section, DATA_FORMAT_README "Inspecting Overrides".
+The `--export-merged` half of the original Phase 6 landed earlier as Phase 6a.
 
 **Phase 7 — Recompute downstream `=expr` cells when their dependencies are patched.**
 

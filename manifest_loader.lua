@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 28, 0)
+local VERSION = semver(0, 29, 0)
 
 -- Module name
 local NAME = "manifest_loader"
@@ -74,6 +74,11 @@ local schema_overlay = require("schema_overlay")
 -- parent dataset in place and returning the set of targets the reformatter
 -- must not rewrite.
 local patch_executor = require("patch_executor")
+
+-- Optional patch-lineage tracking (mod_overrides.md §4.4, Phase 6b). Created only
+-- when the caller (reformatter's --explain-patch) asks for it; threaded into every
+-- override write path and returned on the result for the CLI to render.
+local patch_lineage = require("patch_lineage")
 
 -- The type-wiring registry replaces the three hand-written branches that
 -- previously dispatched Type / enum / custom_type_def behaviour from the
@@ -1032,7 +1037,7 @@ end
 -- (§6.2), then (b) runs the package's manifest-declared tier-C processors with
 -- write access scoped to files it owns or has declared patches for.
 -- Returns (ok, warnings).
-local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package_order, loadEnv, badVal, opt_lineage)
     local lcFn2PreProcessors = joinMeta.lcFn2PreProcessors or {}
     local patchPlan = joinMeta.patchPlan or {}
 
@@ -1122,7 +1127,7 @@ local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package
                 }
             end
             local ok, warnings = runPackagePreProcessors(
-                processors, fileEntries, pid, badVal, loadEnv)
+                processors, fileEntries, pid, badVal, loadEnv, opt_lineage)
             if not ok then allOk = false end
             for _, w in ipairs(warnings) do
                 allWarnings[#allWarnings + 1] = w
@@ -1227,8 +1232,11 @@ end
 --- @param opt_variants table|nil Optional array of active variant names (e.g., {"en", "debug"})
 --- @return table|nil Result table with {raw_files, tsv_files, package_order, packages}, or nil on error
 --- @side_effect Logs progress and errors; registers type parsers and aliases
-local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
+local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, opt_trackLineage)
     badVal = initializeBadVal(badVal)
+    -- Optional patch-lineage collector (Phase 6b): when the caller asks, every
+    -- override write path records into it; returned on the result for --explain-patch.
+    local lineage = opt_trackLineage and patch_lineage.new() or nil
     -- Reset file-registered types tracking for this processing run
     fileRegisteredTypes = {}
     -- The archive cache only earns its keep WITHIN a load (a zip's N members would
@@ -1337,8 +1345,14 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     -- (and the exporter) see the patched state. patchedTargets is the set of
     -- parent files the reformatter must not rewrite (patches are never baked into
     -- parent source — §7.1).
+    -- Record the (already-applied, pre-parse) tier-A0 column overlays into the
+    -- lineage first, so schema effects precede the row/cell events below.
+    if lineage then
+        schema_overlay.recordLineage(joinMeta.schemaOverlays, lineage)
+    end
+
     local patchesOk, patchedTargets = patch_executor.applyPatches(
-        tsv_files, joinMeta.patchPlan, loadEnv, badVal)
+        tsv_files, joinMeta.patchPlan, loadEnv, badVal, lineage)
     joinMeta.patchedTargets = patchedTargets
 
     -- Tier-C cross-package pre-processors (mod_overrides.md §6): a child package's
@@ -1347,12 +1361,12 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
     -- rerunAfterPatches re-derives against the patched data. Runs after patches,
     -- before validators, in requires-refined package load order.
     local pkgProcessorsOk, pkgProcessorWarnings = runAllPackagePreProcessors(
-        tsv_files, joinMeta, packages, package_order, loadEnv, badVal)
+        tsv_files, joinMeta, packages, package_order, loadEnv, badVal, lineage)
 
     -- Tier-A0 schema overlays: downgrade / remove parent validators a mod has
     -- declared a suppressValidator for, before the validators run against the
     -- (possibly patched) data. Mutates the per-file validator lists in joinMeta.
-    schema_overlay.applyValidatorOverrides(joinMeta.schemaOverlays, joinMeta, badVal)
+    schema_overlay.applyValidatorOverrides(joinMeta.schemaOverlays, joinMeta, badVal, lineage)
 
     -- Run all validators (row, file, package) after files are loaded
     local validatorsOk, validationWarnings = runAllValidators(
@@ -1398,6 +1412,9 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants)
         validationPassed = processorsOk and patchesOk and pkgProcessorsOk
             and validatorsOk and postPassesOk,
         validationWarnings = validationWarnings,
+        -- Patch lineage (Phase 6b), present only when opt_trackLineage was set —
+        -- consumed by the reformatter's --explain-patch.
+        lineage = lineage,
     }
 end
 

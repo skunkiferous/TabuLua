@@ -44,6 +44,7 @@ lua reformatter.lua [OPTIONS] <dir1> [dir2] ...
 | `--collapse-exploded` | Collapse exploded columns into single composite columns during export (e.g., `location.level` + `location.x` → `location:{level,x}`). Default: keep exploded columns as separate flat columns. |
 | `--clean` | Empty the export directory before exporting. Removes all existing files and subdirectories. |
 | `--export-merged[=<dir>]` | Write a TSV snapshot of every dataset with all mod overrides applied (patches, schema overlays, tier-C processors) to `<dir>` (default: `merged`), mirroring the source layout. Independent of `--file=`; can run on its own. See [Merged Export (`--export-merged`)](#merged-export---export-merged). |
+| `--explain-patch[=<filter>]` | Print which mod override set each cell / row / column. Optional `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report. See [Explain Patch (`--explain-patch`)](#explain-patch---explain-patch). |
 | `--cog-docs` | Refresh COG doc templates (`.md`/`.txt`/`.html` files containing a COG block) in place against the loaded data, keeping the markers so they stay re-runnable. Independent of reformat/export; nothing is exported. **Mutually exclusive with the export options** (`--file=`, `--data=`, `--strip-cog`, `--clean`, `--collapse-exploded`, `--export-dir=`, `--export-merged`) — combining them is an error. |
 | `--strip-cog` | When exporting, strip the COG scaffolding (markers and code lines) from generated doc templates, leaving only the generated output for a clean published file. Default: off (markers kept). |
 | `--no-number-warn` | Suppress the informational warnings about `number` type usage (recommending `float` instead). Useful when `number` is intentionally used for mixed integer/decimal formatting. |
@@ -410,8 +411,8 @@ lua reformatter.lua --export-merged=build/merged tutorial/core/ tutorial/expansi
   exact original text **byte-for-byte**, and `=expr` cells keep their expression. In
   other words it is a *fully-resolved* snapshot, not just "source + mod edits": diffing
   it against the sources shows everything the load resolved, which includes more than
-  the mods alone. To attribute a specific cell to a specific override, use the
-  per-cell lineage tooling instead.
+  the mods alone. To attribute a specific cell to a specific override, use
+  [`--explain-patch`](#explain-patch---explain-patch) instead.
 - **Line endings.** Output is written verbatim as LF (the in-memory convention),
   matching reformatter behaviour — never CRLF — so a merged file does not differ from
   an LF source on whitespace alone.
@@ -425,6 +426,48 @@ lua reformatter.lua --export-merged=build/merged tutorial/core/ tutorial/expansi
   non-reversible sources whose format can't be reproduced.
 - **Sources are untouched.** Merged export never modifies the inputs; it only writes
   under `<dir>`.
+
+## Explain Patch (`--explain-patch`)
+
+`--explain-patch[=<filter>]` prints a **lineage report** answering "which mod override
+set this?". Where `--export-merged` shows the merged *data*, `--explain-patch` shows the
+*provenance* — every override write attributed to the file (or package) responsible.
+
+```bash
+lua reformatter.lua --explain-patch tutorial/core/ tutorial/expansion/
+lua reformatter.lua --explain-patch=Item.tsv:healthPotion:price tutorial/core/ tutorial/expansion/
+```
+
+Example output (full report):
+
+```text
+=== Patch lineage ===
+
+spell.tsv
+  [schema] cooldown  newDefault 3.0   <- SpellTuning.tsv
+
+item.tsv
+  [schema] price  widenTo gold|int   <- ItemPricePolicy.tsv
+  [schema] validator  suppress -> warn: self.price > 0 or 'price must be positive'   <- ItemPricePolicy.tsv
+  healthPotion
+    price = -5   <- ItemPatch.tsv
+    tags append {clearance}   <- ItemPatch.tsv
+  shadowCloak
+    price = 2100 (bulk 'epic_surcharge')   <- ItemBulk.tsv
+```
+
+- **What it records.** Every tier of mod override: tier-A0 schema overlays (`widenTo`,
+  `newDefault`, validator suppression), tier-A row ops (`add` / `remove` / `replace`),
+  cell `update`s and list/map deltas (`append` / `remove` / in-place `replace`), tier-B
+  `bulk` rule matches (named by their rule), and tier-C package-processor writes
+  (attributed to `package:<id>`). When two mods write the same cell, both entries appear
+  in apply order — the chain, last-writer-last.
+- **Filter.** `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report, e.g.
+  `--explain-patch=Item.tsv` (one file), `…=Item.tsv:sword` (one row), or
+  `…=Item.tsv:sword:price` (one cell). The file part is matched case-insensitively.
+- **Cost.** Lineage tracking is **off by default** and adds zero overhead to a normal
+  run; it is enabled only for this flag. Loads and reports; it does not require an
+  export and is **mutually exclusive with `--cog-docs`**.
 
 ## Error Handling
 

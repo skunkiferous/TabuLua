@@ -5,7 +5,7 @@ local NAME = "schema_overlay"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -62,6 +62,11 @@ local SEVERITY = {none = 0, warn = 1, error = 2}
 -- Lowercased basename of a path/key (strips any directory prefix).
 local function basename(key)
     return (key:match("[/\\]([^/\\]+)$") or key):lower()
+end
+
+-- Case-preserving basename, for lineage source display.
+local function dispName(key)
+    return key and (key:match("[/\\]([^/\\]+)$") or key) or ""
 end
 
 -- Reads a cell's parsed value (falling back to evaluated) by column name.
@@ -145,10 +150,12 @@ local function ingestOverlayFile(overlays, file_name, targetBasename, transcoder
                 -- newDefault: later overlay (in load order) wins.
                 if newDefault ~= nil and newDefault ~= "" then
                     entry.newDefault = newDefault
+                    entry.newDefaultSrc = file_name   -- for --explain-patch lineage
                 end
                 -- widenTo: order-independent union of every declared widening.
                 if widenTo ~= nil and widenTo ~= "" then
                     entry.widenTo = mergeUnion(entry.widenTo, widenTo)
+                    entry.widenToSrc = file_name      -- last widener (lineage display)
                 end
             end
 
@@ -235,7 +242,7 @@ end
 -- override drops the matched validator; `warn` / `error` rebinds its level.
 -- Each list is rebuilt (rather than mutated) because the parsed validator
 -- specs may be read-only. Unmatched suppressors warn (likely a typo, §3.5).
-local function applyValidatorOverrides(overlays, joinMeta, badVal)
+local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage)
     if not overlays then return end
     local rowMap = joinMeta.lcFn2RowValidators or {}
     local fileMap = joinMeta.lcFn2FileValidators or {}
@@ -266,6 +273,7 @@ local function applyValidatorOverrides(overlays, joinMeta, badVal)
             end
             rewrite(rowMap)
             rewrite(fileMap)
+            local linSource = dispName(tgt.sources[1])
             for expr in pairs(tgt.validators) do
                 if not matched[expr] then
                     badVal.source_name = tgt.sources[1] or targetBasename
@@ -273,7 +281,32 @@ local function applyValidatorOverrides(overlays, joinMeta, badVal)
                     logger:warn(NAME .. ": suppressValidator '" .. expr
                         .. "' did not match any validator on '" .. targetBasename
                         .. "' (nothing suppressed)")
+                elseif opt_lineage then
+                    opt_lineage:schema(targetBasename, "validator",
+                        "suppress -> " .. tostring(tgt.validators[expr]) .. ": " .. expr,
+                        linSource)
                 end
+            end
+        end
+    end
+end
+
+-- Records the column-level overlay effects (widenTo / newDefault) into a patch
+-- lineage object for `--explain-patch` (Phase 6b). Validator suppressions are
+-- recorded separately, in applyValidatorOverrides (where match info is known).
+-- No-op when `lineage` is nil. Call after collectOverlays.
+local function recordLineage(overlays, lineage)
+    if not overlays or not lineage then return end
+    for targetBasename, tgt in pairs(overlays) do
+        for col, entry in pairs(tgt.columns) do
+            if entry.widenTo then
+                lineage:schema(targetBasename, col, "widenTo " .. entry.widenTo,
+                    dispName(entry.widenToSrc or tgt.sources[1]))
+            end
+            if entry.newDefault ~= nil then
+                lineage:schema(targetBasename, col,
+                    "newDefault " .. tostring(entry.newDefault),
+                    dispName(entry.newDefaultSrc or tgt.sources[1]))
             end
         end
     end
@@ -298,6 +331,7 @@ local API = {
     collectOverlays = collectOverlays,
     columnOverridesFor = columnOverridesFor,
     applyValidatorOverrides = applyValidatorOverrides,
+    recordLineage = recordLineage,
     isWidening = isWidening,
     -- Exposed for testing.
     mergeUnion = mergeUnion,

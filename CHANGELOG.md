@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`--explain-patch` + patch lineage (`TODO/mod_overrides.md` Phase 6b).** A new
+  reformatter flag `--explain-patch[=<filter>]` prints a per-cell **lineage report**
+  answering "which mod override set this?" — the provenance counterpart to
+  `--export-merged`'s merged data. It records every tier of override and attributes
+  each to the file (or `package:<id>`) responsible: tier-A0 schema overlays (`widenTo`
+  / `newDefault` / validator suppression), tier-A row `add`/`remove`/`replace`, cell
+  `update`s and list/map deltas, tier-B `bulk` rule matches (named by their rule), and
+  tier-C package-processor writes. Two mods writing the same cell appear as a chain in
+  apply order. The optional `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report
+  (e.g. `--explain-patch=Item.tsv:sword:price`). Tracking is **off by default** (zero
+  overhead on a normal run) — it is enabled only for this flag, threaded as an optional
+  lineage object through every override write path. New module `patch_lineage`;
+  `manifest_loader.processFiles` gains an `opt_trackLineage` parameter and returns the
+  collected `lineage` on its result.
+
 - **`tsv_diff` directory comparison and compressed-source support.** `tsv_diff` (the
   data-level TSV comparison tool, see `TSV_DIFF.md`) now accepts **two directories**
   instead of two files: `lua54 tsv_diff.lua <dir1> <dir2>` walks both trees recursively

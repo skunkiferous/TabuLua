@@ -2094,6 +2094,17 @@ overlays compose more gently: defaults are last-wins, type widenings are *unione
 suppressed validator takes the *lowest* severity any overlay asked for — so multiple mods
 loosening the same column rarely conflict.
 
+### Inspecting Overrides
+
+Two reformatter flags make the override layer observable (see [REFORMATTER.md](REFORMATTER.md)):
+
+- **`--export-merged[=<dir>]`** writes a snapshot of every file with all overrides applied
+  (in each file's own format), so you can see — or diff — the final merged data.
+- **`--explain-patch[=<file>[:<pk>[:<column>]]]`** prints a **lineage report**: which
+  override (which patch/overlay file, or `package:<id>`) set each cell, row, or column,
+  including the full chain when several mods touch the same cell. Lineage tracking is off
+  by default and adds no cost to a normal run.
+
 ---
 
 ### Tier A0 — Schema Overlay

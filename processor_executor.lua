@@ -5,11 +5,15 @@ local NAME = "processor_executor"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 28, 0)
+local VERSION = semver(0, 29, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
+
+-- Optional patch-lineage recording for tier-C writes (mod_overrides.md §6, §4.4).
+local patch_lineage = require("patch_lineage")
+local lineageValueStr = patch_lineage.valueStr
 
 local sandbox = require("sandbox")
 local sandbox_env = require("sandbox_env")
@@ -204,7 +208,9 @@ end
 --- @param wrappedRow table Processor-row proxy
 --- @param column string|number Column name or index
 --- @param value any New parsed value (or nil for clearCell)
-local function setCellImpl(wrappedRow, column, value)
+--- @param opt_linCtx table|nil {lineage, source} — when set (package-scoped
+---   tier-C runs only), record the write for `--explain-patch`.
+local function setCellImpl(wrappedRow, column, value, opt_linCtx)
     local ctx = row_context[wrappedRow]
     if not ctx then
         error("setCell: first argument is not a processor row", 2)
@@ -230,6 +236,16 @@ local function setCellImpl(wrappedRow, column, value)
         error("setCell: cell is missing for column '" .. col.name .. "'", 2)
     end
 
+    -- Records the write to the patch lineage (package-scoped runs only).
+    local function rec(written)
+        if opt_linCtx then
+            local pk = wrappedRow[1]
+            opt_linCtx.lineage:cell(
+                (ctx.fileName:match("[/\\]([^/\\]+)$") or ctx.fileName):lower(),
+                tostring(pk), col.name, "= " .. lineageValueStr(written), opt_linCtx.source)
+        end
+    end
+
     if value == nil then
         local ts = col.type_spec
         if not parsers.isNullable(ts) then
@@ -238,6 +254,7 @@ local function setCellImpl(wrappedRow, column, value)
         end
         rawCell[2] = nil
         rawCell[3] = nil
+        rec(nil)
         return
     end
 
@@ -249,9 +266,11 @@ local function setCellImpl(wrappedRow, column, value)
         end
         rawCell[2] = parsed
         rawCell[3] = parsed
+        rec(parsed)
     else
         rawCell[2] = value
         rawCell[3] = value
+        rec(value)
     end
 end
 
@@ -609,15 +628,16 @@ end
 --- @param packageId string The owning package id (for diagnostics / `packageId`)
 --- @param ctx table Writable context shared across this package's processors
 --- @param extraEnv table|nil Additional environment variables (contexts, libraries)
+--- @param opt_linCtx table|nil {lineage, source} for `--explain-patch` recording
 --- @return table The sandboxed environment
-local function createPackageProcessorEnv(wrappedFiles, packageId, ctx, extraEnv)
+local function createPackageProcessorEnv(wrappedFiles, packageId, ctx, extraEnv, opt_linCtx)
     local env = sandbox_env.new(PROCESSOR_READ_HELPERS)
 
     env.setCell = function(row, column, value)
-        return setCellImpl(row, column, value)
+        return setCellImpl(row, column, value, opt_linCtx)
     end
     env.clearCell = function(row, column)
-        return setCellImpl(row, column, nil)
+        return setCellImpl(row, column, nil, opt_linCtx)
     end
     env.copy = function(v)
         return deepCopyUnwrapped(v)
@@ -665,7 +685,7 @@ end
 --- @param extraEnv table|nil Additional environment variables
 --- @return boolean ok True if every error-level processor succeeded
 --- @return table Array of warning messages
-local function runPackagePreProcessors(processors, fileEntries, packageId, badVal, extraEnv)
+local function runPackagePreProcessors(processors, fileEntries, packageId, badVal, extraEnv, opt_lineage)
     if not processors or #processors == 0 then
         return true, {}
     end
@@ -686,10 +706,12 @@ local function runPackagePreProcessors(processors, fileEntries, packageId, badVa
     local warnings = {}
     local allOk = true
     local label = "package:" .. tostring(packageId)
+    -- A tier-C processor's writes are attributed to its package in the lineage.
+    local linCtx = opt_lineage and {lineage = opt_lineage, source = label}
 
     for _, entry in ipairs(normalized) do
         local spec = entry.spec
-        local env = createPackageProcessorEnv(wrappedFiles, packageId, procCtx, extraEnv)
+        local env = createPackageProcessorEnv(wrappedFiles, packageId, procCtx, extraEnv, linCtx)
         local ok, msg = executeProcessor(spec.expr, env, PROCESSOR_QUOTA)
         if not ok then
             if spec.level == "warn" then

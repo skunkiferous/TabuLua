@@ -34,7 +34,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [lua_transcoder](#lua_transcoder) | Content-pipeline transcoder reading/writing TabuLua's `--file=lua` export (`return { <header>, <row>, … }`) as a wide TSV; id-selected (`lua:tabulua`), schema-free, reversible, executed under the sandbox + instruction quota | error_reporting, parsers, raw_tsv, read_only, sandbox, sandbox_env, serialization, string_utils, tsv_model |
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
-| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, patch_executor, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor |
+| [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, patch_executor, patch_lineage, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor |
 | [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
 | [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
@@ -51,7 +51,7 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [parsers.type_parsing](#parserstype_parsing) | Core type parsing with inheritance support | parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.state, parsers.utils, serialization |
 | [parsers.utils](#parsersutils) | Utility functions for parsers module | parsers.state, serialization, table_parsing |
 | [predicates](#predicates) | Type checking predicate functions | read_only, string_utils, table_parsing, table_utils |
-| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, type_wiring, validator_executor, validator_helpers |
+| [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, patch_lineage, read_only, sandbox, sandbox_env, table_utils, type_wiring, validator_executor, validator_helpers |
 | [raw_eav](#raw_eav) | Low-level reader/writer for the Entity–Attribute–Value (EAV / "long") 3-column table layout | raw_tsv, read_only |
 | [raw_tsv](#raw_tsv) | Low-level TSV file parsing and writing | file_util, predicates, read_only, string_utils |
 | [read_only](#read_only) | Read-only table proxy wrappers | table_utils |
@@ -59,8 +59,9 @@ This document lists all Lua modules in the project alphabetically, with a brief 
 | [regex_utils](#regex_utils) | Lua pattern to PCRE translation | predicates, read_only, sparse_sequence |
 | [round_trip](#round_trip) | Round-trip serialization/deserialization testing | deserialization, read_only, serialization |
 | [sandbox_env](#sandbox_env) | Single owner of the sandbox "safe API surface" | comparators, predicates, read_only, string_utils, table_utils |
-| [patch_executor](#patch_executor) | Tier-A/B mod row patches: applies key-addressed `add`/`remove`/`update`/`replace` (`patch`, incl. list/map delta companion columns) and `where`-selected filter/transform (`bulk_patch`) ops to target parent datasets in load order, mutating in place without baking into parent source | named_logger, parsers, read_only, table_utils, tsv_model, validator_executor |
-| [schema_overlay](#schema_overlay) | Tier-A0 mod schema overlays: collects `SchemaOverlay` files and applies their column `widenTo` / `newDefault` (pre-parse) and validator `suppress`/downgrade (pre-validation) to a parent file, without baking into the source | content_pipeline, named_logger, parsers, raw_tsv, read_only, tsv_model, validator_executor |
+| [patch_executor](#patch_executor) | Tier-A/B mod row patches: applies key-addressed `add`/`remove`/`update`/`replace` (`patch`, incl. list/map delta companion columns) and `where`-selected filter/transform (`bulk_patch`) ops to target parent datasets in load order, mutating in place without baking into parent source | named_logger, parsers, patch_lineage, read_only, table_utils, tsv_model, validator_executor |
+| [patch_lineage](#patch_lineage) | Optional, off-by-default record of which mod override (file or `package:<id>`) set each cell / row / column, for `--explain-patch`; threaded through every override write path and rendered as a filterable report | read_only |
+| [schema_overlay](#schema_overlay) | Tier-A0 mod schema overlays: collects `SchemaOverlay` files and applies their column `widenTo` / `newDefault` (pre-parse) and validator `suppress`/downgrade (pre-validation) to a parent file, without baking into the source | content_pipeline, named_logger, parsers, patch_lineage, raw_tsv, read_only, tsv_model, validator_executor |
 | [schema_validator](#schema_validator) | Validates typed JSON and XML export formats | read_only |
 | [serialization](#serialization) | Data serialization (Lua, JSON, XML, SQL, MessagePack) | named_logger, predicates, read_only, sandbox, sparse_sequence |
 | [sparse_sequence](#sparse_sequence) | Sparse array implementation | read_only |
@@ -349,7 +350,7 @@ Orchestrates package loading: discovers packages, resolves dependencies, dispatc
 
 **`extractDataRows` preserves the dataset's PK index.** The internal `extractDataRows(tsv_file)` helper returns the data rows as a plain array but also copies the dataset's column-1 PK keys onto the result, so callers receive a row array that is still PK-indexed (`rows[someName]` is O(1)). Direct consumers — file validators, file pre-processors, package validators — should reuse this index instead of rebuilding a name→row map.
 
-**Dependencies:** builtin_wiring, error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, processor_executor, raw_tsv, read_only, sandbox_env, table_utils, tsv_model, type_wiring, validator_executor
+**Dependencies:** builtin_wiring, error_reporting, file_util, files_desc, graph_wiring, lua_cog, manifest_info, parsers, patch_executor, patch_lineage, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor
 
 ---
 
@@ -522,7 +523,7 @@ the `requires` list used for cross-package ordering.
 
 **Wrapped row arrays preserve the dataset's PK index.** `wrapRowsForProcessor` returns a plain Lua array that also mirrors the dataset's column-1 PK index, so `wrappedRows[someName]` returns the wrapped row for that PK in O(1). The `rowByKey` helper delegates to this index; processor authors should reach for `rowByKey` (or the index directly) rather than scanning rows manually.
 
-**Dependencies:** error_reporting, named_logger, parsers, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers
+**Dependencies:** error_reporting, named_logger, parsers, patch_lineage, read_only, sandbox, sandbox_env, table_utils, validator_executor, validator_helpers
 
 ---
 
@@ -595,9 +596,19 @@ The single owner of the sandbox "safe API surface" — the curated set of Lua bu
 
 **File:** [patch_executor.lua](patch_executor.lua)
 
-Tier-A mod-style row patches (`TODO/mod_overrides.md` §4). Applies a patch file (`typeName=patch`, `patchOf=Target.tsv`) to its parent dataset: `add` / `remove` / `update` / `replace` ops keyed by the parent primary key, carried by the patch file's `patchOp` column. `applyPatches` runs after own-package pre-processors and before validators, in package load order (last writer wins). Each patch value is parsed against the patch file's own column type then re-validated against the parent column's parser (so a tier-A0 `widenTo` overlay lets a patch set a value the parent type would reject). The parent dataset is mutated in place via `read_only.unwrap` (append / deferred-tombstone removal + one compaction pass / cell write); added rows are built with `tsv_model.newDataCell` / `newDataRow`. An `update` row may also carry **list/map delta companion columns** (`append_`/`prepend_`/`remove_`(`_last_`)/`replace_`<col>, the paired `replace_oldvalue_`/`replace_newvalue_`<col> for in-place by-value replacement, and `append_`/`remove_`/`replace_` for maps); the header is classified once into a plan (`analyzePatchPlan`) with literal-column-name precedence over the merge-prefix reading. Tier-B `bulk_patch` files (`bulkPatchOf=Target.tsv`) instead select rows with a `where` expression and `update` (transform cells) or `remove` the matches; `where` and transform `=expr` cells are evaluated against the matched target row in the validator sandbox (`validator_executor.evaluateInValidatorEnv` over `wrapRowsForValidation`). Returns the set of patched targets so the reformatter can skip them — patches are never baked into parent source.
+Tier-A mod-style row patches (`TODO/mod_overrides.md` §4). Applies a patch file (`typeName=patch`, `patchOf=Target.tsv`) to its parent dataset: `add` / `remove` / `update` / `replace` ops keyed by the parent primary key, carried by the patch file's `patchOp` column. `applyPatches` runs after own-package pre-processors and before validators, in package load order (last writer wins). Each patch value is parsed against the patch file's own column type then re-validated against the parent column's parser (so a tier-A0 `widenTo` overlay lets a patch set a value the parent type would reject). The parent dataset is mutated in place via `read_only.unwrap` (append / deferred-tombstone removal + one compaction pass / cell write); added rows are built with `tsv_model.newDataCell` / `newDataRow`. An `update` row may also carry **list/map delta companion columns** (`append_`/`prepend_`/`remove_`(`_last_`)/`replace_`<col>, the paired `replace_oldvalue_`/`replace_newvalue_`<col> for in-place by-value replacement, and `append_`/`remove_`/`replace_` for maps); the header is classified once into a plan (`analyzePatchPlan`) with literal-column-name precedence over the merge-prefix reading. Tier-B `bulk_patch` files (`bulkPatchOf=Target.tsv`) instead select rows with a `where` expression and `update` (transform cells) or `remove` the matches; `where` and transform `=expr` cells are evaluated against the matched target row in the validator sandbox (`validator_executor.evaluateInValidatorEnv` over `wrapRowsForValidation`). Returns the set of patched targets so the reformatter can skip them — patches are never baked into parent source. When an optional [patch_lineage](#patch_lineage) object is threaded in (Phase 6b, `--explain-patch`), each row/cell/delta write is recorded against the target file and the patch file responsible.
 
-**Dependencies:** named_logger, parsers, read_only, table_utils, tsv_model, validator_executor
+**Dependencies:** named_logger, parsers, patch_lineage, read_only, table_utils, tsv_model, validator_executor
+
+---
+
+### patch_lineage
+
+**File:** [patch_lineage.lua](patch_lineage.lua)
+
+Optional, off-by-default record of mod-override provenance (`TODO/mod_overrides.md` §4.4, Phase 6b) backing the reformatter's `--explain-patch`. A collector (`new()`) exposes `cell` / `row` / `schema` recorders that each override write path (tier-A0 [schema_overlay](#schema_overlay), tier-A/B [patch_executor](#patch_executor), tier-C [processor_executor](#processor_executor)) calls with a preformatted `action` string and the `source` responsible (patch/overlay file basename, or `package:<id>`). Events are stored in apply order, so a cell written by two mods keeps both entries — the chain, last-writer-last. `report(filter)` renders a human-readable, optionally `{file, pk, col}`-filtered report; `valueStr` compactly renders parsed values (lists as `{a,b}`, maps as `{k=v}`). The collector is created only when the caller asks (`manifest_loader.processFiles` `opt_trackLineage`), so a normal run carries zero cost.
+
+**Dependencies:** read_only
 
 ---
 
@@ -605,9 +616,9 @@ Tier-A mod-style row patches (`TODO/mod_overrides.md` §4). Applies a patch file
 
 **File:** [schema_overlay.lua](schema_overlay.lua)
 
-Tier-A0 mod-style schema overlays (`TODO/mod_overrides.md` §3). A child package declares a `SchemaOverlay` file (`schemaOverlayOf=Target.tsv`) that *loosens* a parent file's column metadata without forking it. `collectOverlays` parses every overlay file in a pre-parse pass and folds the rows into a per-target map: `widenTo` (strictly-wider type, union-composed), `newDefault` (last-writer-wins), and `suppressValidator` + `validatorLevel` (lowest severity wins). `columnOverridesFor` feeds the widen/default overrides into `tsv_model.processTSV` as the target file's header parses; `applyValidatorOverrides` rebinds or drops the matched parent validators just before validation. Overlays are a load-time view only — the declared `type_spec` / `default_expr` are preserved so the reformatter never bakes them into the source.
+Tier-A0 mod-style schema overlays (`TODO/mod_overrides.md` §3). A child package declares a `SchemaOverlay` file (`schemaOverlayOf=Target.tsv`) that *loosens* a parent file's column metadata without forking it. `collectOverlays` parses every overlay file in a pre-parse pass and folds the rows into a per-target map: `widenTo` (strictly-wider type, union-composed), `newDefault` (last-writer-wins), and `suppressValidator` + `validatorLevel` (lowest severity wins). `columnOverridesFor` feeds the widen/default overrides into `tsv_model.processTSV` as the target file's header parses; `applyValidatorOverrides` rebinds or drops the matched parent validators just before validation. Overlays are a load-time view only — the declared `type_spec` / `default_expr` are preserved so the reformatter never bakes them into the source. `recordLineage` / the lineage arg on `applyValidatorOverrides` emit the column `widenTo` / `newDefault` and matched validator-suppression effects into a [patch_lineage](#patch_lineage) object for `--explain-patch` (Phase 6b).
 
-**Dependencies:** content_pipeline, named_logger, parsers, raw_tsv, read_only, tsv_model, validator_executor
+**Dependencies:** content_pipeline, named_logger, parsers, patch_lineage, raw_tsv, read_only, tsv_model, validator_executor
 
 ---
 
