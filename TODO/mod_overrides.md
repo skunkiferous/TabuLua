@@ -1015,7 +1015,25 @@ notes below are the original plan.
 - Tests: cross-package ordering, cycle detection, `rerunAfterPatches` re-execution sees
   patched rows.
 
-**Phase 6 — `--explain-patch` and `--export-merged` CLI flags.**
+**Phase 6 — `--explain-patch` and `--export-merged` CLI flags.** Split into two
+independently shippable commits: **6a `--export-merged`** and **6b `--explain-patch`
++ cell lineage**.
+
+**Phase 6a — `--export-merged`. ✅ LANDED (post-v0.27.0).** Reformatter flag
+`--export-merged[=<dir>]` (default `merged/`) writes a TSV snapshot of every loaded
+dataset with all mod overrides applied, mirroring the source layout
+(`<dir>/<package>/<relpath>`). It is the counterpart to the §7.1 no-bake rule:
+in-place reformat omits overrides (to protect parent source); merged export includes
+them. Implemented in `reformatter.serializeMergedDataset` — rather than reimplement
+the dataset serializer, it temporarily rewrites each data cell's `reformatted` (index
+4) from its live `parsed` value, calls the normal `tostring`, then restores every
+cell (so the live dataset is untouched). `=expr` cells keep their expression; all
+other cells are re-rendered from `parsed` (a fully-resolved snapshot, not a drop-in
+source file). Runs independently of `--file=`, mutually exclusive with `--cog-docs`,
+and excludes its own output tree from collection. Tests: `spec/export_merged_spec.lua`
+(4). Docs: REFORMATTER.md "Merged Export" + "Mod Overrides and Round-Trip" sections.
+
+**Phase 6b — `--explain-patch` + cell lineage.** (Not started.)
 
 - Patch lineage tracking added to cells (optional metadata, off by default for perf).
 - Lineage records: tier-A0 schema-overlay effects (`widenTo`, `newDefault`,

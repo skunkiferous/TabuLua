@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`--export-merged` reformatter flag (`TODO/mod_overrides.md` Phase 6a).** Writes a
+  TSV snapshot of every loaded dataset **with all mod overrides applied** (tier-A/B
+  patches, tier-A0 schema-overlay defaults, list/map deltas, tier-C processor writes)
+  to a separate tree — `--export-merged` (default `merged/`) or `--export-merged=<dir>`
+  — mirroring the source layout as `<dir>/<package>/<relpath>`. It is the deliberate
+  counterpart to the no-bake rule: in-place reformat *omits* overrides to protect parent
+  source, while merged export *includes* them so you can inspect (or diff) the final
+  merged data. Cells are re-rendered from their final parsed values; `=expr` cells keep
+  their expression. The live dataset and all source files are left untouched (the
+  serializer temporarily rewrites each cell's reformatted text from `parsed`, then
+  restores it). Runs independently of `--file=` and is mutually exclusive with
+  `--cog-docs`.
+
 - **Package-scoped pre-processors (tier C — `TODO/mod_overrides.md` Phase 5).** A
   package manifest may now declare `preProcessors:{processor_spec}|nil`. These
   **tier-C** processors run after all files are parsed **and after tier-A/B patches

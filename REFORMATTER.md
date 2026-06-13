@@ -43,7 +43,8 @@ lua reformatter.lua [OPTIONS] <dir1> [dir2] ...
 | `--data=<format>` | Data serialization format (see [Data Formats](#data-formats) below). Required for some file formats, optional for others. |
 | `--collapse-exploded` | Collapse exploded columns into single composite columns during export (e.g., `location.level` + `location.x` → `location:{level,x}`). Default: keep exploded columns as separate flat columns. |
 | `--clean` | Empty the export directory before exporting. Removes all existing files and subdirectories. |
-| `--cog-docs` | Refresh COG doc templates (`.md`/`.txt`/`.html` files containing a COG block) in place against the loaded data, keeping the markers so they stay re-runnable. Independent of reformat/export; nothing is exported. **Mutually exclusive with the export options** (`--file=`, `--data=`, `--strip-cog`, `--clean`, `--collapse-exploded`, `--export-dir=`) — combining them is an error. |
+| `--export-merged[=<dir>]` | Write a TSV snapshot of every dataset with all mod overrides applied (patches, schema overlays, tier-C processors) to `<dir>` (default: `merged`), mirroring the source layout. Independent of `--file=`; can run on its own. See [Merged Export (`--export-merged`)](#merged-export---export-merged). |
+| `--cog-docs` | Refresh COG doc templates (`.md`/`.txt`/`.html` files containing a COG block) in place against the loaded data, keeping the markers so they stay re-runnable. Independent of reformat/export; nothing is exported. **Mutually exclusive with the export options** (`--file=`, `--data=`, `--strip-cog`, `--clean`, `--collapse-exploded`, `--export-dir=`, `--export-merged`) — combining them is an error. |
 | `--strip-cog` | When exporting, strip the COG scaffolding (markers and code lines) from generated doc templates, leaving only the generated output for a clean published file. Default: off (markers kept). |
 | `--no-number-warn` | Suppress the informational warnings about `number` type usage (recommending `float` instead). Useful when `number` is intentionally used for mixed integer/decimal formatting. |
 | `--no-unquoted-warn` | Suppress the informational warnings about assuming a value is a single unquoted string. Useful when TSV data intentionally contains unquoted string values in array columns. |
@@ -373,6 +374,43 @@ writes the original raw cells, exactly as the author wrote them. Round-trip
 fidelity is preserved even when a processor has run. The processor's effects
 remain visible to validators and exporters in memory; they just don't appear
 on disk. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-processors).
+
+## Mod Overrides and Round-Trip
+
+When a dependent package ships **mod overrides** — row patches, schema overlays,
+or tier-C package processors (see [DATA_FORMAT_README §Mod Overrides](DATA_FORMAT_README.md#mod-overrides)) —
+the reformatter follows the same "no-bake" rule as for pre-processors: a parent
+file that a mod patched is **left untouched on disk**. Its in-memory dataset
+reflects the merged result (so validators and exporters see it), but reformatting
+that file in place would write the mod's changes back into the parent's source, so
+the reformatter skips it. The patch / overlay files themselves round-trip normally.
+
+## Merged Export (`--export-merged`)
+
+`--export-merged[=<dir>]` writes a **TSV snapshot of every loaded dataset with all
+mod overrides applied** to a separate tree (default: `merged/`), so you can inspect
+the final merged data without disturbing any source file. It is the deliberate
+counterpart to the no-bake rule above: where in-place reformat *omits* overrides,
+merged export *includes* them.
+
+```bash
+lua reformatter.lua --export-merged tutorial/core/ tutorial/expansion/
+lua reformatter.lua --export-merged=build/merged tutorial/core/ tutorial/expansion/
+```
+
+- **Layout.** Each file is written to `<dir>/<package-dir-name>/<path-relative-to-it>`,
+  so packages keep separate subtrees and the source layout is mirrored
+  (`merged/core/Item.tsv`, `merged/expansion/ItemPatch.tsv`, …).
+- **Independent of `--file=`.** It can run on its own (just load + merged snapshot)
+  or alongside a format export. It is **mutually exclusive with `--cog-docs`**.
+- **What it shows.** Cells are re-rendered from their final parsed values, so
+  tier-A/B patch edits, tier-A0 overlay defaults, list/map deltas, and tier-C
+  processor writes all appear. `=expr` cells are kept as their expression (not
+  resolved); other cells — including those that resolved to a default — are rendered
+  as literals. Output is always TSV, regardless of a source's on-disk encoding, so
+  it is a fully-resolved snapshot for inspection rather than a drop-in source file.
+- **Sources are untouched.** Merged export never modifies the inputs; it only writes
+  under `<dir>` — diffing it against the sources shows the net effect of the overrides.
 
 ## Error Handling
 

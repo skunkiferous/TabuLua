@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 -- Module name
 local NAME = "reformatter"
@@ -48,6 +48,7 @@ local logger = named_logger.getLogger(NAME)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
+local unwrap = read_only.unwrap
 
 local file_util = require("file_util")
 local safeReplaceFile = file_util.safeReplaceFile
@@ -66,6 +67,7 @@ local content_pipeline = require("content_pipeline")
 
 local error_reporting = require("error_reporting")
 local badValGen = error_reporting.badValGen
+local nullBadVal = error_reporting.nullBadVal
 
 local exporter = require("exporter")
 
@@ -287,6 +289,12 @@ local function generateUsage()
         "  --clean               Empty the export directory before exporting",
         "                        Removes all existing files and subdirectories",
         "",
+        "  --export-merged[=<dir>]  Write a TSV snapshot of every dataset with all mod",
+        "                        overrides applied (patches / overlays / tier-C processors)",
+        "                        to <dir> (default: \"merged\"), mirroring the source layout.",
+        "                        Independent of --file=; can run alone. Diff <dir> against",
+        "                        the sources to see exactly what an override changed.",
+        "",
         "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
         "                        block) in place against the loaded data, keeping markers.",
         "                        Independent of reformat/export; nothing is exported.",
@@ -368,6 +376,9 @@ local function generateUsage()
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua --file=lua --file=json tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Export to multiple formats (uses defaults for each)")
+    table.insert(lines, "")
+    table.insert(lines, "  lua reformatter.lua --export-merged tutorial/core/ tutorial/expansion/")
+    table.insert(lines, "      Write the post-override merged state of every file to merged/")
 
     return table.concat(lines, "\n")
 end
@@ -496,6 +507,130 @@ local function reformat(tsv_files, raw_files, badVal, fn2Transcoder, patchedTarg
     end
 end
 
+--- Computes the destination path for a file in the merged-export tree.
+--- A loaded file under input directory `d` is written to
+--- `<mergedDir>/<basename(d)>/<path-relative-to-d>`, so each package keeps its
+--- own subtree (no collisions when two packages share a basename) and the layout
+--- mirrors the source. Files not under any input directory fall back to their
+--- basename directly under `mergedDir`.
+--- @param file_name string Full (normalized) path of the loaded file
+--- @param directories table Sequence of input directory paths
+--- @param mergedDir string Root of the merged-export tree
+--- @return string The destination path
+local function relativeMergedPath(file_name, directories, mergedDir)
+    local nf = normalizePath(file_name)
+    local bestDir, bestRel = nil, nil
+    for _, d in ipairs(directories) do
+        local nd = normalizePath(d)
+        local prefix = nd .. "/"
+        if nf:sub(1, #prefix) == prefix and (not bestDir or #nd > #bestDir) then
+            bestDir = nd
+            bestRel = nf:sub(#prefix + 1)
+        end
+    end
+    if bestDir then
+        local base = bestDir:match("[^/]+$") or bestDir
+        return mergedDir .. "/" .. base .. "/" .. bestRel
+    end
+    return mergedDir .. "/" .. (nf:match("[^/]+$") or nf)
+end
+
+--- Serializes one dataset with mod overrides applied, then restores it.
+---
+--- In-place reformat serializes from each cell's `reformatted` text, which
+--- patches/overlays/tier-C processors deliberately leave at the *original* value
+--- (the "no-bake" trick — mod_overrides.md §7.1). To show the merged state we
+--- must serialize from the live `parsed` value instead. Rather than reimplement
+--- the dataset serializer (preamble, exploded columns, etc.), this temporarily
+--- rewrites each data cell's `reformatted` (index 4) from `parsed`, calls the
+--- normal `tostring`, then restores every cell — so the live dataset is unchanged
+--- afterwards and the existing serializer machinery is reused.
+---
+--- `=expr` cells are left untouched (their expression text is kept, not the
+--- computed value); every other cell is re-rendered from its parsed value, so a
+--- patched / overlaid / processor-written value is what appears. Defaults that
+--- resolved to a value are rendered too (this is a fully-resolved snapshot, not a
+--- source file). Transposed files (manifests) are never override targets, so they
+--- are serialized as-is.
+--- @param tsv table The dataset
+--- @param isTransposed boolean True for transposed files (serialize as-is)
+--- @return string The merged TSV text
+local function serializeMergedDataset(tsv, isTransposed)
+    if isTransposed then
+        return tostring(tsv)
+    end
+    local header = tsv[1]
+    local saved = {}
+    for ri, row in ipairs(tsv) do
+        if ri > 1 and type(row) == "table" then
+            for ci, cell in ipairs(row) do
+                local val = cell.value
+                -- Keep `=expr` cells as their expression; re-render the rest.
+                if not (type(val) == "string" and val:sub(1, 1) == "=") then
+                    local col = header[ci]
+                    if col and col.parser then
+                        local _, reformatted = col.parser(nullBadVal, cell.parsed, "parsed")
+                        if reformatted ~= nil then
+                            local raw = unwrap(cell)
+                            saved[#saved + 1] = {raw, raw[4]}
+                            raw[4] = reformatted
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local content = tostring(tsv)
+    -- Restore every rewritten cell so the live dataset is untouched.
+    for _, s in ipairs(saved) do
+        s[1][4] = s[2]
+    end
+    return content
+end
+
+--- Writes a TSV snapshot of every loaded dataset to a separate `mergedDir`,
+--- with all mod overrides applied (tier-A/B patches, schema overlays, tier-C
+--- processors). Unlike in-place reformat — which deliberately skips patched
+--- targets so overrides are never baked into the parent's source — this writes
+--- the *post-override* in-memory state, so the merged tree shows the final
+--- merged data (mod_overrides.md §7.1, the `--export-merged` tool). Content is
+--- always TSV-serialized, regardless of a source's on-disk encoding.
+--- @param tsv_files table Map of file paths to parsed (overridden) datasets
+--- @param directories table Sequence of input directory paths
+--- @param mergedDir string Root of the merged-export tree
+--- @param badVal table badVal instance for error reporting
+local function exportMerged(tsv_files, directories, mergedDir, badVal)
+    logger:info("Writing merged (overridden) state to: " .. mergedDir)
+    local count = 0
+    for file_name, tsv in pairs(tsv_files) do
+        if type(tsv) == "table" then
+            -- Manifests are transposed and never override targets — serialize as-is.
+            local isTransposed = file_name:match("%.transposed%.tsv$") ~= nil
+            local content = serializeMergedDataset(tsv, isTransposed)
+            local target = relativeMergedPath(file_name, directories, mergedDir)
+            local parent = file_util.getParentPath(target)
+            local dirOk, dirErr = true, nil
+            if parent then
+                dirOk, dirErr = mkdir(parent)
+            end
+            if not dirOk then
+                badVal(target, "Failed to create merged directory: " .. tostring(dirErr))
+            else
+                -- Plain write (not safeReplaceFile): the merged tree is a fresh
+                -- derived output, so the target may not exist yet, and the atomic
+                -- rename-the-original pattern would fail on first write.
+                local ok, err = file_util.writeFile(target, content)
+                if ok then
+                    count = count + 1
+                else
+                    badVal(target, "Failed to write merged file: " .. tostring(err))
+                end
+            end
+        end
+    end
+    logger:info("Merged export: wrote " .. count .. " file(s) to " .. mergedDir)
+end
+
 --- Main entry point: loads, reformats, and optionally exports files.
 --- @param directories table Sequence of directory paths containing TSV files
 --- @param exporters table|nil Optional sequence of exporters, each either a function or {fn, subdir, tableSerializer}
@@ -526,6 +661,7 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
 
     -- Determine export directory early so we can exclude it from file collection
     local exportDir = (exportParams and exportParams.exportDir) or DEFAULT_EXPORT_DIR
+    local mergedDir = exportParams and exportParams.mergedDir
     local excludeDirs = {}
     for _, directory in ipairs(directories) do
         if directory and directory ~= "" then
@@ -533,7 +669,17 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
             if candidate then
                 excludeDirs[candidate] = true
             end
+            -- Also exclude the merged-export tree so re-runs never re-load a
+            -- previously written merged snapshot as if it were source.
+            if mergedDir then
+                local mc = normalizePath(directory .. "/" .. mergedDir)
+                if mc then excludeDirs[mc] = true end
+            end
         end
+    end
+    if mergedDir then
+        local mc = normalizePath(mergedDir)
+        if mc then excludeDirs[mc] = true end
     end
 
     local result = manifest_loader.processFiles(directories, badVal, excludeDirs, opt_variants)
@@ -547,6 +693,13 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         if errors > 0 then
             logger:error("Reformatting errors: " .. errors)
         else
+            -- Merged export (mod_overrides.md §7.1): write the post-override state
+            -- of every dataset to a separate tree. Independent of the format
+            -- exporters below — it can run alone (just load + merged snapshot) or
+            -- alongside an export.
+            if mergedDir then
+                exportMerged(tsv_files, directories, mergedDir, badVal)
+            end
             if exporters and #exporters > 0 then
                 logger:info("Using export directory: " .. exportDir)
                 if not isDir(exportDir) then
@@ -685,6 +838,8 @@ if isMainScript then
         local cogDocs = false           -- --cog-docs flag (in-place doc refresh)
         local stripCog = false          -- --strip-cog flag (strip COG on doc export)
         local exportDirSet = false      -- whether --export-dir= was given
+        local mergedDir = nil           -- --export-merged[=<dir>] target (nil = off)
+        local mergedSet = false         -- whether --export-merged was given
         local variants = {}             -- --variant=<name> values
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
@@ -750,6 +905,13 @@ if isMainScript then
             elseif exportDirMatch then
                 exportDir = exportDirMatch
                 exportDirSet = true
+            elseif arg_i:match("^%-%-export%-merged=") then
+                local md = arg_i:match("^%-%-export%-merged=(.*)$")
+                mergedDir = (md and md ~= "") and md or "merged"
+                mergedSet = true
+            elseif arg_i == "--export-merged" then
+                mergedDir = "merged"
+                mergedSet = true
             elseif arg_i:match("^%-%-log%-level=") then
                 local levelName = arg_i:match("^%-%-log%-level=(.+)$")
                 local level = LOG_LEVELS[levelName:lower()]
@@ -805,6 +967,7 @@ if isMainScript then
             if cleanExportDir then offending[#offending + 1] = "--clean" end
             if collapseExploded then offending[#offending + 1] = "--collapse-exploded" end
             if exportDirSet then offending[#offending + 1] = "--export-dir=" end
+            if mergedSet then offending[#offending + 1] = "--export-merged" end
             if #offending > 0 then
                 logger:error("--cog-docs cannot be combined with export options ("
                     .. table.concat(offending, ", ") .. "). It refreshes COG doc "
@@ -839,6 +1002,10 @@ if isMainScript then
             -- templates have their scaffolding removed on export (default off).
             if stripCog then
                 exportParams.stripCog = true
+            end
+            -- --export-merged[=<dir>]: write the post-override merged snapshot.
+            if mergedSet then
+                exportParams.mergedDir = normalizePath(mergedDir)
             end
             processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
         end
