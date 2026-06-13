@@ -16,11 +16,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   — mirroring the source layout as `<dir>/<package>/<relpath>`. It is the deliberate
   counterpart to the no-bake rule: in-place reformat *omits* overrides to protect parent
   source, while merged export *includes* them so you can inspect (or diff) the final
-  merged data. Cells are re-rendered from their final parsed values; `=expr` cells keep
-  their expression. The live dataset and all source files are left untouched (the
-  serializer temporarily rewrites each cell's reformatted text from `parsed`, then
-  restores it). Runs independently of `--file=` and is mutually exclusive with
-  `--cog-docs`.
+  merged data. Only cells whose parsed value actually changed are re-rendered, so
+  **unchanged cells stay byte-identical to source** (no requoting / default-baking
+  noise) and `=expr` cells keep their expression. Each file is written **in its source's
+  own on-disk format** so it diffs cleanly: plain `.tsv` verbatim (LF, never CRLF), a
+  compressed `.gz` re-compressed, and a reversible transcoded source (`.eav` / `json:*`
+  / `xml:tabulua`) re-encoded — archive (`.zip`) members and non-reversible sources are
+  skipped. The live dataset and all source files are left untouched (the serializer
+  temporarily rewrites each cell's reformatted text from `parsed`, then restores it).
+  Runs independently of `--file=` and is mutually exclusive with `--cog-docs`.
 
 - **Package-scoped pre-processors (tier C — `TODO/mod_overrides.md` Phase 5).** A
   package manifest may now declare `preProcessors:{processor_spec}|nil`. These

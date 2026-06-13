@@ -102,4 +102,31 @@ describe("--export-merged", function()
         reformatter.processFiles({pkg}, {}, {mergedDir = mergedRoot})
         assert.is_true(file_util.isDir(path_join(mergedRoot, "pkg")))
     end)
+
+    it("writes LF line endings, not CRLF (so it diffs cleanly against LF sources)", function()
+        reformatter.processFiles({pkg}, nil, {mergedDir = mergedRoot})
+        -- Binary read so the CR bytes (if any) are not normalized away.
+        local raw = file_util.readFileBinary(path_join(mergedRoot, "pkg", "Item.tsv"))
+        assert.is_not_nil(raw)
+        assert.is_falsy(raw:find("\r", 1, true),
+            "merged TSV must be LF-only (a text-mode write would add CR on Windows)")
+        assert.is_truthy(raw:find("\n", 1, true), "merged TSV should use LF newlines")
+    end)
+
+    it("leaves an unchanged row byte-identical to its reformatted source", function()
+        -- First reformat the source in place so it is in canonical form, then export
+        -- merged: the unpatched `shield` row must be identical in both.
+        reformatter.processFiles({pkg}, nil, nil)               -- in-place canonicalize
+        reformatter.processFiles({pkg}, nil, {mergedDir = mergedRoot})
+        local function shieldLine(text)
+            for line in (text .. "\n"):gmatch("(.-)\n") do
+                if line:match("^shield\t") then return line end
+            end
+        end
+        local src = shieldLine(file_util.readFile(path_join(pkg, "Item.tsv")))
+        local mrg = shieldLine(file_util.readFile(path_join(mergedRoot, "pkg", "Item.tsv")))
+        assert.is_not_nil(src)
+        assert.are.equal(src, mrg,
+            "unchanged row should not be re-canonicalized (e.g. requoted) in merged")
+    end)
 end)

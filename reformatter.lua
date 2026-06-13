@@ -565,15 +565,25 @@ local function serializeMergedDataset(tsv, isTransposed)
         if ri > 1 and type(row) == "table" then
             for ci, cell in ipairs(row) do
                 local val = cell.value
-                -- Keep `=expr` cells as their expression; re-render the rest.
+                -- Keep `=expr` cells as their expression; consider the rest.
                 if not (type(val) == "string" and val:sub(1, 1) == "=") then
                     local col = header[ci]
                     if col and col.parser then
-                        local _, reformatted = col.parser(nullBadVal, cell.parsed, "parsed")
-                        if reformatted ~= nil then
+                        -- Re-render ONLY cells whose parsed value actually changed
+                        -- (i.e. an override touched them); leave unchanged cells at
+                        -- their original `reformatted` text so they stay byte-identical
+                        -- to the source (no requoting of e.g. `Fire`→`"Fire"`, no
+                        -- baking of resolved defaults). Both the original on-disk value
+                        -- and the live parsed value are compared through the same
+                        -- canonical "parsed"-context render.
+                        local origParsed = col.parser(nullBadVal,
+                            type(val) == "string" and val or "", "tsv")
+                        local _, origCanon = col.parser(nullBadVal, origParsed, "parsed")
+                        local _, newCanon = col.parser(nullBadVal, cell.parsed, "parsed")
+                        if newCanon ~= nil and newCanon ~= origCanon then
                             local raw = unwrap(cell)
                             saved[#saved + 1] = {raw, raw[4]}
-                            raw[4] = reformatted
+                            raw[4] = newCanon
                         end
                     end
                 end
@@ -588,18 +598,88 @@ local function serializeMergedDataset(tsv, isTransposed)
     return content
 end
 
---- Writes a TSV snapshot of every loaded dataset to a separate `mergedDir`,
---- with all mod overrides applied (tier-A/B patches, schema overlays, tier-C
---- processors). Unlike in-place reformat — which deliberately skips patched
---- targets so overrides are never baked into the parent's source — this writes
---- the *post-override* in-memory state, so the merged tree shows the final
---- merged data (mod_overrides.md §7.1, the `--export-merged` tool). Content is
---- always TSV-serialized, regardless of a source's on-disk encoding.
+--- Writes one merged dataset to `target`, **encoded to the source file's own
+--- on-disk format** so it has the same name and format as the original and diffs
+--- cleanly against it (a gz-aware diff compares the decompressed contents). Reuses
+--- the same reversible encoders the in-place reformatter uses for round-trip:
+---   * plain `.tsv`/`.csv`         — written verbatim (binary, LF — a text-mode
+---                                   write would translate to CRLF on Windows and
+---                                   every line would spuriously differ from source).
+---   * reversible compressed `.gz` — re-compressed through the decode stage's encoder.
+---   * reversible transcoded       — re-encoded through the transcoder (`.eav`, and
+---                                   id-selected `json:*` / `xml:tabulua`).
+---   * archive member              — left as-is for now (read-only input); skipped.
+---   * non-reversible / unknown    — skipped (its format can't be reproduced, so a
+---                                   same-named merged file could not diff cleanly).
+--- @return boolean True if a file was written
+local function writeMergedFile(file_name, content, target, fn2Transcoder, badVal)
+    -- Archive members are left for now (writing back into a container is deferred).
+    if (select(2, file_util.resolveArchivePath(file_name))) ~= nil then
+        logger:debug("Merged export skips archive member (left as-is): " .. file_name)
+        return false
+    end
+    local parent = file_util.getParentPath(target)
+    if parent then
+        local ok, err = mkdir(parent)
+        if not ok then
+            badVal(target, "Failed to create merged directory: " .. tostring(err))
+            return false
+        end
+    end
+
+    local function write(bytes)
+        -- Always binary: text content is LF and must stay LF; encoded content
+        -- (gzip / transcoder) is raw bytes. safeReplaceFile is unusable here (it
+        -- renames a not-yet-existent original), so this is a plain create/overwrite.
+        local ok, err = file_util.writeFileBinary(target, bytes)
+        if not ok then
+            badVal(target, "Failed to write merged file: " .. tostring(err))
+        end
+        return ok
+    end
+
+    local nativeTSV = (hasExtension(file_name, "tsv") or hasExtension(file_name, "csv"))
+        and not fn2Transcoder[file_name]
+    if nativeTSV then
+        return write(content)
+    end
+
+    local rd = content_pipeline.reversibleDecode(file_name)
+    local peeled = rd and rd.peeledName:lower()
+    if rd and peeled and (peeled:sub(-4) == ".tsv" or peeled:sub(-4) == ".csv") then
+        local bytes, err = rd.encode(content, nil, badVal)
+        if bytes then return write(bytes) end
+        badVal(target, "Failed to re-encode merged file: " .. tostring(err))
+        return false
+    end
+
+    local rt = content_pipeline.reversibleTranscode(file_name, fn2Transcoder[file_name])
+    if rt then
+        local bytes, err = rt.encode(content, nil, badVal)
+        if bytes then return write(bytes) end
+        badVal(target, "Failed to re-encode merged file: " .. tostring(err))
+        return false
+    end
+
+    logger:debug("Merged export skips non-reversible source (cannot reproduce its "
+        .. "format for a clean diff): " .. file_name)
+    return false
+end
+
+--- Writes a snapshot of every loaded dataset to a separate `mergedDir`, with all
+--- mod overrides applied (tier-A/B patches, schema overlays, tier-C processors).
+--- Unlike in-place reformat — which deliberately skips patched targets so overrides
+--- are never baked into the parent's source — this writes the *post-override*
+--- in-memory state, so the merged tree shows the final merged data and can be
+--- diffed against the sources (mod_overrides.md §7.1, the `--export-merged` tool).
+--- Each file is encoded to its source's on-disk format (see `writeMergedFile`).
 --- @param tsv_files table Map of file paths to parsed (overridden) datasets
 --- @param directories table Sequence of input directory paths
 --- @param mergedDir string Root of the merged-export tree
+--- @param fn2Transcoder table|nil Full path -> transcoder id (for reversible re-encode)
 --- @param badVal table badVal instance for error reporting
-local function exportMerged(tsv_files, directories, mergedDir, badVal)
+local function exportMerged(tsv_files, directories, mergedDir, fn2Transcoder, badVal)
+    fn2Transcoder = fn2Transcoder or {}
     logger:info("Writing merged (overridden) state to: " .. mergedDir)
     local count = 0
     for file_name, tsv in pairs(tsv_files) do
@@ -608,23 +688,8 @@ local function exportMerged(tsv_files, directories, mergedDir, badVal)
             local isTransposed = file_name:match("%.transposed%.tsv$") ~= nil
             local content = serializeMergedDataset(tsv, isTransposed)
             local target = relativeMergedPath(file_name, directories, mergedDir)
-            local parent = file_util.getParentPath(target)
-            local dirOk, dirErr = true, nil
-            if parent then
-                dirOk, dirErr = mkdir(parent)
-            end
-            if not dirOk then
-                badVal(target, "Failed to create merged directory: " .. tostring(dirErr))
-            else
-                -- Plain write (not safeReplaceFile): the merged tree is a fresh
-                -- derived output, so the target may not exist yet, and the atomic
-                -- rename-the-original pattern would fail on first write.
-                local ok, err = file_util.writeFile(target, content)
-                if ok then
-                    count = count + 1
-                else
-                    badVal(target, "Failed to write merged file: " .. tostring(err))
-                end
+            if writeMergedFile(file_name, content, target, fn2Transcoder, badVal) then
+                count = count + 1
             end
         end
     end
@@ -698,7 +763,8 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
             -- exporters below — it can run alone (just load + merged snapshot) or
             -- alongside an export.
             if mergedDir then
-                exportMerged(tsv_files, directories, mergedDir, badVal)
+                exportMerged(tsv_files, directories, mergedDir,
+                    result.joinMeta and result.joinMeta.fn2Transcoder, badVal)
             end
             if exporters and #exporters > 0 then
                 logger:info("Using export directory: " .. exportDir)

@@ -1027,11 +1027,19 @@ in-place reformat omits overrides (to protect parent source); merged export incl
 them. Implemented in `reformatter.serializeMergedDataset` — rather than reimplement
 the dataset serializer, it temporarily rewrites each data cell's `reformatted` (index
 4) from its live `parsed` value, calls the normal `tostring`, then restores every
-cell (so the live dataset is untouched). `=expr` cells keep their expression; all
-other cells are re-rendered from `parsed` (a fully-resolved snapshot, not a drop-in
-source file). Runs independently of `--file=`, mutually exclusive with `--cog-docs`,
-and excludes its own output tree from collection. Tests: `spec/export_merged_spec.lua`
-(4). Docs: REFORMATTER.md "Merged Export" + "Mod Overrides and Round-Trip" sections.
+cell (so the live dataset is untouched). Only cells whose parsed value actually
+**changed** are re-rendered (compared via the same canonical "parsed"-context render of
+the original on-disk text vs the live value), so unchanged cells stay byte-identical to
+source — no requoting (`Fire`→`"Fire"`) or default-baking noise; `=expr` cells keep
+their expression. `writeMergedFile` then writes each file **in its source's own on-disk
+format** so it diffs cleanly: native `.tsv` verbatim (binary, LF — a text-mode write
+adds CRLF on Windows and broke the diff), a reversible `.gz` re-compressed and a
+reversible transcoded source (`.eav` / `json:*` / `xml:tabulua`) re-encoded via the
+same `content_pipeline.reversibleDecode` / `reversibleTranscode` encoders the in-place
+reformatter uses; archive (`.zip`) members and non-reversible sources are skipped. Runs
+independently of `--file=`, mutually exclusive with `--cog-docs`, and excludes its own
+output tree from collection. Tests: `spec/export_merged_spec.lua` (6). Docs:
+REFORMATTER.md "Merged Export" + "Mod Overrides and Round-Trip" sections.
 
 **Phase 6b — `--explain-patch` + cell lineage.** (Not started.)
 

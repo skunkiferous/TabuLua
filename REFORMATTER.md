@@ -403,14 +403,28 @@ lua reformatter.lua --export-merged=build/merged tutorial/core/ tutorial/expansi
   (`merged/core/Item.tsv`, `merged/expansion/ItemPatch.tsv`, …).
 - **Independent of `--file=`.** It can run on its own (just load + merged snapshot)
   or alongside a format export. It is **mutually exclusive with `--cog-docs`**.
-- **What it shows.** Cells are re-rendered from their final parsed values, so
-  tier-A/B patch edits, tier-A0 overlay defaults, list/map deltas, and tier-C
-  processor writes all appear. `=expr` cells are kept as their expression (not
-  resolved); other cells — including those that resolved to a default — are rendered
-  as literals. Output is always TSV, regardless of a source's on-disk encoding, so
-  it is a fully-resolved snapshot for inspection rather than a drop-in source file.
+- **What it shows.** A cell whose final parsed value differs from its on-disk text
+  is re-rendered (so tier-A/B patch edits, list/map deltas, tier-A0 overlay defaults,
+  tier-C processor writes, **and** ordinary resolved data — column defaults and
+  file-level pre-processor output — all appear); every **unchanged** cell keeps its
+  exact original text **byte-for-byte**, and `=expr` cells keep their expression. In
+  other words it is a *fully-resolved* snapshot, not just "source + mod edits": diffing
+  it against the sources shows everything the load resolved, which includes more than
+  the mods alone. To attribute a specific cell to a specific override, use the
+  per-cell lineage tooling instead.
+- **Line endings.** Output is written verbatim as LF (the in-memory convention),
+  matching reformatter behaviour — never CRLF — so a merged file does not differ from
+  an LF source on whitespace alone.
+- **Same name and format as the source.** Each merged file is encoded back to its
+  source's on-disk format so it diffs cleanly against the original: plain `.tsv`/`.csv`
+  written verbatim, a compressed `.gz` **re-compressed**, and a reversible transcoded
+  source (`.eav`, id-selected `json:*` / `xml:tabulua`) **re-encoded** — reusing the
+  same encoders as in-place reformat. (Diffing a re-compressed `.gz` needs a
+  gz-aware diff, e.g. `git diff` or `zdiff`, which compares the decompressed contents.)
+  **Archive (`.zip`) members are left as-is for now** and skipped, as are any
+  non-reversible sources whose format can't be reproduced.
 - **Sources are untouched.** Merged export never modifies the inputs; it only writes
-  under `<dir>` — diffing it against the sources shows the net effect of the overrides.
+  under `<dir>`.
 
 ## Error Handling
 
