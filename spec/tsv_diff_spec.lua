@@ -7,13 +7,42 @@ local assert = require("luassert")
 -- Import the functions we'll use from busted
 local describe = busted.describe
 local it = busted.it
+local before_each = busted.before_each
+local after_each = busted.after_each
 
 local raw_tsv = require("raw_tsv")
 local tsv_diff = require("tsv_diff")
+local file_util = require("file_util")
+local compression = require("compression")
 
 --- Helper: build a raw TSV from a multi-line string.
 local function tsv(s)
     return raw_tsv.stringToRawTSV(s)
+end
+
+--- Helper: creates a fresh, unique temporary directory and returns its path.
+local function mkTempDir()
+    local td = file_util.pathJoin(file_util.getSystemTempDir(),
+        "tsvdifftest_" .. tostring(os.time()) .. "_" .. tostring(math.random(1000000)))
+    assert(file_util.mkdir(td))
+    return td
+end
+
+--- Helper: writes `content` as a plain file at `dir/rel`, creating parents.
+local function writeAt(dir, rel, content)
+    local path = file_util.pathJoin(dir, rel)
+    assert(file_util.mkdir(file_util.getParentPath(path)))
+    assert(file_util.writeFile(path, content))
+    return path
+end
+
+--- Helper: writes `content` gzip-compressed as a binary file at `dir/rel`.
+local function writeGzAt(dir, rel, content)
+    local path = file_util.pathJoin(dir, rel)
+    assert(file_util.mkdir(file_util.getParentPath(path)))
+    local gz = assert(compression.compress("gzip", content))
+    assert(file_util.writeFileBinary(path, gz))
+    return path
 end
 
 describe("tsv_diff", function()
@@ -634,6 +663,175 @@ describe("tsv_diff", function()
             })
             assert.is_false(identical)
             assert.equals(1, diffCount)
+        end)
+    end)
+
+    -- ================================================================
+    -- COMPRESSED FILES (gzip)
+    -- ================================================================
+
+    describe("compressed files", function()
+        local dir = ""
+        before_each(function() dir = mkTempDir() end)
+        after_each(function()
+            if dir ~= "" then file_util.deleteTempDir(dir); dir = "" end
+        end)
+
+        it("should compare two gzipped files by uncompressed content", function()
+            local p1 = writeGzAt(dir, "a.tsv.gz", "name\tval\njohn\t1")
+            local p2 = writeGzAt(dir, "b.tsv.gz", "name\tval\njohn\t2")
+            local identical, output, diffCount = tsv_diff.diff(p1, p2)
+            assert.is_false(identical)
+            assert.equals(1, diffCount)
+            assert.truthy(output:find("1"))
+            assert.truthy(output:find("2"))
+        end)
+
+        it("should report identical gzipped files as identical", function()
+            local p1 = writeGzAt(dir, "a.tsv.gz", "name\tval\njohn\t1\njane\t2")
+            local p2 = writeGzAt(dir, "b.tsv.gz", "name\tval\njohn\t1\njane\t2")
+            local identical, _, diffCount = tsv_diff.diff(p1, p2)
+            assert.is_true(identical)
+            assert.equals(0, diffCount)
+        end)
+
+        it("should compare a gzipped file against a plain file", function()
+            local p1 = writeAt(dir, "plain.tsv", "name\tval\njohn\t1")
+            local p2 = writeGzAt(dir, "comp.tsv.gz", "name\tval\njohn\t9")
+            local identical, _, diffCount = tsv_diff.diff(p1, p2)
+            assert.is_false(identical)
+            assert.equals(1, diffCount)
+        end)
+
+        it("should decompress a gzip file even without a .gz extension (magic)", function()
+            -- Write gzip bytes under a plain .tsv name: sniffed via magic bytes.
+            local gz = assert(compression.compress("gzip", "name\tval\njohn\t1"))
+            local p1 = file_util.pathJoin(dir, "magic.tsv")
+            assert(file_util.writeFileBinary(p1, gz))
+            local p2 = writeAt(dir, "plain.tsv", "name\tval\njohn\t1")
+            local identical, _, diffCount = tsv_diff.diff(p1, p2)
+            assert.is_true(identical)
+            assert.equals(0, diffCount)
+        end)
+    end)
+
+    -- ================================================================
+    -- DIRECTORY MODE
+    -- ================================================================
+
+    describe("directory mode", function()
+        local dir1, dir2 = "", ""
+        before_each(function() dir1 = mkTempDir(); dir2 = mkTempDir() end)
+        after_each(function()
+            if dir1 ~= "" then file_util.deleteTempDir(dir1); dir1 = "" end
+            if dir2 ~= "" then file_util.deleteTempDir(dir2); dir2 = "" end
+        end)
+
+        it("should report identical directories as identical", function()
+            writeAt(dir1, "a.tsv", "name\tval\njohn\t1")
+            writeAt(dir1, "sub/b.tsv", "id\tx\n1\t2")
+            writeAt(dir2, "a.tsv", "name\tval\njohn\t1")
+            writeAt(dir2, "sub/b.tsv", "id\tx\n1\t2")
+            local identical, output, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_true(identical)
+            assert.equals(2, stats.compared)
+            assert.equals(0, stats.differing)
+            assert.truthy(output:find("Directories are identical"))
+        end)
+
+        it("should detect a file that differs between the trees", function()
+            writeAt(dir1, "a.tsv", "name\tval\njohn\t1")
+            writeAt(dir2, "a.tsv", "name\tval\njohn\t2")
+            local identical, output, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_false(identical)
+            assert.equals(1, stats.differing)
+            assert.truthy(output:find("~ a.tsv"))
+            -- the per-file diff is inlined
+            assert.truthy(output:find("1"))
+            assert.truthy(output:find("2"))
+        end)
+
+        it("should recurse into subdirectories", function()
+            writeAt(dir1, "deep/nested/x.tsv", "id\tv\n1\ta")
+            writeAt(dir2, "deep/nested/x.tsv", "id\tv\n1\tb")
+            local identical, output, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_false(identical)
+            assert.equals(1, stats.differing)
+            assert.truthy(output:find("deep/nested/x.tsv"))
+        end)
+
+        it("should report files only in the left tree as removed", function()
+            writeAt(dir1, "only1.tsv", "id\tv\n1\ta")
+            writeAt(dir1, "shared.tsv", "id\tv\n1\ta")
+            writeAt(dir2, "shared.tsv", "id\tv\n1\ta")
+            local identical, output, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_false(identical)
+            assert.equals(1, stats.only1)
+            assert.equals(0, stats.only2)
+            assert.truthy(output:find("- only1.tsv"))
+        end)
+
+        it("should report files only in the right tree as added", function()
+            writeAt(dir1, "shared.tsv", "id\tv\n1\ta")
+            writeAt(dir2, "shared.tsv", "id\tv\n1\ta")
+            writeAt(dir2, "only2.tsv", "id\tv\n1\ta")
+            local _, output, stats = tsv_diff.diff(dir1, dir2)
+            assert.equals(1, stats.only2)
+            assert.truthy(output:find("%+ only2.tsv"))
+        end)
+
+        it("should pair a plain file with its gzipped counterpart", function()
+            -- Same logical path, one plain and one gzipped, identical content.
+            writeAt(dir1, "data/Item.tsv", "id\tv\n1\ta")
+            writeGzAt(dir2, "data/Item.tsv.gz", "id\tv\n1\ta")
+            local identical, _, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_true(identical)
+            assert.equals(1, stats.compared)
+            assert.equals(0, stats.only1)
+            assert.equals(0, stats.only2)
+        end)
+
+        it("should diff a plain file against a differing gzipped counterpart", function()
+            writeAt(dir1, "data/Item.tsv", "id\tv\n1\ta")
+            writeGzAt(dir2, "data/Item.tsv.gz", "id\tv\n1\tZ")
+            local identical, _, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_false(identical)
+            assert.equals(1, stats.compared)
+            assert.equals(1, stats.differing)
+        end)
+
+        it("should ignore non-TSV files in the trees", function()
+            writeAt(dir1, "a.tsv", "id\tv\n1\ta")
+            writeAt(dir1, "notes.txt", "ignore me")
+            writeAt(dir2, "a.tsv", "id\tv\n1\ta")
+            writeAt(dir2, "readme.md", "ignore me too")
+            local identical, _, stats = tsv_diff.diff(dir1, dir2)
+            assert.is_true(identical)
+            assert.equals(1, stats.compared)
+        end)
+
+        it("should pass options through to per-file comparison", function()
+            writeAt(dir1, "a.tsv", "name\tval\njohn\thello")
+            writeAt(dir2, "a.tsv", "name\tval\njohn\t  hello  ")
+            local identical = tsv_diff.diff(dir1, dir2, { trim = true })
+            assert.is_true(identical)
+        end)
+
+        it("should suppress inline diff bodies under --summary", function()
+            writeAt(dir1, "a.tsv", "name\tval\njohn\t1")
+            writeAt(dir2, "a.tsv", "name\tval\njohn\t2")
+            local _, output = tsv_diff.diff(dir1, dir2, { summary = true })
+            assert.truthy(output:find("~ a.tsv"))
+            -- the per-file cell detail must not be inlined
+            assert.is_nil(output:find("val: '1' %-> '2'"))
+        end)
+
+        it("should be callable directly via diffDirectories", function()
+            writeAt(dir1, "a.tsv", "id\tv\n1\ta")
+            writeAt(dir2, "a.tsv", "id\tv\n1\ta")
+            local identical, _, stats = tsv_diff.diffDirectories(dir1, dir2)
+            assert.is_true(identical)
+            assert.equals(1, stats.compared)
         end)
     end)
 end)

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`tsv_diff` directory comparison and compressed-source support.** `tsv_diff` (the
+  data-level TSV comparison tool, see `TSV_DIFF.md`) now accepts **two directories**
+  instead of two files: `lua54 tsv_diff.lua <dir1> <dir2>` walks both trees recursively
+  and compares them file by file, reporting each `.tsv` file as identical (`=`),
+  differing (`~`, with the per-file diff inlined), or present on only one side (`+`/`-`),
+  followed by a directory summary. It also reads **compressed sources** transparently: a
+  `.tsv.gz` (or any file whose leading bytes are the gzip magic) is decompressed and its
+  *uncompressed* content compared. In directory mode, files are paired by their relative
+  path with any compression extension peeled, so a plain `Item.tsv` in one tree matches a
+  gzipped `Item.tsv.gz` in the other — making it easy to verify the output of a
+  reformatter run (e.g. `--export-merged`) against compressed source data. The new public
+  `tsv_diff.diffDirectories(dir1, dir2, options)` exposes this directly (and `diff()`
+  auto-dispatches to it when both inputs are directories); single-file mode gains the same
+  gzip awareness. Decompression goes through the lazy `compression` codec registry, so
+  gzip is the only format wired today and `libdeflate` is loaded only when a compressed
+  file is actually read.
+
 - **`--export-merged` reformatter flag (`TODO/mod_overrides.md` Phase 6a).** Writes a
   TSV snapshot of every loaded dataset **with all mod overrides applied** (tier-A/B
   patches, tier-A0 schema-overlay defaults, list/map deltas, tier-C processor writes)

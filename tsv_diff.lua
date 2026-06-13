@@ -4,7 +4,7 @@
 
 -- Module versioning
 local semver = require("semver")
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 local NAME = "tsv_diff"
 
 local named_logger = require("named_logger")
@@ -41,10 +41,83 @@ local raw_tsv = require("raw_tsv")
 local string_utils = require("string_utils")
 local read_only = require("read_only")
 local file_util = require("file_util")
+local compression = require("compression")
 
 local readOnly = read_only.readOnly
 local trim = string_utils.trim
 local normalizePath = file_util.normalizePath
+local isDir = file_util.isDir
+local getFilesAndDirs = file_util.getFilesAndDirs
+local readFileBinary = file_util.readFileBinary
+
+-- ============================================================================
+-- INPUT LOADING (compression-aware)
+-- ============================================================================
+
+-- Recognized compression extensions, mapped to their codec format name (see
+-- compression.lua). A source file may carry one of these as its outermost
+-- extension (e.g. `Item.tsv.gz`); it is transparently decompressed before being
+-- parsed as TSV. Only gzip ships a provider today; adding a row here is all that
+-- is needed once another codec (zstd, …) gains one.
+local COMPRESSION_EXT = { gz = "gzip" }
+
+-- Leading bytes of a gzip stream (RFC 1952 magic 0x1f 0x8b), used to sniff a
+-- compressed file whose name does NOT advertise it.
+local GZIP_MAGIC = "\031\139"
+
+-- Determines the compression format of a source, by its outermost extension
+-- first and then by magic-byte sniffing. Returns the codec format name (e.g.
+-- "gzip") or nil for an uncompressed file.
+local function detectCompression(path, bytes)
+    local ext = path:match("%.([^.]+)$")
+    local format = ext and COMPRESSION_EXT[ext:lower()]
+    if not format and bytes:sub(1, #GZIP_MAGIC) == GZIP_MAGIC then
+        format = "gzip"
+    end
+    return format
+end
+
+-- Strips a trailing compression extension from a name, yielding its "logical"
+-- name (`Item.tsv.gz` -> `Item.tsv`). A name with no compression extension is
+-- returned unchanged. This is what lets a compressed file in one tree pair with
+-- its plain counterpart in the other during a directory comparison.
+local function stripCompression(name)
+    local ext = name:match("%.([^.]+)$")
+    if ext and COMPRESSION_EXT[ext:lower()] then
+        return name:sub(1, #name - #ext - 1)
+    end
+    return name
+end
+
+--- Loads a TSV file into a raw TSV structure, transparently decompressing a
+--- compressed source (gzip, by `.gz` extension or magic bytes) and reading the
+--- bytes verbatim so a virtual archive member path works too (file_util handles
+--- the archive resolution). Replaces a direct raw_tsv.fileToRawTSV call so every
+--- read path — single file or directory walk — gains compression support.
+--- @param path string The file path (optionally inside an archive)
+--- @return table|nil The raw TSV structure, or nil on error
+--- @return string|nil Error message on failure, nil on success
+local function loadRawTSV(path)
+    local bytes, err = readFileBinary(path)
+    if not bytes then
+        return nil, err
+    end
+    local format = detectCompression(path, bytes)
+    if format then
+        local data, derr = compression.decompress(format, bytes)
+        if not data then
+            return nil, format .. " decompression failed: " .. tostring(derr)
+        end
+        bytes = data
+    end
+    -- stringToRawTSV asserts on invalid UTF-8 / non-string; trap it so a bad
+    -- file becomes a clean (nil, err) instead of propagating through a dir walk.
+    local ok, raw = pcall(raw_tsv.stringToRawTSV, bytes)
+    if not ok then
+        return nil, tostring(raw)
+    end
+    return raw
+end
 
 -- ============================================================================
 -- INTERNAL HELPERS
@@ -605,6 +678,10 @@ end
 -- MAIN DIFF FUNCTION
 -- ============================================================================
 
+-- Forward declaration: diff dispatches to diffDirectories (defined below) for
+-- directory inputs, and diffDirectories calls diff back on each file pair.
+local diffDirectories
+
 --- Compares two TSV data sets.
 --- @param input1 string|table Either a file path (string) or a raw TSV structure (table)
 --- @param input2 string|table Either a file path (string) or a raw TSV structure (table)
@@ -620,12 +697,24 @@ end
 ---   maxDiffs: number, stop after this many differences
 ---   summary: boolean, show summary counts only (suppress cell-level detail)
 ---   quiet: boolean, produce no output (only return status)
+--- When both inputs are paths to existing directories, the comparison switches
+--- to DIRECTORY MODE: the two trees are walked recursively and compared file by
+--- file (see diffDirectories). In that case the 3rd return is a stats table and
+--- the 4th is nil.
 --- @return boolean|nil identical True if files are identical, false if not, nil on error
 --- @return string output The formatted diff output, or error message on failure
---- @return number|nil diffCount The number of row-level differences, nil on error
---- @return table|nil colInfo Column analysis result, nil on error
+--- @return number|table|nil diffCount Row-diff count (file mode) or stats table (dir mode), nil on error
+--- @return table|nil colInfo Column analysis result (file mode only), nil on error
 local function diff(input1, input2, options)
     options = options or {}
+
+    -- Directory mode: when both inputs are paths to existing directories, compare
+    -- the two trees recursively rather than treating each as a single TSV file.
+    if type(input1) == "string" and type(input2) == "string"
+        and isDir(input1) and isDir(input2) then
+        return diffDirectories(input1, input2, options)
+    end
+
     local mode = options.mode or "order"
     assert(mode == "order" or mode == "pk",
         "mode must be 'order' or 'pk', got: " .. tostring(mode))
@@ -633,7 +722,7 @@ local function diff(input1, input2, options)
     -- Load inputs
     local raw1, raw2, err
     if type(input1) == "string" then
-        raw1, err = raw_tsv.fileToRawTSV(input1)
+        raw1, err = loadRawTSV(input1)
         if not raw1 then
             return nil, "Error reading file 1: " .. (err or "unknown error")
         end
@@ -644,7 +733,7 @@ local function diff(input1, input2, options)
     end
 
     if type(input2) == "string" then
-        raw2, err = raw_tsv.fileToRawTSV(input2)
+        raw2, err = loadRawTSV(input2)
         if not raw2 then
             return nil, "Error reading file 2: " .. (err or "unknown error")
         end
@@ -731,18 +820,178 @@ local function diff(input1, input2, options)
 end
 
 -- ============================================================================
+-- DIRECTORY MODE
+-- ============================================================================
+
+-- Data-file extensions recognized when walking a directory tree. A file whose
+-- name (after any compression extension is peeled by stripCompression) ends in
+-- one of these is treated as a comparable TSV data file; everything else in the
+-- tree is ignored. Kept as a set so other tabular extensions could be added.
+local DATA_EXTENSIONS = { tsv = true }
+
+-- True iff a logical (compression-stripped) name denotes a comparable data file.
+local function isDataFile(logicalName)
+    local ext = logicalName:match("%.([^.]+)$")
+    return ext ~= nil and DATA_EXTENSIONS[ext:lower()] == true
+end
+
+-- Walks `dir` recursively and returns a map from each data file's LOGICAL
+-- relative path (relative to `dir`, with any compression extension peeled) to
+-- its actual full path on disk. Keying by the logical path is what pairs a
+-- compressed file in one tree (`x/Item.tsv.gz`) with a plain one in the other
+-- (`x/Item.tsv`). Returns (nil, err) if the tree cannot be read. A collision
+-- (e.g. both `Item.tsv` and `Item.tsv.gz` present) keeps the first and warns.
+local function collectDataFiles(dir)
+    local normDir = normalizePath(dir)
+    local files, err = getFilesAndDirs(normDir, true)
+    if not files then
+        return nil, err
+    end
+    local prefix = normDir .. "/"
+    local map = {}
+    for _, full in ipairs(files) do
+        local rel = full
+        if full:sub(1, #prefix) == prefix then
+            rel = full:sub(#prefix + 1)
+        end
+        local logical = stripCompression(rel)
+        if isDataFile(logical) then
+            if map[logical] then
+                logger:warn(("Multiple files map to '%s' under %s; keeping '%s', ignoring '%s'")
+                    :format(logical, dir, map[logical], full))
+            else
+                map[logical] = full
+            end
+        end
+    end
+    return map
+end
+
+-- Splits a string that ends in "\n" into its lines (the trailing newline yields
+-- no extra empty element). Used to re-indent a per-file diff under its banner.
+local function splitLines(s)
+    local out = {}
+    for line in s:gmatch("(.-)\n") do
+        out[#out + 1] = line
+    end
+    return out
+end
+
+--- Compares two directory trees recursively. Data files are paired by their
+--- compression-stripped relative path, so `Item.tsv` and `Item.tsv.gz` match and
+--- their UNCOMPRESSED contents are diffed. Each pair present in both trees is run
+--- through diff() with the same options; files present in only one tree are
+--- reported as added/removed. The output lists every file with a one-character
+--- status marker (`=` identical, `~` differs, `+`/`-` only on one side, `!`
+--- error), inlining each differing file's full diff (indented) unless --summary
+--- or --quiet is set, and ends with an overall directory summary.
+--- @param dir1 string Path to the first (left) directory
+--- @param dir2 string Path to the second (right) directory
+--- @param options table|nil The same options table accepted by diff()
+--- @return boolean|nil identical True if the trees match, false if not, nil on error
+--- @return string output The formatted report, or an error message on failure
+--- @return table|nil stats {compared, differing, only1, only2, errors}, nil on error
+function diffDirectories(dir1, dir2, options)
+    options = options or {}
+
+    local map1, e1 = collectDataFiles(dir1)
+    if not map1 then
+        return nil, "Error scanning directory 1: " .. tostring(e1)
+    end
+    local map2, e2 = collectDataFiles(dir2)
+    if not map2 then
+        return nil, "Error scanning directory 2: " .. tostring(e2)
+    end
+
+    -- Union of logical keys from both trees, sorted for stable output.
+    local keySet = {}
+    for k in pairs(map1) do keySet[k] = true end
+    for k in pairs(map2) do keySet[k] = true end
+    local keys = {}
+    for k in pairs(keySet) do keys[#keys + 1] = k end
+    table.sort(keys)
+
+    local lines = {}
+    lines[#lines + 1] = "--- " .. dir1
+    lines[#lines + 1] = "+++ " .. dir2
+    lines[#lines + 1] = ""
+
+    local stats = { compared = 0, differing = 0, only1 = 0, only2 = 0, errors = 0 }
+
+    for _, key in ipairs(keys) do
+        local f1 = map1[key]
+        local f2 = map2[key]
+        if f1 and f2 then
+            stats.compared = stats.compared + 1
+            local identical, out, diffCount = diff(f1, f2, options)
+            if identical == nil then
+                -- out holds the error message for this pair.
+                stats.errors = stats.errors + 1
+                lines[#lines + 1] = "! " .. key .. "  (error: " .. tostring(out) .. ")"
+            elseif identical then
+                if not options.quiet then
+                    lines[#lines + 1] = "= " .. key
+                end
+            else
+                stats.differing = stats.differing + 1
+                local n = type(diffCount) == "number" and diffCount or 0
+                lines[#lines + 1] = "~ " .. key .. "  ("
+                    .. n .. " row diff" .. (n == 1 and "" or "s") .. ")"
+                if not options.summary and not options.quiet then
+                    for _, l in ipairs(splitLines(out)) do
+                        lines[#lines + 1] = "    " .. l
+                    end
+                    lines[#lines + 1] = ""
+                end
+            end
+        elseif f1 then
+            stats.only1 = stats.only1 + 1
+            lines[#lines + 1] = "- " .. key .. "  (only in " .. dir1 .. ")"
+        else
+            stats.only2 = stats.only2 + 1
+            lines[#lines + 1] = "+ " .. key .. "  (only in " .. dir2 .. ")"
+        end
+    end
+
+    -- Overall summary.
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "=== Directory Summary ==="
+    lines[#lines + 1] = "Files compared: " .. stats.compared
+    lines[#lines + 1] = "Files differing: " .. stats.differing
+    lines[#lines + 1] = "Only in " .. dir1 .. ": " .. stats.only1
+    lines[#lines + 1] = "Only in " .. dir2 .. ": " .. stats.only2
+    if stats.errors > 0 then
+        lines[#lines + 1] = "Errors: " .. stats.errors
+    end
+
+    local identical = (stats.differing == 0 and stats.only1 == 0
+        and stats.only2 == 0 and stats.errors == 0)
+    if identical then
+        lines[#lines + 1] = "Directories are identical (on compared files)."
+    end
+
+    return identical, table.concat(lines, "\n") .. "\n", stats
+end
+
+-- ============================================================================
 -- CLI
 -- ============================================================================
 
 local function generateUsage()
     return [[
-Usage: lua54 tsv_diff.lua <file1.tsv> <file2.tsv> [options]
+Usage: lua54 tsv_diff.lua <path1> <path2> [options]
 
-Compares two TSV files at the data level.
+Compares two TSV files at the data level, OR two directories recursively.
 
 Arguments:
-  file1.tsv         Path to the first TSV file
-  file2.tsv         Path to the second TSV file
+  path1             First TSV file, or a directory
+  path2             Second TSV file, or a directory
+                    (both must be files, or both must be directories)
+
+Compressed sources (e.g. file.tsv.gz) are decompressed transparently and their
+uncompressed contents compared. In directory mode, files are paired by their
+relative path with any compression extension peeled, so 'Item.tsv' in one tree
+matches 'Item.tsv.gz' in the other.
 
 Modes:
   --mode=order      Compare rows by position (default)
@@ -764,7 +1013,7 @@ Options:
   --log-level=LEVEL       Set log level (debug, info, warn, error, fatal)
 
 Exit codes:
-  0   Files are identical (on compared columns)
+  0   Inputs are identical (files: on compared columns; dirs: on compared files)
   1   Differences found
   2   Error (bad arguments, unreadable files, etc.)]]
 end
@@ -876,11 +1125,20 @@ if isMainScript then
     end
 
     if not file1 then
-        cliLogger:error("Missing required argument: <file1.tsv>")
+        cliLogger:error("Missing required argument: <path1>")
         hasError = true
     end
     if not file2 then
-        cliLogger:error("Missing required argument: <file2.tsv>")
+        cliLogger:error("Missing required argument: <path2>")
+        hasError = true
+    end
+
+    -- Both paths must be the same kind: two files or two directories. A mismatch
+    -- (one of each) is almost always a mistake, and diff() would otherwise try to
+    -- read the directory as a TSV file and fail with a confusing message.
+    if file1 and file2 and (isDir(file1) ~= isDir(file2)) then
+        cliLogger:error("Cannot compare a file with a directory: '"
+            .. file1 .. "' and '" .. file2 .. "' must both be files or both directories")
         hasError = true
     end
 
@@ -921,6 +1179,7 @@ end
 
 local API = {
     diff = diff,
+    diffDirectories = diffDirectories,
     getVersion = getVersion,
 }
 
