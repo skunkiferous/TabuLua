@@ -1234,9 +1234,11 @@ end
 --- @side_effect Logs progress and errors; registers type parsers and aliases
 local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, opt_trackLineage)
     badVal = initializeBadVal(badVal)
-    -- Optional patch-lineage collector (Phase 6b): when the caller asks, every
-    -- override write path records into it; returned on the result for --explain-patch.
-    local lineage = opt_trackLineage and patch_lineage.new() or nil
+    -- Patch-lineage collector. Created when there is override work (so the Phase 7
+    -- `=expr` recompute knows which cells a patch set directly) OR when the caller
+    -- asks for --explain-patch (Phase 6b). A plain non-mod load creates none and
+    -- pays nothing; `lineage` is decided below, once the patch plan is known.
+    local lineage = nil
     -- Reset file-registered types tracking for this processing run
     fileRegisteredTypes = {}
     -- The archive cache only earns its keep WITHIN a load (a zip's N members would
@@ -1345,6 +1347,24 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     -- (and the exporter) see the patched state. patchedTargets is the set of
     -- parent files the reformatter must not rewrite (patches are never baked into
     -- parent source — §7.1).
+    -- Decide whether to track lineage: needed whenever there is override work (the
+    -- Phase 7 recompute reads the directly-set cells from it), or when the caller
+    -- requested --explain-patch. A plain non-mod load tracks nothing.
+    local hasOverrideWork = (joinMeta.patchPlan and #joinMeta.patchPlan > 0)
+        or (joinMeta.schemaOverlays and next(joinMeta.schemaOverlays) ~= nil)
+    if not hasOverrideWork then
+        for _, pid in ipairs(package_order) do
+            local m = packages[pid]
+            if m and m.preProcessors and #m.preProcessors > 0 then
+                hasOverrideWork = true
+                break
+            end
+        end
+    end
+    if opt_trackLineage or hasOverrideWork then
+        lineage = patch_lineage.new()
+    end
+
     -- Record the (already-applied, pre-parse) tier-A0 column overlays into the
     -- lineage first, so schema effects precede the row/cell events below.
     if lineage then
@@ -1355,6 +1375,19 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         tsv_files, joinMeta.patchPlan, loadEnv, badVal, lineage)
     joinMeta.patchedTargets = patchedTargets
 
+    -- Phase 7: recompute downstream `=expr` cells whose same-row inputs an override
+    -- changed (e.g. patching baseDamage updates totalDamage=…self.baseDamage…). Uses
+    -- the lineage's directly-set cells to find changed rows and to avoid clobbering a
+    -- cell an override set explicitly. Idempotent (re-evaluating an unaffected cell
+    -- yields the same value), so it runs in TWO passes: this one, right after patches,
+    -- so the tier-C processors below see consistent derived data; and a second pass
+    -- after tier-C, to fold in any cells the processors themselves changed.
+    local recomputeOk = true
+    if lineage then
+        recomputeOk = patch_executor.recomputeAfterPatches(
+            tsv_files, lineage:dirtyCells(), loadEnv, badVal)
+    end
+
     -- Tier-C cross-package pre-processors (mod_overrides.md §6): a child package's
     -- manifest-declared processors mutate the merged-and-patched state (scoped to
     -- files it owns or patched), and any parent file processor flagged
@@ -1362,6 +1395,14 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     -- before validators, in requires-refined package load order.
     local pkgProcessorsOk, pkgProcessorWarnings = runAllPackagePreProcessors(
         tsv_files, joinMeta, packages, package_order, loadEnv, badVal, lineage)
+
+    -- Phase 7 (second pass): recompute again after tier-C, now that processors may
+    -- have changed more cells. `dirtyCells()` includes their writes too.
+    if lineage then
+        local recomputeOk2 = patch_executor.recomputeAfterPatches(
+            tsv_files, lineage:dirtyCells(), loadEnv, badVal)
+        recomputeOk = recomputeOk and recomputeOk2
+    end
 
     -- Tier-A0 schema overlays: downgrade / remove parent validators a mod has
     -- declared a suppressValidator for, before the validators run against the
@@ -1410,10 +1451,10 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         -- order before/around validators, but for callers they are folded into
         -- the same pass/fail signal.)
         validationPassed = processorsOk and patchesOk and pkgProcessorsOk
-            and validatorsOk and postPassesOk,
+            and recomputeOk and validatorsOk and postPassesOk,
         validationWarnings = validationWarnings,
-        -- Patch lineage (Phase 6b), present only when opt_trackLineage was set —
-        -- consumed by the reformatter's --explain-patch.
+        -- Patch lineage: present whenever there was override work (Phase 7 needs it)
+        -- or --explain-patch was requested (Phase 6b). Consumed by --explain-patch.
         lineage = lineage,
     }
 end

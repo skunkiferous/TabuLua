@@ -93,6 +93,25 @@ function Lineage:isEmpty()
     return #self.events == 0
 end
 
+--- Returns the set of cells a patch / processor wrote DIRECTLY, as a nested map
+--- `target -> pk -> column -> true`, built from the recorded `cell` events. Used
+--- by the after-patch `=expr` recompute (Phase 7) to (a) find which rows changed
+--- and (b) avoid clobbering a cell an override set explicitly. Row add/remove/
+--- replace and schema events are excluded — an added/replaced row is built whole
+--- (already consistent) and schema effects are column metadata, not cell writes.
+--- @return table target -> pk -> column -> true
+function Lineage:dirtyCells()
+    local m = {}
+    for _, e in ipairs(self.events) do
+        if e.kind == "cell" then
+            local t = m[e.target]; if not t then t = {}; m[e.target] = t end
+            local r = t[e.pk]; if not r then r = {}; t[e.pk] = r end
+            r[e.col] = true
+        end
+    end
+    return m
+end
+
 --- Renders the recorded lineage as a human-readable report, optionally filtered.
 --- @param filter table|nil {file=<basename, lowercased>, pk=<str>, col=<str>} —
 ---   any field nil means "no filter on that axis".

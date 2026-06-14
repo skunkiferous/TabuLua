@@ -140,10 +140,13 @@ describe("--explain-patch end-to-end", function()
         end
     end)
 
-    it("records nothing when tracking is off (default)", function()
+    it("auto-tracks lineage when there is override work, even without the flag", function()
+        -- This package patches + overlays Item.tsv, so lineage is created (Phase 7's
+        -- recompute needs it) regardless of the --explain-patch flag.
         local result = manifest_loader.processFiles({pkg}, badVal)
         assert.is_not_nil(result)
-        assert.is_nil(result.lineage)
+        assert.is_not_nil(result.lineage, "override work should auto-enable lineage")
+        assert.is_truthy(result.lineage:report():find("price = -5", 1, true))
     end)
 
     it("records schema widen, the cell update, and the list delta when on", function()

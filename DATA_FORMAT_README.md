@@ -2065,7 +2065,9 @@ parse schema overlays  →  widen types / change defaults (before parent cells a
 parse all files        →  parent + child files loaded
 own-package pre-processors
 apply patches          →  tier-A row patches + tier-B bulk patches, in package load order
+recompute =expr        →  re-evaluate downstream same-row =expr cells (so tier-C sees them)
 package pre-processors  →  tier-C processors + rerunAfterPatches re-runs
+recompute =expr        →  again, to fold in cells the processors themselves changed
 validators             →  re-run once, against the fully overridden state
 ```
 
@@ -2076,6 +2078,23 @@ Two consequences worth internalising:
 - **Validators run once, at the end, against the final state.** A parent validator is
   re-applied to the patched data, so a mod that introduces a violation is caught loudly
   (unless a tier-A0 overlay downgraded that validator).
+
+### Downstream `=expr` Recompute
+
+When an override changes a cell, any **other `=expr` cell in the same row** that reads it
+(via `self.x`) is **re-evaluated**, so derived values stay consistent without the mod having
+to patch them too. For example, if a parent column is
+`totalDamage:float:=self.baseDamage*…` and a patch changes `baseDamage`, `totalDamage`
+recomputes automatically. This covers explicit `=expr` cells and columns with a default
+`=expr` (applied to an empty cell); re-evaluation runs in dependency order, so chains
+(`a` reads `b` reads a patched `c`) resolve correctly. A cell an override sets **directly**
+keeps its explicit value (it is not recomputed), and recomputed values are not baked into
+source (the `=expr` is preserved). The recompute runs in **two passes** — once after the
+patches (so a tier-C package processor reads consistent derived values) and once after the
+tier-C processors (to fold in any cells they changed); it is idempotent, so the double pass
+is safe. **Cross-row** dependencies and `=expr` cells that read a **published constant** a
+patch changed are *not* recomputed — patch those downstream cells explicitly, or use a
+tier-C processor.
 
 ### No-Bake Invariant
 

@@ -1060,12 +1060,26 @@ manifest_loader, incl. off-by-default, schema/cell/delta recording, filtering). 
 REFORMATTER.md "Explain Patch" section, DATA_FORMAT_README "Inspecting Overrides".
 The `--export-merged` half of the original Phase 6 landed earlier as Phase 6a.
 
-**Phase 7 — Recompute downstream `=expr` cells when their dependencies are patched.**
-
-- Static dependency analysis on `=expr` cells (extension of `canProcessCell`).
-- Marks dirty, re-evaluates after patches.
-- The hardest phase and the most valuable for "the original devs didn't think of this"
-  cases. Worth doing eventually.
+**Phase 7 — Recompute downstream `=expr` cells when their dependencies are patched.
+✅ LANDED (post-v0.27.0).** Implemented as **same-row recompute** (chosen over §8.3's
+lighter "document + warn" v1): `patch_executor.recomputeAfterPatches` runs in two
+idempotent passes — after patches (so tier-C processors read consistent derived data) and
+again after tier-C (to fold in cells the processors changed), both before validators. For
+each row an override touched it re-evaluates that row's
+downstream `=expr` cells — explicit `=expr` cells AND default-`=expr` columns (empty cell
++ column default expression) — in dependency order (reusing the loader's
+`tsv_model.internal.canProcessCell`), updating `evaluated`/`parsed` while leaving
+`value`/`reformatted` (so the `=expr` is not baked). A cell an override set **directly**
+is skipped (its explicit value wins and is treated as a settled input). To know which
+cells were set directly it reads the patch lineage's `dirtyCells()` — so lineage is now
+created automatically whenever there is override work (not only for `--explain-patch`; a
+plain non-mod load still tracks nothing). Cross-row / published-constant dependencies stay
+out of scope (§8.3 — patch them explicitly or use tier-C). Tutorial demo:
+`tutorial/expansion/SpellPatch.tsv` buffs `fireball.baseDamage` 25→40 and core
+`Spell.tsv`'s `totalDamage = …self.baseDamage…` recomputes 37.5→60. Tests:
+`spec/patch_recompute_spec.lua` (6: explicit, default-expr, no-clobber, chain order,
+unrelated-rows-untouched, no-bake). Docs: DATA_FORMAT_README "Downstream `=expr`
+Recompute".
 
 All phases are independently shippable. The natural cut points: stop after Phase 1 for
 "loosen-only" mod support; stop after Phase 2 for explicit declarative patches; stop

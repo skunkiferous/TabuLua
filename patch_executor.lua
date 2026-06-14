@@ -5,7 +5,7 @@ local NAME = "patch_executor"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 28, 0)
+local VERSION = semver(0, 29, 0)
 
 local read_only = require("read_only")
 local readOnly = read_only.readOnly
@@ -31,6 +31,8 @@ local tsv_model = require("tsv_model")
 local newDataCell = tsv_model.newDataCell
 local newDataRow = tsv_model.newDataRow
 local expressionEvaluatorGenerator = tsv_model.expressionEvaluatorGenerator
+-- Phase 7 same-row =expr recompute reuses the loader's dependency-ordering check.
+local canProcessCell = tsv_model.internal.canProcessCell
 
 local validator_executor = require("validator_executor")
 local wrapRowsForValidation = validator_executor.wrapRowsForValidation
@@ -826,6 +828,144 @@ local function applyOneBulkPatch(bulkFileName, bulkTsv, targetName, targetTsv,
     return ok
 end
 
+-- ============================================================
+-- Phase 7: recompute downstream `=expr` cells after patches.
+--
+-- An override changes some cells; other `=expr` cells in the SAME row that read
+-- those cells (via `self.x`) were evaluated at load time and are now stale. This
+-- pass re-evaluates them — explicit `=expr` cells AND columns with a default
+-- `=expr` applied to an empty cell — in dependency order, so e.g. patching
+-- baseDamage updates `totalDamage = self.baseDamage * …`. Cross-row / published-
+-- constant dependencies are out of scope (mod_overrides.md §8.3, deferred).
+-- ============================================================
+
+-- Returns the expression to (re)evaluate for a cell, or nil when the cell is not
+-- a recomputable `=expr` (explicit) or default-`=expr` (empty cell + the column
+-- carries a default expression). `expression`-typed columns (skip_cell_eval) are
+-- never re-evaluated here.
+local function recomputableExpr(col, cell)
+    if col.skip_cell_eval then return nil end
+    local v = cell.value
+    if type(v) == "string" and v:sub(1, 1) == "=" then
+        return v
+    end
+    if v == nil or v == "" then
+        local d = col.effective_default_expr or col.default_expr
+        if type(d) == "string" and d:sub(1, 1) == "=" then
+            return d
+        end
+    end
+    return nil
+end
+
+-- Recomputes one row's `=expr` cells against its current (patched) values, in
+-- dependency order. `dirtyCols` is the set of column names an override wrote
+-- DIRECTLY in this row — those are left untouched (the explicit value wins, and
+-- is treated as a settled input the others may depend on). Returns true on success.
+local function recomputeRow(header, rawRow, dirtyCols, expr_eval, badVal)
+    -- eval_row mirrors the loader's `self`: parsed values keyed by index AND name.
+    local eval_row = {__idx = rawRow.__idx}
+    local exprByIdx = {}
+    local done_idx = {}
+    local pending = 0
+    for ci = 1, #header do
+        local col = header[ci]
+        local cell = rawRow[ci]
+        local parsed = (type(cell) == "table") and cell.parsed or nil
+        eval_row[ci] = parsed
+        eval_row[col.name] = parsed
+        local expr = (type(cell) == "table") and recomputableExpr(col, cell) or nil
+        if expr and not (dirtyCols and dirtyCols[col.name]) then
+            exprByIdx[ci] = expr
+            pending = pending + 1
+        else
+            done_idx[ci] = true   -- literal, directly-set, or expression-typed: settled
+        end
+    end
+    if pending == 0 then return true end
+
+    local ok = true
+    while pending > 0 do
+        local progress = false
+        for ci = 1, #header do
+            if exprByIdx[ci] and not done_idx[ci]
+                and canProcessCell(header, done_idx, exprByIdx[ci]) then
+                local col = header[ci]
+                badVal.col_name = col.name
+                badVal.col_idx = ci
+                local v, err = expr_eval(eval_row, exprByIdx[ci])
+                if err ~= nil then
+                    badVal(exprByIdx[ci], "recompute after patch: failed to evaluate '"
+                        .. col.name .. "': " .. tostring(err))
+                    ok = false
+                else
+                    local parsed = v
+                    if col.parser then
+                        local p = col.parser(badVal, v, "parsed")
+                        if p ~= nil then parsed = p end
+                    end
+                    local raw = unwrap(rawRow[ci])
+                    if type(raw) == "table" then
+                        raw[2] = v        -- evaluated
+                        raw[3] = parsed   -- parsed; .value/.reformatted untouched (no-bake)
+                    end
+                    eval_row[ci] = parsed
+                    eval_row[col.name] = parsed
+                end
+                done_idx[ci] = true
+                pending = pending - 1
+                progress = true
+            end
+        end
+        -- No progress with cells remaining => a self-referential cycle the loader
+        -- would already have rejected; leave the rest untouched rather than spin.
+        if not progress then break end
+    end
+    return ok
+end
+
+-- Recomputes downstream `=expr` cells for every row an override touched. `dirtyMap`
+-- is the patch lineage's directly-set-cell set (`target -> pk -> col -> true`).
+-- Only rows that actually changed are revisited, and only their non-directly-set
+-- `=expr` cells are re-evaluated. Returns true if every recompute succeeded.
+local function recomputeAfterPatches(tsv_files, dirtyMap, loadEnv, badVal)
+    if not dirtyMap or next(dirtyMap) == nil then
+        return true
+    end
+    local base2fn = {}
+    for fn in pairs(tsv_files) do
+        base2fn[basename(fn)] = fn
+    end
+    local expr_eval = expressionEvaluatorGenerator(loadEnv)
+    local ok = true
+    for target, rows in pairs(dirtyMap) do
+        local fn = base2fn[target]
+        local tsv = fn and tsv_files[fn]
+        if tsv then
+            badVal.source_name = fn
+            local header = tsv[1]
+            local byPk = {}
+            for i = 2, #tsv do
+                local r = tsv[i]
+                if type(r) == "table" then
+                    local pk = parsedOf(r[1])
+                    if pk ~= nil then byPk[tostring(pk)] = r end
+                end
+            end
+            for pk, dirtyCols in pairs(rows) do
+                local row = byPk[pk]
+                if row then
+                    badVal.row_key = pk
+                    if not recomputeRow(header, unwrap(row), dirtyCols, expr_eval, badVal) then
+                        ok = false
+                    end
+                end
+            end
+        end
+    end
+    return ok
+end
+
 -- Applies every declared row patch to its target dataset, in package load order.
 --
 -- `patchPlan` is an array of {file=<full patch file name>, target=<lowercased
@@ -885,6 +1025,7 @@ end
 local API = {
     getVersion = getVersion,
     applyPatches = applyPatches,
+    recomputeAfterPatches = recomputeAfterPatches,
 }
 
 -- Enables the module to be called as a function

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Recompute downstream `=expr` cells after patches (`TODO/mod_overrides.md` Phase 7).**
+  When a mod override changes a cell, other `=expr` cells in the **same row** that read
+  it (via `self.x`) are now **re-evaluated**, so derived values stay consistent without
+  the mod having to patch them too. Example (shipped in the tutorial): core `Spell.tsv`
+  has `totalDamage = self.baseDamage * …`; an expansion patch buffs `fireball`'s
+  `baseDamage` 25→40 and `totalDamage` now recomputes 37.5→60 automatically. Covers
+  explicit `=expr` cells **and** columns with a default `=expr` applied to an empty cell;
+  re-evaluation runs in dependency order (a chain `a = self.b+1`, `b = self.c+1` resolves
+  correctly). A cell the override set **directly** is never clobbered (its explicit value
+  wins), and recomputed values are not baked into source (the `=expr` is preserved). It
+  runs in two (idempotent) passes — after patches and after tier-C processors — so a
+  tier-C package processor also reads consistent derived values. This
+  needs to know which cells an override set directly, so **patch lineage is now tracked
+  automatically whenever there is override work** (previously only for `--explain-patch`);
+  a plain non-mod load still tracks nothing. Cross-row / published-constant dependencies
+  remain out of scope (§8.3). New `patch_executor.recomputeAfterPatches`.
+
 - **`--explain-patch` + patch lineage (`TODO/mod_overrides.md` Phase 6b).** A new
   reformatter flag `--explain-patch[=<filter>]` prints a per-cell **lineage report**
   answering "which mod override set this?" — the provenance counterpart to
