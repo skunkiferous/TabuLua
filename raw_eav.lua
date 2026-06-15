@@ -2,7 +2,7 @@
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 27, 0)
+local VERSION = semver(0, 28, 0)
 
 -- Module name
 local NAME = "raw_eav"

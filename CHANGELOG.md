@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.28.0] - 2026-06-15
+
+### Added
+
 - **Recompute downstream `=expr` cells after patches.**
   When a mod override changes a cell, other `=expr` cells in the **same row** that read
   it (via `self.x`) are now **re-evaluated**, so derived values stay consistent without
@@ -201,12 +211,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   expansion package ships two example overlays on the core package
   (`ItemPricePolicy.tsv` widens `Item.price`; `SpellTuning.tsv` lowers the
   `Spell.cooldown` default).
-
-### Changed
-
-### Removed
-
-### Fixed
 
 ## [0.27.0] - 2026-06-09
 
