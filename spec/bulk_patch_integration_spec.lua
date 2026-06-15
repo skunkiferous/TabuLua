@@ -1,6 +1,6 @@
 -- bulk_patch_integration_spec.lua
--- End-to-end tests for tier-B filter/transform patches (TODO/mod_overrides.md §5,
--- Phase 3): a `bulk_patch` file (typeName=bulk_patch, bulkPatchOf=Target.tsv)
+-- End-to-end tests for bulk filter/transform patches: a `bulk_patch` file
+-- (typeName=bulk_patch, bulkPatchOf=Target.tsv)
 -- selects parent rows by a `where` expression and updates or removes the matches.
 
 local busted = require("busted")
@@ -199,7 +199,7 @@ describe("bulk_patch integration", function()
             "expected a where error, got:\n" .. joined)
     end)
 
-    it("a tier-A patch and a tier-B bulk patch compose on the same target", function()
+    it("a row patch and a bulk patch compose on the same target", function()
         local pkg = path_join(temp_dir, "compose")
         assert(lfs.mkdir(pkg))
         local FILES = FILES_HEADER
@@ -221,7 +221,7 @@ describe("bulk_patch integration", function()
         assert.is_not_nil(result)
         local item = findTsv(result, "Item%.tsv$")
         local byName, header = rowsByName(item)
-        assert.are.equal(777, readCell(byName.sword, header, "price"), "tier-A patch applied")
-        assert.are.equal(10, readCell(byName.herb, header, "price"), "tier-B bulk applied")
+        assert.are.equal(777, readCell(byName.sword, header, "price"), "row patch applied")
+        assert.are.equal(10, readCell(byName.herb, header, "price"), "bulk patch applied")
     end)
 end)

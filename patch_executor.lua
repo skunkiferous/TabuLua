@@ -11,7 +11,7 @@ local read_only = require("read_only")
 local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
 
--- Optional patch-lineage recording (mod_overrides.md §4.4, Phase 6b). The write
+-- Optional patch-lineage recording (for --explain-patch). The write
 -- paths take an optional lineage object; when nil, nothing is recorded.
 local patch_lineage = require("patch_lineage")
 local lineageValueStr = patch_lineage.valueStr
@@ -31,18 +31,18 @@ local tsv_model = require("tsv_model")
 local newDataCell = tsv_model.newDataCell
 local newDataRow = tsv_model.newDataRow
 local expressionEvaluatorGenerator = tsv_model.expressionEvaluatorGenerator
--- Phase 7 same-row =expr recompute reuses the loader's dependency-ordering check.
+-- The same-row =expr recompute reuses the loader's dependency-ordering check.
 local canProcessCell = tsv_model.internal.canProcessCell
 
 local validator_executor = require("validator_executor")
 local wrapRowsForValidation = validator_executor.wrapRowsForValidation
 local evaluateInValidatorEnv = validator_executor.evaluateInValidatorEnv
 
--- Operation quota for a tier-B `where` / transform expression (per evaluation).
+-- Operation quota for a bulk-patch `where` / transform expression (per evaluation).
 local BULK_QUOTA = 10000
 
 -- ============================================================
--- Tier-A row patches (see TODO/mod_overrides.md §4, Phase 2).
+-- Row patches.
 --
 -- A child package declares a patch file (`typeName=patch`, `patchOf=Target.tsv`)
 -- whose rows carry a `patchOp` (add | remove | update | replace) and apply to a
@@ -94,7 +94,7 @@ local function isEmptyCell(cell)
 end
 
 -- ============================================================
--- Tier-A list/map delta companion columns (mod_overrides.md §4.3, Phase 4).
+-- List/map delta companion columns.
 -- ============================================================
 
 -- Classifies a column type as a collection (a `|nil` suffix is ignored): returns
@@ -270,8 +270,8 @@ end
 
 -- Writes a value into a parent row's cell, in place, re-validating it against
 -- the parent column's parser. `parseCtx` is the parser context: "parsed" for an
--- already-typed value (a tier-A patch cell or a tier-B `=expr` result), "tsv" for
--- a raw literal string (a tier-B literal transform cell). A nil value clears the
+-- already-typed value (a patch cell or a bulk `=expr` result), "tsv" for
+-- a raw literal string (a bulk literal transform cell). A nil value clears the
 -- cell (requires a nullable parent type). `.value` / `.reformatted` are left
 -- untouched so the parent file round-trips to its original source text. Returns
 -- true on success.
@@ -408,7 +408,7 @@ local function applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal)
 end
 
 -- Analyses a patch file's header ONCE: classifies each non-key/op column as a
--- direct cell set or a list/map delta companion (§4.3). Returns a plan
+-- direct cell set or a list/map delta companion. Returns a plan
 -- { direct = {{patchIdx, targetCol}}, simple = {{patchIdx, verb, targetCol, kind}},
 --   inplace = {{targetCol, last, oldIdx, newIdx}} } plus reports header errors.
 local function analyzePatchPlan(patchHeader, targetHeader, skipIdx, badVal)
@@ -476,7 +476,7 @@ end
 
 -- Applies an `update` patch row to an existing parent row, in place, using a
 -- precomputed plan: direct cell sets (empty = leave unchanged, `=nil` = clear) plus
--- list/map delta companion columns (§4.3).
+-- list/map delta companion columns.
 local function applyUpdate(rowProxy, patchRow, plan, badVal, linCtx)
     local rawRow = unwrap(rowProxy)
     local ok = true
@@ -575,7 +575,7 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
     end
 
     local skipIdx = {[1] = true, [patchOpCol.idx] = true}
-    -- Classify the patch columns once (direct cell sets vs §4.3 list/map deltas),
+    -- Classify the patch columns once (direct cell sets vs list/map deltas),
     -- shared by every `update` row in this file.
     local updatePlan = analyzePatchPlan(patchHeader, targetHeader, skipIdx, badVal)
     local targetArray = unwrap(targetTsv)
@@ -674,12 +674,12 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
     return ok
 end
 
--- Applies one tier-B bulk/filter patch file to its target (mod_overrides.md §5).
--- Each rule row carries a unique rule name (column 1), a `patchOp` (update |
--- remove), a `where` selector expression, and — for update rules — transform
--- cells. `where` is evaluated per parent row in the validator sandbox (truthy =
--- match, with `self`/`row`/`rows`/helpers/published contexts); matched rows are
--- removed (deferred + compaction, like tier A) or have each non-empty transform
+-- Applies one bulk/filter patch file to its target. Each rule row carries a unique
+-- rule name (column 1), a `patchOp` (update | remove), a `where` selector
+-- expression, and — for update rules — transform cells. `where` is evaluated per
+-- parent row in the validator sandbox (truthy = match, with
+-- `self`/`row`/`rows`/helpers/published contexts); matched rows are removed
+-- (deferred + compaction, like a row patch) or have each non-empty transform
 -- cell applied. A transform cell starting with `=` is an expression evaluated
 -- against the matched target row; otherwise it is a literal parsed by the parent
 -- column. Returns true if all error-level rules/cells succeeded.
@@ -829,14 +829,14 @@ local function applyOneBulkPatch(bulkFileName, bulkTsv, targetName, targetTsv,
 end
 
 -- ============================================================
--- Phase 7: recompute downstream `=expr` cells after patches.
+-- Recompute downstream `=expr` cells after patches.
 --
 -- An override changes some cells; other `=expr` cells in the SAME row that read
 -- those cells (via `self.x`) were evaluated at load time and are now stale. This
 -- pass re-evaluates them — explicit `=expr` cells AND columns with a default
 -- `=expr` applied to an empty cell — in dependency order, so e.g. patching
 -- baseDamage updates `totalDamage = self.baseDamage * …`. Cross-row / published-
--- constant dependencies are out of scope (mod_overrides.md §8.3, deferred).
+-- constant dependencies are out of scope (deferred).
 -- ============================================================
 
 -- Returns the expression to (re)evaluate for a cell, or nil when the cell is not
@@ -972,7 +972,7 @@ end
 -- basename of the parent file>} in load order, prepared by the loader (so
 -- last-writer-wins is deterministic). Returns (ok, patchedTargets) where
 -- patchedTargets is a set of full target file names the reformatter must NOT
--- rewrite (so patches are never baked into parent source — §7.1).
+-- rewrite (so patches are never baked into parent source).
 local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage)
     local patchedTargets = {}
     if not patchPlan or #patchPlan == 0 then

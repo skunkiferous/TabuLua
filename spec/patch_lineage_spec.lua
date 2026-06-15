@@ -1,5 +1,5 @@
 -- patch_lineage_spec.lua
--- Tests for patch lineage + `--explain-patch` (TODO/mod_overrides.md §4.4, Phase 6b):
+-- Tests for patch lineage + `--explain-patch`:
 -- the optional, off-by-default record of which override touched which cell / row /
 -- column. Part A tests the collector module directly; Part B loads a package with
 -- tracking on and checks the recorded chain end-to-end.
@@ -141,8 +141,8 @@ describe("--explain-patch end-to-end", function()
     end)
 
     it("auto-tracks lineage when there is override work, even without the flag", function()
-        -- This package patches + overlays Item.tsv, so lineage is created (Phase 7's
-        -- recompute needs it) regardless of the --explain-patch flag.
+        -- This package patches + overlays Item.tsv, so lineage is created (the
+        -- downstream =expr recompute needs it) regardless of the --explain-patch flag.
         local result = manifest_loader.processFiles({pkg}, badVal)
         assert.is_not_nil(result)
         assert.is_not_nil(result.lineage, "override work should auto-enable lineage")
@@ -154,10 +154,10 @@ describe("--explain-patch end-to-end", function()
         assert.is_not_nil(result)
         assert.is_not_nil(result.lineage, "lineage should be present when tracking is on")
         local r = result.lineage:report()
-        -- Tier-A0 schema overlay.
+        -- Schema overlay.
         assert.is_truthy(r:find("widenTo uint|int", 1, true), "report:\n" .. r)
         assert.is_truthy(r:find("ItemPolicy.tsv", 1, true))
-        -- Tier-A cell update + list delta, attributed to the patch file.
+        -- Row-patch cell update + list delta, attributed to the patch file.
         assert.is_truthy(r:find("price = -5", 1, true), "report:\n" .. r)
         assert.is_truthy(r:find("append {discounted}", 1, true), "report:\n" .. r)
         assert.is_truthy(r:find("ItemPatch.tsv", 1, true))

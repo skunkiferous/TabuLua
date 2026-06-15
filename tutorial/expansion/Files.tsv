@@ -13,4 +13,4 @@ ItemPricePolicy.tsv	SchemaOverlay		false			210	Schema overlay: widen core Item.p
 SpellTuning.tsv	SchemaOverlay		false			310	Schema overlay: lower core Spell.cooldown default from 5.0 to 3.0								Spell.tsv		
 ItemPatch.tsv	patch		false			220	Row patch: tweak a couple of core Item cells (incl. an overlay-enabled negative price)									Item.tsv	
 ItemBulk.tsv	bulk_patch		false			230	Bulk/filter patch: Epic-rarity surcharge on core items										Item.tsv
-SpellPatch.tsv	patch		false			320	Row patch: buff fireball baseDamage; totalDamage (=expr) recomputes (Phase 7 §8.3)									Spell.tsv	
+SpellPatch.tsv	patch		false			320	Row patch: buff fireball baseDamage; totalDamage (=expr) recomputes									Spell.tsv	

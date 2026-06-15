@@ -1,6 +1,6 @@
 ruleName:name	patchOp:patch_op	where:expression	price:expression|nil
-# ^ Tier-B filter/transform patch (mod_overrides.md §5) on core Item.tsv. Instead of
-# ^ naming individual items (that's tier-A ItemPatch.tsv), a bulk_patch SELECTS rows
+# ^ Bulk filter/transform patch on core Item.tsv. Instead of
+# ^ naming individual items (that's the row patch ItemPatch.tsv), a bulk_patch SELECTS rows
 # ^ with a `where` expression and transforms the matches.
 # ^  - Column 1 (ruleName) is a unique label for the rule (not a parent key).
 # ^  - patchOp is `update` (transform matches) or `remove` (drop matches).

@@ -90,8 +90,8 @@ local MANIFEST_SPEC = [[{
     # Each validator is either a simple expression string (error level) or
     # a structured record {expr:expression, level:error_level|nil}
     package_validators:{validator_spec}|nil,
-    # Package-scoped pre-processors (tier-C mod overrides, mod_overrides.md §6).
-    # Run after all files are parsed AND after tier-A/B patches are applied, but
+    # Package-scoped pre-processors (mod overrides).
+    # Run after all files are parsed AND after patches are applied, but
     # before validators. Each processor sees the full merged-and-patched state of
     # every loaded file via `files`; its write helpers (setCell / clearCell) are
     # scoped to files this package owns plus files it has declared patches for.

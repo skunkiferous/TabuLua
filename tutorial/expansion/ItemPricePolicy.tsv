@@ -1,5 +1,5 @@
 column:name	widenTo:type_spec|nil	suppressValidator:expression|nil	validatorLevel:overlay_level|nil
-# ^ Tier-A0 schema overlay (mod_overrides.md §3) on core Item.tsv. This expansion
+# ^ Schema overlay on core Item.tsv. This expansion
 # ^ is a mod on tutorial.core; it loosens the core schema without forking the file.
 # ^ The single `price` row carries TWO loosening operations at once (an overlay
 # ^ row may set any combination of the operation columns):
@@ -10,7 +10,7 @@ column:name	widenTo:type_spec|nil	suppressValidator:expression|nil	validatorLeve
 # ^    `self.price > 0 or 'price must be positive'` (error). Since this mod
 # ^    deliberately allows a negative clearance price (see ItemPatch.tsv), it
 # ^    downgrades that validator to `warn`, matched by its exact expression text.
-# ^ Together: widen the type (A0) + suppress the validator (A0) + set the value
-# ^ (A row patch, §4.5). NOTE: an overlay file's column 1 (`column`) is its primary
+# ^ Together: widen the type + suppress the validator (both overlay ops) + set the value
+# ^ (via a row patch). NOTE: an overlay file's column 1 (`column`) is its primary
 # ^ key, so put all operations for one column on ONE row (one row per column).
 price	gold|int	self.price > 0 or 'price must be positive'	warn

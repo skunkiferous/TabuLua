@@ -43,7 +43,7 @@ describe("parsers - validator types", function()
       -- An `expression` column holds expression TEXT; the '=' "evaluate-me" sigil
       -- is ignored for the syntax check (so `=x > 0` and `x > 0` are both valid)
       -- but the original text is returned unchanged, so callers that key off the
-      -- '=' (e.g. tier-B bulk patches) still see it. (mod_overrides.md §5)
+      -- '=' (e.g. bulk patches) still see it.
       local log_messages = {}
       local badVal = mockBadVal(log_messages)
       local parser = parsers.parseType(badVal, "expression")

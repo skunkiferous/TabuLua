@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- **Recompute downstream `=expr` cells after patches (`TODO/mod_overrides.md` Phase 7).**
+- **Recompute downstream `=expr` cells after patches.**
   When a mod override changes a cell, other `=expr` cells in the **same row** that read
   it (via `self.x`) are now **re-evaluated**, so derived values stay consistent without
   the mod having to patch them too. Example (shipped in the tutorial): core `Spell.tsv`
@@ -19,27 +19,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   re-evaluation runs in dependency order (a chain `a = self.b+1`, `b = self.c+1` resolves
   correctly). A cell the override set **directly** is never clobbered (its explicit value
   wins), and recomputed values are not baked into source (the `=expr` is preserved). It
-  runs in two (idempotent) passes — after patches and after tier-C processors — so a
-  tier-C package processor also reads consistent derived values. This
+  runs in two (idempotent) passes — after patches and after the package-scoped
+  pre-processors — so such a processor also reads consistent derived values. This
   needs to know which cells an override set directly, so **patch lineage is now tracked
   automatically whenever there is override work** (previously only for `--explain-patch`);
   a plain non-mod load still tracks nothing. Cross-row / published-constant dependencies
-  remain out of scope (§8.3). New `patch_executor.recomputeAfterPatches`.
+  remain out of scope. New `patch_executor.recomputeAfterPatches`.
 
-- **`--explain-patch` + patch lineage (`TODO/mod_overrides.md` Phase 6b).** A new
+- **`--explain-patch` + patch lineage.** A new
   reformatter flag `--explain-patch[=<filter>]` prints a per-cell **lineage report**
   answering "which mod override set this?" — the provenance counterpart to
-  `--export-merged`'s merged data. It records every tier of override and attributes
-  each to the file (or `package:<id>`) responsible: tier-A0 schema overlays (`widenTo`
-  / `newDefault` / validator suppression), tier-A row `add`/`remove`/`replace`, cell
-  `update`s and list/map deltas, tier-B `bulk` rule matches (named by their rule), and
-  tier-C package-processor writes. Two mods writing the same cell appear as a chain in
+  `--export-merged`'s merged data. It records every kind of override and attributes
+  each to the file (or `package:<id>`) responsible: schema overlays (`widenTo`
+  / `newDefault` / validator suppression), row `add`/`remove`/`replace`, cell
+  `update`s and list/map deltas, `bulk` rule matches (named by their rule), and
+  package-processor writes. Two mods writing the same cell appear as a chain in
   apply order. The optional `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report
-  (e.g. `--explain-patch=Item.tsv:sword:price`). Tracking is **off by default** (zero
-  overhead on a normal run) — it is enabled only for this flag, threaded as an optional
+  (e.g. `--explain-patch=Item.tsv:sword:price`). Tracking is threaded as an optional
   lineage object through every override write path. New module `patch_lineage`;
-  `manifest_loader.processFiles` gains an `opt_trackLineage` parameter and returns the
-  collected `lineage` on its result.
+  `manifest_loader.processFiles` returns the collected `lineage` on its result.
 
 - **`tsv_diff` directory comparison and compressed-source support.** `tsv_diff` (the
   data-level TSV comparison tool, see `TSV_DIFF.md`) now accepts **two directories**
@@ -58,9 +56,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   gzip is the only format wired today and `libdeflate` is loaded only when a compressed
   file is actually read.
 
-- **`--export-merged` reformatter flag (`TODO/mod_overrides.md` Phase 6a).** Writes a
-  TSV snapshot of every loaded dataset **with all mod overrides applied** (tier-A/B
-  patches, tier-A0 schema-overlay defaults, list/map deltas, tier-C processor writes)
+- **`--export-merged` reformatter flag.** Writes a
+  TSV snapshot of every loaded dataset **with all mod overrides applied** (row and bulk
+  patches, schema-overlay defaults, list/map deltas, package-processor writes)
   to a separate tree — `--export-merged` (default `merged/`) or `--export-merged=<dir>`
   — mirroring the source layout as `<dir>/<package>/<relpath>`. It is the deliberate
   counterpart to the no-bake rule: in-place reformat *omits* overrides to protect parent
@@ -75,30 +73,30 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   temporarily rewrites each cell's reformatted text from `parsed`, then restores it).
   Runs independently of `--file=` and is mutually exclusive with `--cog-docs`.
 
-- **Package-scoped pre-processors (tier C — `TODO/mod_overrides.md` Phase 5).** A
+- **Package-scoped pre-processors.** A
   package manifest may now declare `preProcessors:{processor_spec}|nil`. These
-  **tier-C** processors run after all files are parsed **and after tier-A/B patches
+  **package-scoped** processors run after all files are parsed **and after patches
   are applied**, but before validators — so they (and the validators after them) see
   the fully merged-and-patched state of every loaded file via `files` (keyed like
   package validators). Their write helpers (`setCell` / `clearCell`, plus `copy` and
   `rowByKey(file, key)`) are **scoped**: a processor may only mutate files its package
   owns or has declared patches for; writing any other file is a reported error.
   **Cross-package ordering** follows package load order, refined by each spec's
-  optional `requires:{name}` field ("these packages' tier-C processors must run before
-  mine"): the engine topologically schedules the packages, breaking ties by load
+  optional `requires:{name}` field ("these packages' package-scoped processors must run
+  before mine"): the engine topologically schedules the packages, breaking ties by load
   order; a `requires` cycle is a hard error, and requiring an unloaded package warns
   (the constraint is vacuous) without failing the load. A parent's **own** file-level
   pre-processor flagged `rerunAfterPatches: true` is re-executed in this same phase
   against the patched data, so idempotent derived data (inverse back-references, etc.)
-  reaches rows that mods added via patches (§6.2). Like every other mod-override
-  effect, tier-C writes are never baked into source (they go through `setCell`, which
+  reaches rows that mods added via patches. Like every other mod-override
+  effect, these writes are never baked into source (they go through `setCell`, which
   leaves the on-disk text untouched). New `processor_executor` exports
   `runPackagePreProcessors` / `selectRerunProcessors`; `processor_spec` gains a
   `requires` field.
 
-- **Mod-style list/map deltas (tier A — `TODO/mod_overrides.md` Phase 4).** A row
+- **Mod-style list/map deltas.** A row
   patch's `update` row can now **merge into** a parent list or map cell instead of
-  replacing it, via verb-prefix companion columns (§4.3). For a list column `<col>`:
+  replacing it, via verb-prefix companion columns. For a list column `<col>`:
   `append_<col>` / `prepend_<col>` (insert at tail/head, preserving order),
   `remove_<col>` (drop the first occurrence of each value; `remove_last_<col>` drops
   the last), `replace_<col>` (set the whole list), and the paired
@@ -115,7 +113,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   analysed once per file (`analyzePatchPlan`). Tutorial: `ItemPatch.tsv` now appends
   tags to core items via `append_tags`.
 
-- **Mod-style filter/transform patches (tier B — `TODO/mod_overrides.md` Phase 3).**
+- **Mod-style filter/transform patches.**
   A dependent package can now patch parent rows **by a selector** instead of by key,
   via a `bulk_patch` file: `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` in
   `Files.tsv`. Column 1 is a unique **rule name**; a required `where:expression`
@@ -127,8 +125,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   target row** (`self` = that row, so `=row.price * 2` does what you'd expect),
   otherwise it is a literal parsed by the parent column. A selector matching zero
   rows warns (likely a typo); a throwing selector is a reported error. Bulk patches
-  compose with tier-A row patches on the same target, applied together in package
-  load order. Like tier A, they mutate the parent in place for the build/validation
+  compose with row patches on the same target, applied together in package
+  load order. Like row patches, they mutate the parent in place for the build/validation
   but are never baked into parent source (the reformatter skips patched targets).
 
   The `where` selector and transform columns are `expression`-typed, which now
@@ -144,7 +142,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   `applyOneBulkPatch`. The tutorial expansion ships `ItemBulk.tsv` (an Epic-rarity
   surcharge on core items via `=row.price + 100`).
 
-- **Mod-style row patches (tier A — `TODO/mod_overrides.md` Phase 2).** A
+- **Mod-style row patches.** A
   dependent package can now **add / remove / update / replace** rows of a parent
   file without forking it, via a patch file: `typeName=patch` and
   `patchOf=Target.tsv` in `Files.tsv` (target resolved by basename). Column 1 is
@@ -159,21 +157,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   - **`replace`** rewrites a row wholesale (remove + add).
 
   Each patch value is parsed against the patch file's own column type, then
-  re-validated against the **parent** column's parser at apply time, so a tier-A0
-  `widenTo` overlay already in effect lets a patch set a value the parent type
+  re-validated against the **parent** column's parser at apply time, so a schema
+  overlay's `widenTo` already in effect lets a patch set a value the parent type
   would otherwise reject (e.g. a negative price). Patches apply in **package load
   order** (last writer wins) after own-package pre-processors and **before
   validators**, so validators — and the exporter — see the patched state.
   Patches are **never baked into parent source**: the parent dataset is mutated
-  in place for the build/validation, but the reformatter skips patched targets
-  (§7.1), and `update` writes leave each cell's on-disk text untouched. New
+  in place for the build/validation, but the reformatter skips patched targets,
+  and `update` writes leave each cell's on-disk text untouched. New
   module `patch_executor.lua`; the `patch` typeName keyword, the `patch_op` enum
   and the `patchOf` descriptor column register through the type-wiring registry;
   `tsv_model` gained `newDataCell` / `newDataRow` builders for constructing added
   rows. The tutorial expansion package ships `ItemPatch.tsv` (patches core items,
-  including an overlay-enabled negative price — the §4.5 overlay+patch combo).
+  including an overlay-enabled negative price — the overlay+patch combo).
 
-- **Mod-style schema overlays (tier A0 — `TODO/mod_overrides.md` Phase 1).** A
+- **Mod-style schema overlays.** A
   dependent package can now *loosen* a parent file's column metadata without
   forking it, via a `SchemaOverlay` file. A file declaring
   `typeName=SchemaOverlay` and `schemaOverlayOf=Target.tsv` in `Files.tsv`
@@ -193,7 +191,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
   Overlays are a **load-time view, never baked into the source**: a column's
   declared `type_spec` / `default_expr` are preserved (so the reformatter
-  round-trips the parent file unchanged — see §3.6 / §7.1), while the effective
+  round-trips the parent file unchanged), while the effective
   widened type drives parsing and a separate effective default drives empty
   cells. New module `schema_overlay.lua`; the `SchemaOverlay` record type, the
   `overlay_level` enum (`error|warn|none`) and the `schemaOverlayOf` descriptor

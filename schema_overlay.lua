@@ -30,7 +30,7 @@ local validator_executor = require("validator_executor")
 local normalizeValidatorSpec = validator_executor.normalizeValidatorSpec
 
 -- ============================================================
--- Tier-A0 schema overlay (see TODO/mod_overrides.md §3, Phase 1).
+-- Schema overlay.
 --
 -- A child package may declare a SchemaOverlay file targeting a parent file
 -- (by basename, via the schemaOverlayOf descriptor column). Each overlay row
@@ -55,7 +55,7 @@ local function getVersion()
 end
 
 -- Severity ordering for suppressValidator composition: the lowest severity
--- across all overlays targeting one validator wins (§3.3). `none` removes
+-- across all overlays targeting one validator wins. `none` removes
 -- the validator entirely.
 local SEVERITY = {none = 0, warn = 1, error = 2}
 
@@ -82,7 +82,7 @@ end
 
 -- Merges two type specs into their union, deduplicating members. Used for
 -- the order-independent widenTo composition when multiple overlays widen the
--- same column (§3.3): widening to `gold|int` and `gold|float` yields
+-- same column: widening to `gold|int` and `gold|float` yields
 -- `gold|int|float`.
 local function mergeUnion(a, b)
     if not a or a == "" then return b end
@@ -161,7 +161,7 @@ local function ingestOverlayFile(overlays, file_name, targetBasename, transcoder
 
             -- Validator-targeting operation (suppressValidator + validatorLevel).
             -- Matched purely by the validator's expression text; the row's
-            -- `column` cell is contextual only (§3.1).
+            -- `column` cell is contextual only.
             if suppress ~= nil and suppress ~= "" then
                 local lvl = level
                 if lvl == nil or lvl == "" then
@@ -241,7 +241,7 @@ end
 -- validator lists in joinMeta, in place, before validators run. A `none`
 -- override drops the matched validator; `warn` / `error` rebinds its level.
 -- Each list is rebuilt (rather than mutated) because the parsed validator
--- specs may be read-only. Unmatched suppressors warn (likely a typo, §3.5).
+-- specs may be read-only. Unmatched suppressors warn (likely a typo).
 local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage)
     if not overlays then return end
     local rowMap = joinMeta.lcFn2RowValidators or {}
@@ -292,7 +292,7 @@ local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage)
 end
 
 -- Records the column-level overlay effects (widenTo / newDefault) into a patch
--- lineage object for `--explain-patch` (Phase 6b). Validator suppressions are
+-- lineage object for `--explain-patch`. Validator suppressions are
 -- recorded separately, in applyValidatorOverrides (where match info is known).
 -- No-op when `lineage` is nil. Call after collectOverlays.
 local function recordLineage(overlays, lineage)

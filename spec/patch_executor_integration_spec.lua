@@ -1,5 +1,5 @@
 -- patch_executor_integration_spec.lua
--- End-to-end tests for tier-A row patches (TODO/mod_overrides.md §4, Phase 2):
+-- End-to-end tests for row patches:
 -- load a package whose Files.tsv declares a patch file (typeName=patch,
 -- patchOf=Target.tsv) and verify add / remove / update / replace ops on the
 -- target dataset, the two-step value handling, =nil, and error cases.

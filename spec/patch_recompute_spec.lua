@@ -1,5 +1,5 @@
 -- patch_recompute_spec.lua
--- Tests for Phase 7 (TODO/mod_overrides.md §8.3): after a patch changes a cell,
+-- Tests for downstream =expr recompute: after a patch changes a cell,
 -- downstream same-row `=expr` cells that read it are re-evaluated, so a derived
 -- value stays consistent with the patched input.
 
@@ -33,7 +33,7 @@ local FILES =
     .. "Item.tsv\tItem\t\t\t1\tItems\n"
     .. "ItemPatch.tsv\tpatch\t\tItem.tsv\t2\tRow patch\n"
 
-describe("Phase 7 — recompute downstream =expr after patches", function()
+describe("recompute downstream =expr after patches", function()
     local temp_dir, pkg, badVal
 
     before_each(function()
@@ -152,7 +152,7 @@ describe("Phase 7 — recompute downstream =expr after patches", function()
         assert.are.equal(14, cell(result, "shield", "total"))
     end)
 
-    it("a tier-C processor sees the recomputed value (recompute runs before tier-C)", function()
+    it("a pre-processor sees the recomputed value (recompute runs before pre-processors)", function()
         -- total = base*2 (default =expr). A patch bumps base 10->50, so total should
         -- recompute to 100 BEFORE the package processor runs; the processor copies
         -- total into `flag`, which must therefore be 100, not the stale 20.
@@ -180,7 +180,7 @@ describe("Phase 7 — recompute downstream =expr after patches", function()
             "load should pass; errors=" .. tostring(badVal.errors))
         assert.are.equal(100, cell(result, "sword", "total"))
         assert.are.equal(100, cell(result, "sword", "flag"),
-            "tier-C processor should have read the recomputed total (100), not stale 20")
+            "pre-processor should have read the recomputed total (100), not stale 20")
     end)
 
     it("does not bake the recomputed value into the source (no-bake)", function()

@@ -1,6 +1,6 @@
 -- list_map_delta_patch_spec.lua
--- End-to-end tests for tier-A list/map delta companion columns (Phase 4,
--- TODO/mod_overrides.md §4.3): append_/prepend_/remove_(/_last_),
+-- End-to-end tests for row-patch list/map delta companion columns:
+-- append_/prepend_/remove_(/_last_),
 -- replace_ (wholesale), replace_oldvalue_/replace_newvalue_ (/_last_) on list
 -- columns, append_/remove_/replace_ on map columns, prefix-collision precedence,
 -- and the edge cases.
@@ -247,7 +247,7 @@ describe("list/map delta patches", function()
             "expected paired-column error, got:\n" .. joined)
     end)
 
-    it("sub-record dotted-path columns patch an exploded field directly (§4.3)", function()
+    it("sub-record dotted-path columns patch an exploded field directly", function()
         -- No new mechanism: `stats.attack` is a normal (exploded) parent column,
         -- so the patch column binds to it directly; sibling stats.* are untouched.
         local STATS =

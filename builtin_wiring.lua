@@ -207,8 +207,8 @@ parsers.registerAlias(nullBadVal, 'type_wiring_def',
     .. 'rowValidators:{validator_spec}|nil,typeName:name}')
 type_wiring.register("type_wiring_def", {onLoad = onLoadTypeWiringDef})
 
--- SchemaOverlay — built-in record type for tier-A0 schema overlay files
--- (see TODO/mod_overrides.md §3). A file declaring `typeName=SchemaOverlay`
+-- SchemaOverlay — built-in record type for schema overlay files.
+-- A file declaring `typeName=SchemaOverlay`
 -- (or extending it) and `schemaOverlayOf=Target.tsv` in Files.tsv loosens
 -- the target file's column metadata: override a column default, widen a
 -- column type, or downgrade/suppress a parent validator. Each data row
@@ -306,8 +306,7 @@ type_wiring.registerModule("pre_processors", {
     },
 })
 
--- Mod-style schema overlay selection (see TODO/mod_overrides.md §3, Phase 1).
--- A file with `schemaOverlayOf` set (and typeName=SchemaOverlay) targets a
+-- Mod-style schema overlay selection. A file with `schemaOverlayOf` set (and typeName=SchemaOverlay) targets a
 -- parent file by basename — same lookup convention as joinInto / edgesFor —
 -- and loosens that file's column metadata before its cells are parsed. The
 -- value lowercases for case-insensitive basename matching.
@@ -318,7 +317,7 @@ type_wiring.registerModule("schema_overlay", {
     },
 })
 
--- Mod-style row patches (see TODO/mod_overrides.md §4, Phase 2). A file with
+-- Mod-style row patches. A file with
 -- `typeName=patch` and `patchOf=Target.tsv` declares add / remove / update /
 -- replace operations against a parent file's rows. `patchOf` targets the parent
 -- by basename (same convention as joinInto / schemaOverlayOf). `patch_op` is the
@@ -328,7 +327,7 @@ type_wiring.registerModule("row_patch", {
     descriptorColumns = {
         {name = "patchOf", type = "filepath|nil",
          fieldOnMeta = "lcFn2PatchOf", parse = lowerOrNil},
-        -- Tier-B filter/transform patches (mod_overrides.md §5, Phase 3): a file
+        -- Bulk filter/transform patches: a file
         -- with `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` selects parent
         -- rows by a `where` expression and updates/removes the matches.
         {name = "bulkPatchOf", type = "filepath|nil",
@@ -344,8 +343,8 @@ type_wiring.registerModule("row_patch", {
 -- own header column types.
 parsers.registerAlias(nullBadVal, 'patch', '{}')
 
--- `bulk_patch` is the reserved typeName keyword for tier-B filter/transform patch
--- files (mod_overrides.md §5). Like `patch`, it is aliased to the empty record so
+-- `bulk_patch` is the reserved typeName keyword for bulk filter/transform patch
+-- files. Like `patch`, it is aliased to the empty record so
 -- it parses as a type_spec and registerFileType auto-skips it. A bulk_patch file's
 -- column 1 is a unique RULE NAME, a `where:expression` column selects parent rows,
 -- and the remaining columns transform (or, with patchOp=remove, drop) the matches.

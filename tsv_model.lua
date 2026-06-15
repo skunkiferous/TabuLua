@@ -189,15 +189,15 @@ local function newHeaderColumn(params, col_idx, column)
         end
     end
 
-    -- Tier-A0 schema overlay (TODO/mod_overrides.md §3): a mod may declare a
-    -- SchemaOverlay file targeting this file. `widenTo` makes this column parse
+    -- Schema overlay: a mod may declare a SchemaOverlay file targeting this file.
+    -- `widenTo` makes this column parse
     -- against a strictly wider type, so a value the declared type would reject
     -- still parses. Only loosening is allowed: narrowing (or an unknown /
     -- expression type) is rejected, an identical type is a no-op warning.
     --
     -- Crucially, the overlay is a *load-time view*, never baked into the source:
     -- `type_spec` / `default_expr` keep the file's DECLARED values (so the
-    -- reformatter round-trips the parent file unchanged — §3.6 / §7.1), while
+    -- reformatter round-trips the parent file unchanged — the "no-bake" trick), while
     -- the effective widened type drives `type` / `parser` and the effective
     -- default drives cell parsing via `effective_default_expr`.
     local overlay = params.schema_overlay and params.schema_overlay[col_name]
@@ -281,7 +281,7 @@ local function newHeaderColumn(params, col_idx, column)
     end
     -- default_expr is nil if no default value was specified (and not inherited).
     -- It is the DECLARED default (serialized verbatim, never overwritten by an
-    -- overlay). A tier-A0 `newDefault` is recorded separately as the effective
+    -- overlay). An overlay `newDefault` is recorded separately as the effective
     -- default used for empty cells (see processCell / the missing-column path);
     -- nil when no overlay overrides it.
     result.default_expr = default_expr
@@ -328,8 +328,8 @@ local cell_mt = {
 -- Builds a read-only data cell {value, evaluated, parsed, reformatted} carrying
 -- the shared `cell` metatable, so getmetatable(cell) == "cell" and consumers
 -- read it exactly like a parsed cell. For code that constructs rows OUTSIDE the
--- parse loop — e.g. patch_executor adding rows to a parent file (TODO/mod_overrides.md
--- §4). `value` is the original on-disk text (drives reformatting), `parsed` the
+-- parse loop — e.g. patch_executor adding rows to a parent file. `value` is the
+-- original on-disk text (drives reformatting), `parsed` the
 -- typed value (drives the model).
 local function newDataCell(value, evaluated, parsed, reformatted)
     return readOnly({value, evaluated, parsed, reformatted}, cell_mt)
@@ -379,7 +379,7 @@ local function processCell(expr_eval, badVal)
             badVal.col_types[#badVal.col_types] = col.type_spec
         end
         -- Apply default value if cell is empty and column has a default expression.
-        -- A tier-A0 schema overlay's newDefault (effective_default_expr) takes
+        -- A schema overlay's newDefault (effective_default_expr) takes
         -- precedence over the declared default; with no overlay this is nil and
         -- the declared default_expr is used unchanged.
         local original_value = value
@@ -833,7 +833,7 @@ local function processTSV(options_extractor, expr_eval, parser_finder, source_na
                             -- Row is shorter than header and column is not nullable
                             local missing_msg = "row has " .. #row .. " columns but header defines "
                                 .. #header .. " -- column '" .. header[ci].name .. "' is missing"
-                            -- Effective default includes a tier-A0 overlay newDefault.
+                            -- Effective default includes an overlay newDefault.
                             local missing_default = header[ci].effective_default_expr
                                 or header[ci].default_expr
                             if missing_default then

@@ -1,5 +1,5 @@
 -- export_merged_spec.lua
--- Tests for `--export-merged` (TODO/mod_overrides.md §7.1, Phase 6a): the
+-- Tests for `--export-merged`: the
 -- reformatter writes a TSV snapshot of every dataset with mod overrides applied
 -- to a separate tree, WITHOUT baking those overrides into the parent source.
 

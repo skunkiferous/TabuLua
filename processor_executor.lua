@@ -11,7 +11,8 @@ local read_only = require("read_only")
 local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
 
--- Optional patch-lineage recording for tier-C writes (mod_overrides.md §6, §4.4).
+-- Optional patch-lineage recording for package-scoped processor writes (for
+-- --explain-patch).
 local patch_lineage = require("patch_lineage")
 local lineageValueStr = patch_lineage.valueStr
 
@@ -96,8 +97,8 @@ local function normalizeProcessorSpec(spec)
         if spec.rerunAfterPatches == true then
             rerun = true
         end
-        -- `requires` is a list of package ids that must have run their tier-C
-        -- processors before this one (mod_overrides.md §6.1). Only meaningful at
+        -- `requires` is a list of package ids that must have run their
+        -- package-scoped processors before this one. Only meaningful at
         -- package scope; ignored (but harmless) on file-level processors.
         if type(spec.requires) == "table" then
             for _, pid in ipairs(spec.requires) do
@@ -135,7 +136,7 @@ local row_context = setmetatable({}, {__mode = "k"})
 --- @param fileName string Name of the file (for diagnostics)
 --- @param writable boolean|nil Whether setCell is permitted on this row. nil
 ---   means writable (the per-file processor case); package-scoped processors pass
----   false for files outside the package's write scope (mod_overrides.md §6).
+---   false for files outside the package's write scope.
 --- @return table A processor-row proxy
 local function wrapRowForProcessor(row, header, fileName, writable)
     local proxy = setmetatable({}, {
@@ -209,13 +210,13 @@ end
 --- @param column string|number Column name or index
 --- @param value any New parsed value (or nil for clearCell)
 --- @param opt_linCtx table|nil {lineage, source} — when set (package-scoped
----   tier-C runs only), record the write for `--explain-patch`.
+---   package-scoped runs only), record the write for `--explain-patch`.
 local function setCellImpl(wrappedRow, column, value, opt_linCtx)
     local ctx = row_context[wrappedRow]
     if not ctx then
         error("setCell: first argument is not a processor row", 2)
     end
-    -- Write scoping (mod_overrides.md §6): a package-scoped processor may only
+    -- Write scoping: a package-scoped processor may only
     -- mutate files the package owns or has declared patches for. Rows of other
     -- files are wrapped read-only and rejected here.
     if ctx.writable == false then
@@ -582,14 +583,13 @@ local function runFilePreProcessors(processors, rows, header, fileName, badVal, 
 end
 
 -- ============================================================
--- Package-scoped pre-processors (tier-C mod overrides, §6)
+-- Package-scoped pre-processors (mod overrides)
 -- ============================================================
 
 --- Returns the subset of `processors` whose normalized spec has
 --- `rerunAfterPatches = true`. Used by the cross-package phase to re-run the
---- parent's own idempotent file processors against the patched data
---- (mod_overrides.md §6.2). Preserves textual order; the caller (or
---- runFilePreProcessors) re-applies priority sorting.
+--- parent's own idempotent file processors against the patched data. Preserves
+--- textual order; the caller (or runFilePreProcessors) re-applies priority sorting.
 --- @param processors table|nil Array of processor_spec records
 --- @return table Array of the rerun-flagged specs (possibly empty)
 local function selectRerunProcessors(processors)
@@ -608,7 +608,7 @@ end
 --- Builds the per-package wrapped-file map. Each entry of `fileEntries` is
 --- `{rows, header, fileName, writable}`; the result maps the same key to a
 --- PK-indexed array of processor-row proxies. Rows of non-writable files are
---- wrapped read-only so setCell on them is rejected by setCellImpl (§6 scoping).
+--- wrapped read-only so setCell on them is rejected by setCellImpl (write scoping).
 --- @param fileEntries table Map of fileKey -> {rows, header, fileName, writable}
 --- @return table Map of fileKey -> wrapped (PK-indexed) row array
 local function wrapPackageFiles(fileEntries)
@@ -673,7 +673,7 @@ local function createPackageProcessorEnv(wrappedFiles, packageId, ctx, extraEnv,
     return env
 end
 
---- Runs a single package's tier-C pre-processors, in priority order, against
+--- Runs a single package's package-scoped pre-processors, in priority order, against
 --- the already-loaded-and-patched file set. Mutations go through the scoped
 --- setCell, so a processor can only write files the package owns or patched.
 --- Cross-package ordering (load order + `requires`) is the caller's concern;
@@ -706,7 +706,7 @@ local function runPackagePreProcessors(processors, fileEntries, packageId, badVa
     local warnings = {}
     local allOk = true
     local label = "package:" .. tostring(packageId)
-    -- A tier-C processor's writes are attributed to its package in the lineage.
+    -- A package-scoped processor's writes are attributed to its package in the lineage.
     local linCtx = opt_lineage and {lineage = opt_lineage, source = label}
 
     for _, entry in ipairs(normalized) do

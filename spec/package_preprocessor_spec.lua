@@ -1,7 +1,7 @@
 -- package_preprocessor_spec.lua
--- End-to-end tests for tier-C package-scoped pre-processors
--- (TODO/mod_overrides.md §6, Phase 5): a child package declares
--- `preProcessors` in its manifest; they run AFTER tier-A/B patches and BEFORE
+-- End-to-end tests for package-scoped pre-processors:
+-- a child package declares
+-- `preProcessors` in its manifest; they run AFTER patches and BEFORE
 -- validators, mutating the merged-and-patched state. Write access is scoped to
 -- files the package owns or has declared patches for. Cross-package ordering
 -- follows package load order, refined by each spec's `requires`. Parent
@@ -119,7 +119,7 @@ local function modFiles(patchFile)
         .. patchFile .. "\tpatch\t\tItem.tsv\t2\tRow patch\n"
 end
 
-describe("tier-C package-scoped pre-processors", function()
+describe("package-scoped pre-processors", function()
     local temp_dir, log_messages, badVal
 
     before_each(function()
@@ -165,12 +165,12 @@ describe("tier-C package-scoped pre-processors", function()
             "load should pass; log:\n" .. table.concat(log_messages, "\n"))
         local item = findTsv(result, "Item%.tsv$")
         local byName, header = rowsByName(item)
-        -- Patch set trail="base", then the tier-C processor appended "X".
+        -- Patch set trail="base", then the pre-processor appended "X".
         assert.are.equal("baseX", readCell(byName.sword, header, "trail"))
     end)
 
     it("write scope is rejected for a parent file the package did not patch", function()
-        -- Core ships two files; the mod patches only Item.tsv. A tier-C processor
+        -- Core ships two files; the mod patches only Item.tsv. A pre-processor
         -- that tries to write Spell.tsv must be rejected.
         local core = path_join(temp_dir, "core")
         local coreFiles =
@@ -206,7 +206,7 @@ describe("tier-C package-scoped pre-processors", function()
         assert.are.equal(10, readCell(byName.fireball, header, "mana"))
     end)
 
-    it("requires reorders tier-C processors against the natural load order", function()
+    it("requires reorders pre-processors against the natural load order", function()
         -- Two independent mods. The packages are passed alpha-before-zeta, so the
         -- natural load order would run alpha ('C') before zeta ('B') => "CB".
         -- mod.alpha requires mod.zeta, so the edge forces zeta to run first and the

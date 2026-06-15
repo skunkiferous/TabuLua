@@ -1,6 +1,6 @@
 -- schema_overlay_integration_spec.lua
--- End-to-end tests for tier-A0 schema overlays (TODO/mod_overrides.md §3,
--- Phase 1): load a package whose Files.tsv declares a SchemaOverlay file
+-- End-to-end tests for schema overlays:
+-- load a package whose Files.tsv declares a SchemaOverlay file
 -- targeting a data file, and verify the overlay's widenTo / newDefault /
 -- suppressValidator effects on the loaded data and on validation.
 

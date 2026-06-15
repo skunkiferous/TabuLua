@@ -290,7 +290,7 @@ local function generateUsage()
         "                        Removes all existing files and subdirectories",
         "",
         "  --export-merged[=<dir>]  Write a TSV snapshot of every dataset with all mod",
-        "                        overrides applied (patches / overlays / tier-C processors)",
+        "                        overrides applied (patches / overlays / pre-processors)",
         "                        to <dir> (default: \"merged\"), mirroring the source layout.",
         "                        Independent of --file=; can run alone. Diff <dir> against",
         "                        the sources to see exactly what an override changed.",
@@ -422,8 +422,8 @@ local function reformat(tsv_files, raw_files, badVal, fn2Transcoder, patchedTarg
     fn2Transcoder = fn2Transcoder or {}
     patchedTargets = patchedTargets or {}
     for file_name, tsv in pairs(tsv_files) do
-        -- A parent file modified in place by a tier-A row patch (mod_overrides.md
-        -- §4 / §7.1) must NOT be rewritten: its in-memory dataset now reflects the
+        -- A parent file modified in place by a row patch must NOT be rewritten:
+        -- its in-memory dataset now reflects the
         -- mod's add/remove/update ops, so serialising it would bake those changes
         -- into the parent's source. The patch FILE itself round-trips normally.
         if patchedTargets[file_name] then
@@ -546,8 +546,8 @@ end
 --- Serializes one dataset with mod overrides applied, then restores it.
 ---
 --- In-place reformat serializes from each cell's `reformatted` text, which
---- patches/overlays/tier-C processors deliberately leave at the *original* value
---- (the "no-bake" trick — mod_overrides.md §7.1). To show the merged state we
+--- patches/overlays/pre-processors deliberately leave at the *original* value
+--- (the "no-bake" trick). To show the merged state we
 --- must serialize from the live `parsed` value instead. Rather than reimplement
 --- the dataset serializer (preamble, exploded columns, etc.), this temporarily
 --- rewrites each data cell's `reformatted` (index 4) from `parsed`, calls the
@@ -675,11 +675,11 @@ local function writeMergedFile(file_name, content, target, fn2Transcoder, badVal
 end
 
 --- Writes a snapshot of every loaded dataset to a separate `mergedDir`, with all
---- mod overrides applied (tier-A/B patches, schema overlays, tier-C processors).
+--- mod overrides applied (row/bulk patches, schema overlays, pre-processors).
 --- Unlike in-place reformat — which deliberately skips patched targets so overrides
 --- are never baked into the parent's source — this writes the *post-override*
 --- in-memory state, so the merged tree shows the final merged data and can be
---- diffed against the sources (mod_overrides.md §7.1, the `--export-merged` tool).
+--- diffed against the sources (the `--export-merged` tool).
 --- Each file is encoded to its source's on-disk format (see `writeMergedFile`).
 --- @param tsv_files table Map of file paths to parsed (overridden) datasets
 --- @param directories table Sequence of input directory paths
@@ -768,7 +768,7 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         if mc then excludeDirs[mc] = true end
     end
 
-    -- --explain-patch (Phase 6b): enable patch-lineage tracking during load.
+    -- --explain-patch: enable patch-lineage tracking during load.
     local explainPatch = exportParams and exportParams.explainPatch
     local result = manifest_loader.processFiles(directories, badVal, excludeDirs,
         opt_variants, explainPatch ~= nil)
@@ -786,7 +786,7 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         if errors > 0 then
             logger:error("Reformatting errors: " .. errors)
         else
-            -- Merged export (mod_overrides.md §7.1): write the post-override state
+            -- Merged export: write the post-override state
             -- of every dataset to a separate tree. Independent of the format
             -- exporters below — it can run alone (just load + merged snapshot) or
             -- alongside an export.

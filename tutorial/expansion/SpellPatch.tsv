@@ -1,7 +1,7 @@
 name:name	patchOp:patch_op	baseDamage:float|nil
-# ^ Tier-A row patch (mod_overrides.md §4) on core Spell.tsv: this expansion buffs
+# ^ Row patch on core Spell.tsv: this expansion buffs
 # ^ fireball's baseDamage from 25.0 to 40.0.
-# ^ DEMO of Phase 7 (§8.3): core Spell.tsv's `totalDamage` column has an EXPRESSION
+# ^ DEMO of downstream =expr recompute: core Spell.tsv's `totalDamage` column has an EXPRESSION
 # ^ default `=self.baseDamage*gameLib.percentToMultiplier(self.scalingPercent)`.
 # ^ It was evaluated at load (25.0 * 1.5 = 37.5). After this patch changes baseDamage,
 # ^ the engine RE-EVALUATES the downstream =expr cell, so fireball.totalDamage becomes

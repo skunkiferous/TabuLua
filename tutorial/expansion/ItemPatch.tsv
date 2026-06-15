@@ -1,13 +1,13 @@
 name:name	patchOp:patch_op	price:gold|int|nil	weight:float|nil	append_tags:{name}|nil
-# ^ Tier-A row patch (mod_overrides.md §4) on core Item.tsv. This expansion is a
+# ^ Row patch on core Item.tsv. This expansion is a
 # ^ mod on tutorial.core; it changes a few core item cells without forking the file.
 # ^ Column 1 is the parent primary key (name); patchOp carries the operation.
 # ^ Empty cells in an `update` row mean "leave unchanged" (note the blank weight
 # ^ on healthPotion and blank price on manaPotion).
-# ^ DEMO of the §4.5 overlay+patch combo: ItemPricePolicy.tsv widened price to
+# ^ DEMO of the overlay+patch combo: ItemPricePolicy.tsv widened price to
 # ^ gold|int, so this patch can set a NEGATIVE price (a "we pay you to haul it
 # ^ away" clearance item) that the core gold (uint) type would otherwise reject.
-# ^ `append_tags` is a list-delta companion column (§4.3): it appends to core
+# ^ `append_tags` is a list-delta companion column: it appends to core
 # ^ Item.tsv's `tags:{name}` list WITHOUT replacing it. The sibling verbs are
 # ^ prepend_/remove_(/_last_)/replace_<col>, plus replace_oldvalue_/newvalue_<col>
 # ^ for an in-place by-value swap; maps support append_/remove_/replace_.

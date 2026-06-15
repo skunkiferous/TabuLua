@@ -64,20 +64,20 @@ local runFilePreProcessors = processor_executor.runFilePreProcessors
 local runPackagePreProcessors = processor_executor.runPackagePreProcessors
 local selectRerunProcessors = processor_executor.selectRerunProcessors
 
--- Tier-A0 schema overlays (TODO/mod_overrides.md §3). collectOverlays runs as
--- a pre-parse pass (so widenTo / newDefault take effect before target cells
--- parse); applyValidatorOverrides runs just before validation.
+-- Mod schema overlays. collectOverlays runs as a pre-parse pass (so widenTo /
+-- newDefault take effect before target cells parse); applyValidatorOverrides runs
+-- just before validation.
 local schema_overlay = require("schema_overlay")
 
--- Tier-A row patches (TODO/mod_overrides.md §4). applyPatches runs after
--- own-package pre-processors and before validators, mutating each patched
--- parent dataset in place and returning the set of targets the reformatter
--- must not rewrite.
+-- Mod row patches. applyPatches runs after own-package pre-processors and before
+-- validators, mutating each patched parent dataset in place and returning the set
+-- of targets the reformatter must not rewrite.
 local patch_executor = require("patch_executor")
 
--- Optional patch-lineage tracking (mod_overrides.md §4.4, Phase 6b). Created only
--- when the caller (reformatter's --explain-patch) asks for it; threaded into every
--- override write path and returned on the result for the CLI to render.
+-- Optional patch-lineage tracking. Created when there is override work (so the
+-- after-patch =expr recompute knows which cells a patch set directly) or when the
+-- caller asks for --explain-patch; threaded into every override write path and
+-- returned on the result for the CLI to render.
 local patch_lineage = require("patch_lineage")
 
 -- The type-wiring registry replaces the three hand-written branches that
@@ -391,11 +391,11 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
         end
     end
 
-    -- Tier-A0 schema overlay overrides for this target file (widenTo /
-    -- newDefault), keyed by column name; nil when no mod overlays this file.
-    -- They must be applied as the header parses, so they flow into processTSV.
+    -- Schema overlay overrides for this target file (widenTo / newDefault), keyed by
+    -- column name; nil when no mod overlays this file. They must be applied as the
+    -- header parses, so they flow into processTSV.
     local schemaColumnOverrides = schema_overlay.columnOverridesFor(opt_schemaOverlays, lcFNKey)
-    -- Note: tier-B bulk_patch files (mod_overrides.md §5) need their `where` /
+    -- Note: bulk_patch files need their `where` /
     -- transform `=expr` cells kept RAW (evaluated at apply time, not at load). That
     -- is handled at the COLUMN level: those columns are `expression`-typed, and
     -- processCell skips load-time evaluation for expression columns (col.skip_cell_eval).
@@ -625,10 +625,10 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     for _, desc_file in ipairs(desc_files) do
         tsv_files[desc_file[1].__source] = desc_file
     end
-    -- Tier-A0 schema overlays: collect every overlay file (now that `files` is
-    -- in load order, so newDefault last-writer-wins is correct) and parse them
-    -- ahead of the main load loop. The resulting per-target column overrides
-    -- (widenTo / newDefault) are threaded into each target file's parse.
+    -- Schema overlays: collect every overlay file (now that `files` is in load
+    -- order, so newDefault last-writer-wins is correct) and parse them ahead of the
+    -- main load loop. The resulting per-target column overrides (widenTo /
+    -- newDefault) are threaded into each target file's parse.
     local overlayFiles = {}
     for _, fn in ipairs(files) do
         if lcFn2SchemaOverlayOf[computeFilenameKey(fn, file2dir)] then
@@ -638,7 +638,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local schemaOverlays = schema_overlay.collectOverlays(overlayFiles, file2dir,
         computeFilenameKey, lcFn2SchemaOverlayOf, lcFn2Transcoder,
         raw_files, loadEnv, badVal)
-    -- Tier-A row patches: build the apply plan in load order (so newDefault /
+    -- Row patches: build the apply plan in load order (so newDefault /
     -- last-writer-wins is deterministic). Each entry pairs a patch file with the
     -- basename of the parent file it targets; patch_executor.applyPatches consumes
     -- it after the load loop (it needs the fully parsed datasets).
@@ -647,9 +647,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local patchPlan = {}
     for _, fn in ipairs(files) do
         local key = computeFilenameKey(fn, file2dir)
-        -- A file is a tier-A row patch (`patchOf`) or a tier-B bulk patch
-        -- (`bulkPatchOf`); both go in the one load-ordered plan, tagged by kind,
-        -- so they compose at apply time (§5).
+        -- A file is a row patch (`patchOf`) or a bulk patch (`bulkPatchOf`); both go
+        -- in the one load-ordered plan, tagged by kind, so they compose at apply time.
         local target = lcFn2PatchOf[key]
         local kind = "patch"
         if not target then
@@ -694,12 +693,12 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         if tc then fn2Transcoder[file_name] = tc end
     end
     joinMeta.fn2Transcoder = fn2Transcoder
-    -- Tier-A0 schema overlays, for the validator-severity overrides applied
-    -- just before runAllValidators (the per-file validator lists only exist
-    -- after the load loop, so the suppressValidator / validatorLevel part of
-    -- an overlay cannot run in the pre-parse pass that handled widen/default).
+    -- Schema overlays, for the validator-severity overrides applied just before
+    -- runAllValidators (the per-file validator lists only exist after the load loop,
+    -- so the suppressValidator / validatorLevel part of an overlay cannot run in the
+    -- pre-parse pass that handled widen/default).
     joinMeta.schemaOverlays = schemaOverlays
-    -- Tier-A row patch plan (load-ordered), consumed by patch_executor.applyPatches
+    -- Row patch plan (load-ordered), consumed by patch_executor.applyPatches
     -- in processFiles after pre-processors and before validators.
     joinMeta.patchPlan = patchPlan
     return tsv_files, joinMeta
@@ -950,8 +949,8 @@ local function buildFileToPackage(packages, tsv_files)
 end
 
 -- Topologically orders the loaded packages, refining the load order by the
--- `requires` edges declared on tier-C package processors (mod_overrides.md §6.1).
--- An edge Q->P means "package Q's tier-C processors must run before P's". Edges
+-- `requires` edges declared on package-scoped processors. An edge Q->P means
+-- "package Q's package-scoped processors must run before P's". Edges
 -- to packages that are not loaded are dropped with a warning (the requirement is
 -- vacuous). A cycle in the requires graph is a hard error. Ties are broken by
 -- load order so the schedule is deterministic.
@@ -1015,7 +1014,7 @@ local function schedulePackageProcessors(package_order, pkgProcessors, badVal)
                 if not emitted[pid] then stuck[#stuck + 1] = pid end
             end
             badVal.source_name = "package pre-processors"
-            badVal("requires", "cyclic `requires` ordering among tier-C package "
+            badVal("requires", "cyclic `requires` ordering among package-scoped "
                 .. "pre-processors: " .. table.concat(stuck, ", "))
             return nil
         end
@@ -1029,19 +1028,19 @@ local function schedulePackageProcessors(package_order, pkgProcessors, badVal)
     return result
 end
 
--- Cross-package pre-processor phase (tier-C mod overrides, mod_overrides.md §6).
+-- Cross-package pre-processor phase (package-scoped mod-override processors).
 -- Runs AFTER patches are applied and BEFORE validators, so processors see (and
 -- validators see the effects of) the fully merged-and-patched state. For each
 -- package, in requires-refined load order, it (a) re-runs that package's own
--- file-level processors flagged rerunAfterPatches against the patched data
--- (§6.2), then (b) runs the package's manifest-declared tier-C processors with
--- write access scoped to files it owns or has declared patches for.
+-- file-level processors flagged rerunAfterPatches against the patched data, then
+-- (b) runs the package's manifest-declared package-scoped processors with write
+-- access scoped to files it owns or has declared patches for.
 -- Returns (ok, warnings).
 local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package_order, loadEnv, badVal, opt_lineage)
     local lcFn2PreProcessors = joinMeta.lcFn2PreProcessors or {}
     local patchPlan = joinMeta.patchPlan or {}
 
-    -- Which packages declare tier-C (manifest-scoped) processors?
+    -- Which packages declare package-scoped (manifest) processors?
     local pkgProcessors = {}
     for _, pid in ipairs(package_order) do
         local manifest = packages[pid]
@@ -1099,7 +1098,7 @@ local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package
     local allOk = true
 
     for _, pid in ipairs(order) do
-        -- (a) Re-run this package's rerun-flagged file processors (§6.2).
+        -- (a) Re-run this package's rerun-flagged file processors.
         for file_name, rerun in pairs(rerunByFile) do
             if fn2pkg[file_name] == pid then
                 local tsv_file = tsv_files[file_name]
@@ -1112,7 +1111,7 @@ local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package
             end
         end
 
-        -- (b) Run this package's tier-C processors (§6).
+        -- (b) Run this package's package-scoped processors.
         local processors = pkgProcessors[pid]
         if processors then
             local writable = writableByPkg[pid] or {}
@@ -1234,10 +1233,10 @@ end
 --- @side_effect Logs progress and errors; registers type parsers and aliases
 local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, opt_trackLineage)
     badVal = initializeBadVal(badVal)
-    -- Patch-lineage collector. Created when there is override work (so the Phase 7
-    -- `=expr` recompute knows which cells a patch set directly) OR when the caller
-    -- asks for --explain-patch (Phase 6b). A plain non-mod load creates none and
-    -- pays nothing; `lineage` is decided below, once the patch plan is known.
+    -- Patch-lineage collector. Created when there is override work (so the after-
+    -- patch `=expr` recompute knows which cells a patch set directly) OR when the
+    -- caller asks for --explain-patch. A plain non-mod load creates none and pays
+    -- nothing; `lineage` is decided below, once the patch plan is known.
     local lineage = nil
     -- Reset file-registered types tracking for this processing run
     fileRegisteredTypes = {}
@@ -1341,14 +1340,13 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     local processorsOk, processorWarnings = runAllPreProcessors(
         tsv_files, joinMeta, loadEnv, badVal)
 
-    -- Tier-A row patches (TODO/mod_overrides.md §4): apply add / remove / update /
-    -- replace ops from patch files to their target parent datasets, in load order.
-    -- Runs after own-package pre-processors and before validators, so validators
-    -- (and the exporter) see the patched state. patchedTargets is the set of
-    -- parent files the reformatter must not rewrite (patches are never baked into
-    -- parent source — §7.1).
+    -- Row patches: apply add / remove / update / replace ops from patch files to
+    -- their target parent datasets, in load order. Runs after own-package
+    -- pre-processors and before validators, so validators (and the exporter) see the
+    -- patched state. patchedTargets is the set of parent files the reformatter must
+    -- not rewrite (patches are never baked into parent source).
     -- Decide whether to track lineage: needed whenever there is override work (the
-    -- Phase 7 recompute reads the directly-set cells from it), or when the caller
+    -- recompute reads the directly-set cells from it), or when the caller
     -- requested --explain-patch. A plain non-mod load tracks nothing.
     local hasOverrideWork = (joinMeta.patchPlan and #joinMeta.patchPlan > 0)
         or (joinMeta.schemaOverlays and next(joinMeta.schemaOverlays) ~= nil)
@@ -1365,8 +1363,8 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         lineage = patch_lineage.new()
     end
 
-    -- Record the (already-applied, pre-parse) tier-A0 column overlays into the
-    -- lineage first, so schema effects precede the row/cell events below.
+    -- Record the (already-applied, pre-parse) column overlays into the lineage
+    -- first, so schema effects precede the row/cell events below.
     if lineage then
         schema_overlay.recordLineage(joinMeta.schemaOverlays, lineage)
     end
@@ -1375,20 +1373,20 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         tsv_files, joinMeta.patchPlan, loadEnv, badVal, lineage)
     joinMeta.patchedTargets = patchedTargets
 
-    -- Phase 7: recompute downstream `=expr` cells whose same-row inputs an override
-    -- changed (e.g. patching baseDamage updates totalDamage=…self.baseDamage…). Uses
-    -- the lineage's directly-set cells to find changed rows and to avoid clobbering a
+    -- Recompute downstream `=expr` cells whose same-row inputs an override changed
+    -- (e.g. patching baseDamage updates totalDamage=…self.baseDamage…). Uses the
+    -- lineage's directly-set cells to find changed rows and to avoid clobbering a
     -- cell an override set explicitly. Idempotent (re-evaluating an unaffected cell
     -- yields the same value), so it runs in TWO passes: this one, right after patches,
-    -- so the tier-C processors below see consistent derived data; and a second pass
-    -- after tier-C, to fold in any cells the processors themselves changed.
+    -- so the package-scoped processors below see consistent derived data; and a
+    -- second pass after them, to fold in any cells the processors themselves changed.
     local recomputeOk = true
     if lineage then
         recomputeOk = patch_executor.recomputeAfterPatches(
             tsv_files, lineage:dirtyCells(), loadEnv, badVal)
     end
 
-    -- Tier-C cross-package pre-processors (mod_overrides.md §6): a child package's
+    -- Package-scoped cross-package pre-processors: a child package's
     -- manifest-declared processors mutate the merged-and-patched state (scoped to
     -- files it owns or patched), and any parent file processor flagged
     -- rerunAfterPatches re-derives against the patched data. Runs after patches,
@@ -1396,7 +1394,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     local pkgProcessorsOk, pkgProcessorWarnings = runAllPackagePreProcessors(
         tsv_files, joinMeta, packages, package_order, loadEnv, badVal, lineage)
 
-    -- Phase 7 (second pass): recompute again after tier-C, now that processors may
+    -- Second recompute pass: recompute again after the processors, now that they may
     -- have changed more cells. `dirtyCells()` includes their writes too.
     if lineage then
         local recomputeOk2 = patch_executor.recomputeAfterPatches(
@@ -1404,9 +1402,9 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         recomputeOk = recomputeOk and recomputeOk2
     end
 
-    -- Tier-A0 schema overlays: downgrade / remove parent validators a mod has
-    -- declared a suppressValidator for, before the validators run against the
-    -- (possibly patched) data. Mutates the per-file validator lists in joinMeta.
+    -- Schema overlays: downgrade / remove parent validators a mod has declared a
+    -- suppressValidator for, before the validators run against the (possibly
+    -- patched) data. Mutates the per-file validator lists in joinMeta.
     schema_overlay.applyValidatorOverrides(joinMeta.schemaOverlays, joinMeta, badVal, lineage)
 
     -- Run all validators (row, file, package) after files are loaded
@@ -1445,7 +1443,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         -- loaded dataset. Exposed so the export-time doc generator can expand COG
         -- doc templates against the same data the load-time COG blocks saw.
         loadEnv = loadEnv,
-        -- `validationPassed` covers pre-processors (own-package and tier-C
+        -- `validationPassed` covers pre-processors (own-package and package-scoped
         -- cross-package), row patches, and validators: true iff every error-level
         -- processor, patch op, and validator succeeded. (These run in pipeline
         -- order before/around validators, but for callers they are folded into
@@ -1453,8 +1451,8 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         validationPassed = processorsOk and patchesOk and pkgProcessorsOk
             and recomputeOk and validatorsOk and postPassesOk,
         validationWarnings = validationWarnings,
-        -- Patch lineage: present whenever there was override work (Phase 7 needs it)
-        -- or --explain-patch was requested (Phase 6b). Consumed by --explain-patch.
+        -- Patch lineage: present whenever there was override work (the recompute
+        -- needs it) or --explain-patch was requested. Consumed by --explain-patch.
         lineage = lineage,
     }
 end

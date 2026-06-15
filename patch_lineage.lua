@@ -11,20 +11,21 @@ local read_only = require("read_only")
 local readOnly = read_only.readOnly
 
 -- ============================================================
--- Patch lineage (mod_overrides.md §4.4, Phase 6b).
+-- Patch lineage.
 --
--- An OPTIONAL, off-by-default record of which override touched which cell / row /
--- column, so `--explain-patch` can answer "why does sword.price equal 150?". The
--- collector is dumb: each override write path (tier-A0 schema overlays, tier-A row
--- patches incl. list/map deltas, tier-B bulk rules, tier-C package processors)
--- calls one of `cell` / `row` / `schema` with a preformatted `action` string and
--- the responsible `source` (the patch/overlay file basename, or `package:<id>`).
--- Events are stored in apply order, so a cell written by two mods keeps both
--- entries — the chain, last-writer-last.
+-- A record of which mod override touched which cell / row / column, so
+-- `--explain-patch` can answer "why does sword.price equal 150?". The collector is
+-- dumb: each override write path (schema overlays, row patches incl. list/map
+-- deltas, bulk patches, package-scoped pre-processors) calls one of `cell` / `row`
+-- / `schema` with a preformatted `action` string and the responsible `source`
+-- (the patch/overlay file basename, or `package:<id>`). Events are stored in apply
+-- order, so a cell written by two mods keeps both entries — the chain,
+-- last-writer-last.
 --
--- Tracking is created only when requested (manifest_loader gets a flag from the
--- reformatter's `--explain-patch`); when no lineage object is threaded through, the
--- write paths skip recording entirely, so there is zero cost in the common case.
+-- A lineage object is threaded through the override write paths only when there is
+-- override work (the after-patch `=expr` recompute reads its directly-set cells)
+-- or when `--explain-patch` is requested; otherwise the write paths skip recording
+-- entirely, so a plain non-mod load pays nothing.
 -- ============================================================
 
 --- Returns the module version as a string.
@@ -95,7 +96,7 @@ end
 
 --- Returns the set of cells a patch / processor wrote DIRECTLY, as a nested map
 --- `target -> pk -> column -> true`, built from the recorded `cell` events. Used
---- by the after-patch `=expr` recompute (Phase 7) to (a) find which rows changed
+--- by the after-patch `=expr` recompute to (a) find which rows changed
 --- and (b) avoid clobbering a cell an override set explicitly. Row add/remove/
 --- replace and schema events are excluded — an added/replaced row is built whole
 --- (already consistent) and schema effects are column metadata, not cell writes.

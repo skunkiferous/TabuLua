@@ -242,7 +242,7 @@ end
 
 --- Evaluates an arbitrary expression in the validator sandbox and returns its
 --- RAW value (unlike executeValidator, which maps the result to valid/invalid).
---- Used by tier-B bulk patches (TODO/mod_overrides.md §5) to evaluate a `where`
+--- Used by bulk patches to evaluate a `where`
 --- selector (truthy = match) and transform `=expr` cells (the value to set),
 --- with the same helper block, `self`/`row`/`rows` bindings and published
 --- contexts validators get.

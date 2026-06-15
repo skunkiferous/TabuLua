@@ -687,7 +687,7 @@ There are multiple types extending `string`:
 
 | Type | Description |
 |------|-------------|
-| `expression` | A string holding a Lua expression (syntax-validated at parse time via `load()`). An `expression` column stores the expression **text** — a leading `=` is tolerated (and ignored for the syntax check) so `=foo` and `foo` are accepted alike, and a `=`-prefixed cell is **not** evaluated at load (unlike a value column, where `=` means "compute this cell now"). The text is consumed later by whatever owns the expression (a validator, a tier-B `bulk_patch` selector/transform, etc.). |
+| `expression` | A string holding a Lua expression (syntax-validated at parse time via `load()`). An `expression` column stores the expression **text** — a leading `=` is tolerated (and ignored for the syntax check) so `=foo` and `foo` are accepted alike, and a `=`-prefixed cell is **not** evaluated at load (unlike a value column, where `=` means "compute this cell now"). The text is consumed later by whatever owns the expression (a validator, a `bulk_patch` selector/transform, etc.). |
 | `error_level` | Enum: `"error"` or `"warn"` |
 | `validator_spec` | Union: `expression\|{expr:expression,level:error_level\|nil}` — either a plain expression string (defaults to error level) or a record with explicit level |
 | `super_type` | Alias for `type_spec\|nil`; used in the `superType` column of `Files.tsv` |
@@ -1091,9 +1091,9 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `fileValidators` | `{validator_spec}\|nil` | Validators run on the complete file |
 | `preProcessors` | `{processor_spec}\|nil` | Pre-processors run on parsed rows before validation (see [Pre-Processors](#pre-processors)) |
 | `variant` | `name\|nil` | Variant tag for conditional file inclusion (see [Variant-Based Conditional File Inclusion](#variant-based-conditional-file-inclusion)) |
-| `schemaOverlayOf` | `filepath\|nil` | Marks this file as a tier-A0 schema overlay on the named parent file (see [Mod Overrides](#mod-overrides)) |
-| `patchOf` | `filepath\|nil` | Marks this file as a tier-A row patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
-| `bulkPatchOf` | `filepath\|nil` | Marks this file as a tier-B filter/transform patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `schemaOverlayOf` | `filepath\|nil` | Marks this file as a schema overlay on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `patchOf` | `filepath\|nil` | Marks this file as a row patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `bulkPatchOf` | `filepath\|nil` | Marks this file as a filter/transform (bulk) patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
 
 ### Publishing Data
 
@@ -1522,7 +1522,7 @@ Since the file has only a single data row and multiple values can be quite long,
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
-| `preProcessors` | `{processor_spec}\|nil` | Package-scoped (tier-C) pre-processors that mutate the merged-and-patched state of every file after patches and before validators (see [Mod Overrides](#mod-overrides)) |
+| `preProcessors` | `{processor_spec}\|nil` | Package-scoped pre-processors that mutate the merged-and-patched state of every file after patches and before validators (see [Mod Overrides](#mod-overrides)) |
 | `variant_groups` | `{{name,{name},name\|nil}}\|nil` | Declares groups of mutually exclusive variant names with optional default (see [Variant Group Validation](#variant-group-validation)) |
 
 ### Custom Manifest Fields
@@ -1729,8 +1729,8 @@ level, priority 100, no re-run after patches) or a structured record:
 | `expr` | (required) | Lua expression run in the processor sandbox |
 | `level` | `"error"` | `"error"` aborts on failure; `"warn"` collects a warning |
 | `priority` | `100` | Lower runs first within the file (same convention as `loadOrder`) |
-| `rerunAfterPatches` | `false` | When `true`, this file processor is **re-run** after mod-override patches are applied, against the patched data — so derived data (inverse back-references, etc.) reaches rows that mods added. Such a processor must be **idempotent**. See [Mod Overrides → Tier C](#tier-c--package-scoped-pre-processors) |
-| `requires` | `{}` | Only meaningful for **package-scoped** (tier-C) processors: names other packages whose tier-C processors must run before this one. See [Mod Overrides → Tier C](#tier-c--package-scoped-pre-processors) |
+| `rerunAfterPatches` | `false` | When `true`, this file processor is **re-run** after mod-override patches are applied, against the patched data — so derived data (inverse back-references, etc.) reaches rows that mods added. Such a processor must be **idempotent**. See [Mod Overrides → Package-Scoped Pre-Processors](#package-scoped-pre-processors) |
+| `requires` | `{}` | Only meaningful for **package-scoped** pre-processors: names other packages whose package-scoped pre-processors must run before this one. See [Mod Overrides → Package-Scoped Pre-Processors](#package-scoped-pre-processors) |
 
 ### Sandbox Environment
 
@@ -2047,14 +2047,14 @@ parent ships authoritative data, and a child amends it non-invasively. Every ove
 expressed as ordinary TSV the parent never sees, so the parent package stays untouched and
 upgradable.
 
-There are four tiers; a child package can use any combination:
+There are four mechanisms; a child package can use any combination:
 
-| Tier | Mechanism | `Files.tsv` / manifest field | What it does |
-|------|-----------|------------------------------|--------------|
-| **A0** | Schema overlay | `schemaOverlayOf` (file) | Loosen a parent column: change its default, widen its type, or downgrade/suppress one of its validators. |
-| **A** | Row patch | `patchOf` (file) | Add / remove / update / replace specific parent rows by primary key, including list/map cell deltas. |
-| **B** | Bulk patch | `bulkPatchOf` (file) | Update or remove parent rows selected by a `where` expression (e.g. "double the price of every medicine"). |
-| **C** | Package pre-processor | `preProcessors` (manifest) | Full programmatic mutation of the merged-and-patched state — the escape hatch for what A/B can't express declaratively. |
+| Mechanism | `Files.tsv` / manifest field | What it does |
+|-----------|------------------------------|--------------|
+| **Schema overlay** | `schemaOverlayOf` (file) | Loosen a parent column: change its default, widen its type, or downgrade/suppress one of its validators. |
+| **Row patch** | `patchOf` (file) | Add / remove / update / replace specific parent rows by primary key, including list/map cell deltas. |
+| **Bulk patch** | `bulkPatchOf` (file) | Update or remove parent rows selected by a `where` expression (e.g. "double the price of every medicine"). |
+| **Package pre-processor** | `preProcessors` (manifest) | Full programmatic mutation of the merged-and-patched state — the escape hatch for what the declarative mechanisms can't express. |
 
 ### Pipeline Order
 
@@ -2064,9 +2064,9 @@ Overrides slot into the load pipeline at fixed points:
 parse schema overlays  →  widen types / change defaults (before parent cells are typed)
 parse all files        →  parent + child files loaded
 own-package pre-processors
-apply patches          →  tier-A row patches + tier-B bulk patches, in package load order
-recompute =expr        →  re-evaluate downstream same-row =expr cells (so tier-C sees them)
-package pre-processors  →  tier-C processors + rerunAfterPatches re-runs
+apply patches          →  row patches + bulk patches, in package load order
+recompute =expr        →  re-evaluate downstream same-row =expr cells (so processors see them)
+package pre-processors  →  package-scoped processors + rerunAfterPatches re-runs
 recompute =expr        →  again, to fold in cells the processors themselves changed
 validators             →  re-run once, against the fully overridden state
 ```
@@ -2077,7 +2077,7 @@ Two consequences worth internalising:
   to accept negative numbers is already widened by the time a patch sets a negative value.
 - **Validators run once, at the end, against the final state.** A parent validator is
   re-applied to the patched data, so a mod that introduces a violation is caught loudly
-  (unless a tier-A0 overlay downgraded that validator).
+  (unless a schema overlay downgraded that validator).
 
 ### Downstream `=expr` Recompute
 
@@ -2090,11 +2090,11 @@ recomputes automatically. This covers explicit `=expr` cells and columns with a 
 (`a` reads `b` reads a patched `c`) resolve correctly. A cell an override sets **directly**
 keeps its explicit value (it is not recomputed), and recomputed values are not baked into
 source (the `=expr` is preserved). The recompute runs in **two passes** — once after the
-patches (so a tier-C package processor reads consistent derived values) and once after the
-tier-C processors (to fold in any cells they changed); it is idempotent, so the double pass
+patches (so a package-scoped pre-processor reads consistent derived values) and once after
+those processors (to fold in any cells they changed); it is idempotent, so the double pass
 is safe. **Cross-row** dependencies and `=expr` cells that read a **published constant** a
 patch changed are *not* recomputed — patch those downstream cells explicitly, or use a
-tier-C processor.
+package-scoped pre-processor.
 
 ### No-Bake Invariant
 
@@ -2126,7 +2126,7 @@ Two reformatter flags make the override layer observable (see [REFORMATTER.md](R
 
 ---
 
-### Tier A0 — Schema Overlay
+### Schema Overlays
 
 A schema overlay only ever **loosens** a parent column, so no parent row that used to parse
 can stop parsing. Declare it in `Files.tsv` with `typeName=SchemaOverlay` and
@@ -2157,7 +2157,7 @@ type, rename/drop a column, change the primary key, add a column (use `joinInto`
 *tighten* a validator. Scope note: validator suppression targets a file's row/file
 validators; validators embedded in a `custom_type_def` are out of scope.
 
-### Tier A — Row Patches
+### Row Patches
 
 A **patch file** (`typeName=patch`, `patchOf=Target.tsv`) adds, removes, or edits specific
 parent rows. Column 1 is the parent's primary-key column (same name); a `patchOp:patch_op`
@@ -2187,8 +2187,8 @@ Key rules:
   one row into one patch row.
 - The patch column declares its **own** type (conventionally the parent's type made
   nullable). The value is parsed there, then **re-validated against the parent's column** at
-  apply time — so a tier-A0 widening already in effect is what lets a patch set an otherwise
-  out-of-range value.
+  apply time — so a schema-overlay widening already in effect is what lets a patch set an
+  otherwise out-of-range value.
 
 #### List and Map Cell Deltas
 
@@ -2209,7 +2209,7 @@ match wins and a warning fires so you can disambiguate. Sub-record fields are pa
 their dotted path (`stats.attack`) with no special syntax — they are ordinary exploded
 columns.
 
-### Tier B — Bulk Patches
+### Bulk Patches
 
 A **bulk patch** (`typeName=bulk_patch`, `bulkPatchOf=Target.tsv`) edits parent rows chosen
 by a selector rather than by key. Column 1 is a unique **rule name**; a required
@@ -2231,12 +2231,12 @@ dropBroken      remove             row.tags has 'deprecated'
 - A selector that matches **zero** rows warns (likely a typo); a `where` that throws is a
   reported error and that rule is skipped.
 
-Tier-A and tier-B files can target the same parent and compose — all patches apply together
-in package load order.
+Row-patch and bulk-patch files can target the same parent and compose — all patches apply
+together in package load order.
 
-### Tier C — Package-Scoped Pre-Processors
+### Package-Scoped Pre-Processors
 
-When the declarative tiers can't express an override, a package can run a **programmatic
+When the declarative mechanisms can't express an override, a package can run a **programmatic
 pre-processor** declared in its **manifest** (not a `Files.tsv` column):
 
 ```tsv
@@ -2266,19 +2266,19 @@ like inverse back-references reaches mod-added rows; those processors must be id
 
 #### Cross-Package Ordering
 
-Tier-C processors run in **package load order** by default. A processor can add an explicit
-edge with `requires={"pkg.id", …}` — "every tier-C processor from `pkg.id` must run before
-me". The engine topologically schedules the packages (ties broken by load order, so the
+Package-scoped processors run in **package load order** by default. A processor can add an
+explicit edge with `requires={"pkg.id", …}` — "every package-scoped processor from `pkg.id`
+must run before me". The engine topologically schedules the packages (ties broken by load order, so the
 schedule is deterministic). A **cycle** in the `requires` graph is a hard error; a `requires`
 naming a package that **isn't loaded** is a warning (the constraint is vacuous) and the load
 continues.
 
 #### Write Scope — and Why It's Limited
 
-A tier-C processor may **read** every file, but it may only **write**:
+A package-scoped processor may **read** every file, but it may only **write**:
 
 1. files its **own** package declares, and
-2. parent files it has **declared a patch for** (tier A or B).
+2. parent files it has **declared a patch for** (a row or bulk patch).
 
 Attempting `setCell` on any other file is a reported error. The rationale follows directly
 from the override design:
@@ -2300,8 +2300,8 @@ from the override design:
 
 #### Opening a File Without Changing It
 
-If a tier-C processor needs to write a parent file for which you have **no actual patch to
-make**, grant write scope by declaring a **content-free patch file**. Write scope comes from
+If a package-scoped processor needs to write a parent file for which you have **no actual
+patch to make**, grant write scope by declaring a **content-free patch file**. Write scope comes from
 the `patchOf` *declaration*, not from the patch's content, and an empty patch applies as a
 no-op. The cleanest form is a **header-only patch** — a valid patch header (primary-key
 column + `patchOp`) with **zero data rows**:
@@ -2317,8 +2317,8 @@ Open.tsv            patch                Item.tsv               2
 name:name	patchOp:patch_op
 ```
 
-This loads cleanly, changes nothing, and authorises the package's tier-C processor to write
-`Item.tsv`. (A no-op `update` row — naming a real key with all other cells blank — works too,
+This loads cleanly, changes nothing, and authorises the package's package-scoped processor to
+write `Item.tsv`. (A no-op `update` row — naming a real key with all other cells blank — works too,
 but must name existing keys.) Note two things: the empty patch is still a **visible, declared
 intent**, which is exactly the property the scope rule protects; and declaring it marks the
 target as a patched file, so the reformatter will not rewrite that source in place (correct

@@ -43,7 +43,7 @@ lua reformatter.lua [OPTIONS] <dir1> [dir2] ...
 | `--data=<format>` | Data serialization format (see [Data Formats](#data-formats) below). Required for some file formats, optional for others. |
 | `--collapse-exploded` | Collapse exploded columns into single composite columns during export (e.g., `location.level` + `location.x` → `location:{level,x}`). Default: keep exploded columns as separate flat columns. |
 | `--clean` | Empty the export directory before exporting. Removes all existing files and subdirectories. |
-| `--export-merged[=<dir>]` | Write a TSV snapshot of every dataset with all mod overrides applied (patches, schema overlays, tier-C processors) to `<dir>` (default: `merged`), mirroring the source layout. Independent of `--file=`; can run on its own. See [Merged Export (`--export-merged`)](#merged-export---export-merged). |
+| `--export-merged[=<dir>]` | Write a TSV snapshot of every dataset with all mod overrides applied (patches, schema overlays, package-scoped pre-processors) to `<dir>` (default: `merged`), mirroring the source layout. Independent of `--file=`; can run on its own. See [Merged Export (`--export-merged`)](#merged-export---export-merged). |
 | `--explain-patch[=<filter>]` | Print which mod override set each cell / row / column. Optional `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report. See [Explain Patch (`--explain-patch`)](#explain-patch---explain-patch). |
 | `--cog-docs` | Refresh COG doc templates (`.md`/`.txt`/`.html` files containing a COG block) in place against the loaded data, keeping the markers so they stay re-runnable. Independent of reformat/export; nothing is exported. **Mutually exclusive with the export options** (`--file=`, `--data=`, `--strip-cog`, `--clean`, `--collapse-exploded`, `--export-dir=`, `--export-merged`) — combining them is an error. |
 | `--strip-cog` | When exporting, strip the COG scaffolding (markers and code lines) from generated doc templates, leaving only the generated output for a clean published file. Default: off (markers kept). |
@@ -379,7 +379,7 @@ on disk. See [DATA_FORMAT_README §Pre-Processors](DATA_FORMAT_README.md#pre-pro
 ## Mod Overrides and Round-Trip
 
 When a dependent package ships **mod overrides** — row patches, schema overlays,
-or tier-C package processors (see [DATA_FORMAT_README §Mod Overrides](DATA_FORMAT_README.md#mod-overrides)) —
+or package-scoped pre-processors (see [DATA_FORMAT_README §Mod Overrides](DATA_FORMAT_README.md#mod-overrides)) —
 the reformatter follows the same "no-bake" rule as for pre-processors: a parent
 file that a mod patched is **left untouched on disk**. Its in-memory dataset
 reflects the merged result (so validators and exporters see it), but reformatting
@@ -405,8 +405,8 @@ lua reformatter.lua --export-merged=build/merged tutorial/core/ tutorial/expansi
 - **Independent of `--file=`.** It can run on its own (just load + merged snapshot)
   or alongside a format export. It is **mutually exclusive with `--cog-docs`**.
 - **What it shows.** A cell whose final parsed value differs from its on-disk text
-  is re-rendered (so tier-A/B patch edits, list/map deltas, tier-A0 overlay defaults,
-  tier-C processor writes, **and** ordinary resolved data — column defaults and
+  is re-rendered (so patch edits, list/map deltas, schema-overlay defaults,
+  package-processor writes, **and** ordinary resolved data — column defaults and
   file-level pre-processor output — all appear); every **unchanged** cell keeps its
   exact original text **byte-for-byte**, and `=expr` cells keep their expression. In
   other words it is a *fully-resolved* snapshot, not just "source + mod edits": diffing
@@ -456,10 +456,10 @@ item.tsv
     price = 2100 (bulk 'epic_surcharge')   <- ItemBulk.tsv
 ```
 
-- **What it records.** Every tier of mod override: tier-A0 schema overlays (`widenTo`,
-  `newDefault`, validator suppression), tier-A row ops (`add` / `remove` / `replace`),
-  cell `update`s and list/map deltas (`append` / `remove` / in-place `replace`), tier-B
-  `bulk` rule matches (named by their rule), and tier-C package-processor writes
+- **What it records.** Every kind of mod override: schema overlays (`widenTo`,
+  `newDefault`, validator suppression), row ops (`add` / `remove` / `replace`),
+  cell `update`s and list/map deltas (`append` / `remove` / in-place `replace`),
+  `bulk` rule matches (named by their rule), and package-processor writes
   (attributed to `package:<id>`). When two mods write the same cell, both entries appear
   in apply order — the chain, last-writer-last.
 - **Filter.** `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report, e.g.

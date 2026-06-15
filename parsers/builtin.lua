@@ -794,7 +794,7 @@ function M.registerDerivedParsers()
         -- (TabuLua's "evaluate-me" sigil) is tolerated and ignored for this check,
         -- so an `expression` column accepts `=foo` as readily as `foo` — both name
         -- the same expression. The original text is stored UNCHANGED, so callers
-        -- that key off the '=' (e.g. tier-B bulk patches distinguishing an
+        -- that key off the '=' (e.g. bulk patches distinguishing an
         -- expression from a literal) still see it on the cell value.
         local toCheck = value
         if type(toCheck) == "string" and toCheck:sub(1, 1) == '=' then
@@ -832,8 +832,8 @@ function M.registerDerivedParsers()
     -- or a structured record. Mirrors validator_spec, but adds processor-specific fields
     -- so that pre-processors can opt into priority-based ordering, re-runs after
     -- mod-override patches, and cross-package ordering. The `requires` field is only
-    -- meaningful for tier-C package-scoped processors (mod_overrides.md §6.1): it names
-    -- other packages whose tier-C processors must run before this one. `name` is used
+    -- meaningful for package-scoped pre-processors: it names
+    -- other packages whose pre-processors must run before this one. `name` is used
     -- (not `package_id`, an alias registered later in manifest_info) so the alias has no
     -- load-order dependency. See pre_processors documentation for full semantics.
     registration.registerAlias(ownBadVal, 'processor_spec',
