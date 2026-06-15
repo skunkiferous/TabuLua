@@ -35,7 +35,7 @@ end
 --   transcode  structured -> TSV text (JSON/XML/SQLite/.eav; single match)
 --   normalize  text -> text          (core EOL-normalisation; text only)
 --   macro      text -> text          (COG; text only)
---   asset      bytes -> bytes        (image/audio/font; binary only — Phase 6)
+--   asset      bytes -> bytes        (image/audio/font; binary only — not yet implemented)
 --
 -- The pipeline tracks each file's content kind ("text" or "binary"). The
 -- text-only phases (normalize, macro) never run on binary content, so reading
