@@ -14,10 +14,12 @@ processFiles() result
   ├── package_order     (array of package_id strings)
   ├── tsv_files         (map: file_path → dataset)
   ├── raw_files         (map: file_path → raw content string)
-  ├── joinMeta          (join and validator metadata)
+  ├── joinMeta          (join, validator, and mod-override metadata)
   ├── file2dir          (map: file_path → parent directory)
-  ├── validationPassed  (boolean — true iff all processors AND all validators succeeded)
-  └── validationWarnings (array of warning records)
+  ├── loadEnv           (COG/expression env, with loadEnv.files[typeName] populated)
+  ├── validationPassed  (boolean — true iff all processors, patches, AND all validators succeeded)
+  ├── validationWarnings (array of warning records)
+  └── lineage           (patch lineage, when override work ran or --explain-patch was requested)
 ```
 
 Each **dataset** (parsed TSV file) contains:
@@ -248,9 +250,12 @@ A manifest is a **read-only table** created from `Manifest.transposed.tsv`.
 | `url` | `string\|nil` | Source URL |
 | `custom_types` | `table\|nil` | Read-only array of custom type definition records |
 | `code_libraries` | `table\|nil` | Read-only array of `{name, path}` tuples |
+| `bootstrap` | `table\|nil` | Read-only array of `{fn, library}` records. Each references a function exported by one of this package's own code libraries, run once at engine init with the type-wiring registration `api` (in package-dependency order) |
 | `dependencies` | `table\|nil` | Read-only array of dependency records (see below) |
 | `load_after` | `table\|nil` | Read-only array of package ID strings |
 | `package_validators` | `table\|nil` | Read-only array of validator specs |
+| `preProcessors` | `table\|nil` | Read-only array of **package-scoped** pre-processor specs (see [Pre-Processor Specs](#pre-processor-specs)). Run after all files are parsed and after patches are applied, but before validators; scoped to files this package owns or has patched |
+| `variant_groups` | `table\|nil` | Read-only array of `{group_name, {allowed_values}, default\|nil}` tuples. Each group requires exactly one of its values among the selected variants (a group with a default needs no explicit selection) |
 
 ### Dependency Records
 
@@ -389,23 +394,40 @@ The top-level `processFiles(directories, badVal, opt_excludeDirs, opt_variants)`
 | `tsv_files` | `table` | Map of absolute file path → dataset (parsed TSV). Includes both data files and manifest/descriptor files |
 | `package_order` | `table` | Array of package ID strings in dependency-resolved load order |
 | `packages` | `table` | Map of package ID → manifest (read-only) |
-| `joinMeta` | `table` | Join and validator metadata (see below) |
+| `joinMeta` | `table` | Join, validator, and mod-override metadata (see below) |
 | `file2dir` | `table` | Map of absolute file path → parent directory path |
-| `validationPassed` | `boolean` | `true` iff every error-level pre-processor AND every error-level validator succeeded |
+| `loadEnv` | `table` | The COG/expression environment, with `loadEnv.files[typeName]` populated for every loaded dataset. Exposed so the export-time doc generator can expand COG doc templates against the same data the load-time COG blocks saw |
+| `validationPassed` | `boolean` | `true` iff every error-level pre-processor (own-package and package-scoped), every row/bulk patch op, the downstream recompute passes, AND every error-level validator succeeded |
 | `validationWarnings` | `table` | Array of warning records (includes both validator and pre-processor warnings) |
+| `lineage` | `table\|nil` | Patch lineage object. Present whenever there was override work (the downstream recompute needs it) or `--explain-patch` was requested; `nil` for a plain non-mod load. Consumed by `--explain-patch` |
 
 ### joinMeta
 
+`joinMeta` is the table of registered descriptor-column maps (one per column `fieldOnMeta`, keyed by lowercase filename) plus a few core/derived entries. Because feature modules register their own columns through the type-wiring registry, a module that declares a `Files.tsv` column and consumes it via its own `joinMeta` key appears here automatically — so this list grows as modules are added.
+
 | Field | Type | Description |
 |-------|------|-------------|
+| `lcFn2Ctx` | `table` | Map of lowercase filename → `publishContext` name |
+| `lcFn2Col` | `table` | Map of lowercase filename → `publishColumn` name |
 | `lcFn2JoinInto` | `table` | Map of lowercase filename → lowercase target filename |
 | `lcFn2JoinColumn` | `table` | Map of lowercase filename → join column name |
 | `lcFn2Export` | `table` | Map of lowercase filename → export flag (boolean) |
 | `lcFn2JoinedTypeName` | `table` | Map of lowercase filename → joined type name |
+| `lcFn2Variant` | `table` | Map of lowercase filename → variant name |
 | `lcFn2RowValidators` | `table` | Map of lowercase filename → array of row validator specs |
 | `lcFn2FileValidators` | `table` | Map of lowercase filename → array of file validator specs |
 | `lcFn2PreProcessors` | `table` | Map of lowercase filename → array of pre-processor specs (see [Pre-Processor Specs](#pre-processor-specs)) |
+| `lcFn2SchemaOverlayOf` | `table` | Map of lowercase filename → lowercase target filename for a `SchemaOverlay` file |
+| `lcFn2PatchOf` | `table` | Map of lowercase filename → lowercase target filename for a row `patch` file |
+| `lcFn2BulkPatchOf` | `table` | Map of lowercase filename → lowercase target filename for a `bulk_patch` file |
+| `lcFn2EdgesFor` | `table` | Map of lowercase edge filename → lowercase node filename (graph edge files) |
+| `lcFn2Transcoder` | `table` | Map of lowercase filename → content-pipeline transcoder id |
+| `lcFn2Type` | `table` | Map of lowercase filename → declared `typeName` |
+| `extends` | `table` | Map of type name → super-type chain (type lineage) |
 | `lcSkippedFiles` | `table` | Map of lowercase filename → `true` for files skipped by variant filtering |
+| `fn2Transcoder` | `table` | Map of full file path → transcoder id (re-keyed `lcFn2Transcoder` for the reformatter's id-selected reversible round-trip) |
+| `schemaOverlays` | `table` | Collected schema-overlay records, consumed for the validator-severity overrides applied just before validation |
+| `patchPlan` | `table` | Load-ordered row/bulk patch plan, consumed by `patch_executor` after pre-processors and before validators |
 
 ### Pre-Processor Specs
 
@@ -416,7 +438,8 @@ Each entry in `lcFn2PreProcessors[fileName]` is a normalized record produced by 
 | `expr` | `string` | Lua expression run in the processor sandbox |
 | `level` | `string` | `"error"` (default) or `"warn"` — controls whether a failure aborts validation or just records a warning |
 | `priority` | `number` | Lower runs first within a file (default `100`); ties break in declaration order |
-| `rerunAfterPatches` | `boolean` | Reserved for the future mod-override re-run phase (default `false`) |
+| `rerunAfterPatches` | `boolean` | When `true`, a parent's **own** file-level pre-processor is re-executed in the package-scoped phase against the patched data, so idempotent derived data (inverse back-references, etc.) reaches rows that mods added via patches (default `false`). The graph-completion processor sets this |
+| `requires` | `table\|nil` | (Package-scoped processors only.) Array of package-id names whose package-scoped processors must run before this one. Refines the default load-order scheduling; a cycle is a hard error, and requiring an unloaded package warns (the constraint is vacuous) without failing the load |
 
 ### Validation Warning Records
 
@@ -465,9 +488,14 @@ The complete processing pipeline, in order:
    i. For `custom_type_def` files (or subtypes thereof), register each data row as a custom type
    j. For `custom_type_def` child files, validate that child field types are subtypes of parent field types
    k. Register file column structure as a record type
-9. **Run pre-processors** for each file (in `lcFn2PreProcessors` order, per-file in ascending `priority`). Processors mutate parsed cell values via `setCell`/`clearCell`; subsequent validators see the mutated state. Failures at `level="error"` count against `validationPassed`; `level="warn"` failures are appended to `validationWarnings` with the pre-processor warning record shape (see [Validation Warning Records](#validation-warning-records))
-10. **Run validators** (row → file → package)
-11. **Return result** with all parsed data and metadata
+9. **Run own-package pre-processors** for each file (in `lcFn2PreProcessors` order, per-file in ascending `priority`). Processors mutate parsed cell values via `setCell`/`clearCell`; subsequent validators see the mutated state. Failures at `level="error"` count against `validationPassed`; `level="warn"` failures are appended to `validationWarnings` with the pre-processor warning record shape (see [Validation Warning Records](#validation-warning-records))
+10. **Apply mod overrides** (a dependent package modifying a parent file without forking it — see [TODO/mod_overrides.md](TODO/mod_overrides.md) and the `0.28.0` CHANGELOG entries). These run after own-package pre-processors and **before** validators, so validators and the exporter see the patched state. None are baked into parent source — the parent dataset is mutated in place for the build, but the reformatter skips patched targets (`--export-merged` is the opt-in that writes the merged result). The sub-steps, in order:
+    a. **Schema overlays** — `SchemaOverlay` files loosen a parent column's metadata. The `widenTo` / `newDefault` parts are collected and applied as a **pre-parse** pass (so widening takes effect before the target cells parse, back in step 8); the `suppressValidator` / `validatorLevel` parts run here, just before validation, against the now-assembled per-file validator lists.
+    b. **Row patches & bulk patches** — apply the load-ordered `patchPlan` (last writer wins): row `add`/`remove`/`update`/`replace` keyed by primary key, list/map merge deltas (`append_*`/`remove_*`/…), and `bulk_patch` filter/transform rules selecting parent rows by a `where` expression. Each value is re-validated against the parent column's parser (a widened type already in effect is honoured).
+    c. **Package-scoped pre-processors** — each package's manifest `preProcessors` run against the fully merged-and-patched file set (`files` keyed like package validators), scheduled by package load order refined by each spec's `requires`. A parent's own file processor flagged `rerunAfterPatches` is re-executed in this phase.
+    d. **Downstream recompute** — re-evaluate `=expr` cells in the same row that read a patched cell (via `self.x`), in dependency order, so derived values stay consistent. Runs in two idempotent passes (after patches and after the package-scoped processors); a cell an override set directly is never clobbered, and recomputed values are not baked into source.
+11. **Run validators** (row → file → package)
+12. **Return result** with all parsed data and metadata
 
 ### Read-Only Enforcement
 

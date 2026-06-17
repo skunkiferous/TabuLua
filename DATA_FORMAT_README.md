@@ -2379,6 +2379,11 @@ the general name. `node_name` remains as the readable alias for the
 graph-node use case; both names resolve to the same parser, and writing
 `name:node_name` in a record type is equivalent to `name:composable_name`.
 
+We considered allowing on `_` in front and/or behind the `node_name`, by
+using 3 `_` instead of two as separator, but then we could have the case
+where the compound key would have 4 `_` in the middle, and we would not
+know where to "cut".
+
 The PK column of every graph-node-family file MUST be `name:node_name`
 (directly or via an extension). Error messages naming the type will
 say `Bad composable_name ...` — the canonical type name, same convention

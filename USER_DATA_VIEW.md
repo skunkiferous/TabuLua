@@ -92,9 +92,9 @@ The COG environment contains whatever is passed as the `env` parameter. When use
 
 **Operation quota:** 10,000 operations per code block.
 
-## Context: Pre-Processors
+## Context: File Pre-Processors
 
-Pre-processors run on each file after all cells are parsed but **before** any validator. Unlike validators, they can **mutate** the parsed rows (via `setCell`). Typical uses: deriving bidirectional references, normalising data across rows, filling in back-references for graph- or tree-shaped data.
+File pre-processors run on each file after all cells are parsed but **before** any validator. Unlike validators, they can **mutate** the parsed rows (via `setCell`). Typical uses: deriving bidirectional references, normalising data across rows, filling in back-references for graph- or tree-shaped data.
 
 **Available variables:**
 
@@ -136,6 +136,41 @@ Direct assignment (`row.foo = "bar"`) is not supported — every write goes thro
 **Return value:** Generally ignored, but `false` or a non-empty string is treated as a failure (same convention as validators). The spec's `level` field (`"error"` or `"warn"`) controls whether the failure aborts validation or just collects a warning.
 
 **Operation quota:** 50,000 operations per file (higher than validator quotas because mutation work is more expensive than pure checks).
+
+## Context: Package-Scoped Pre-Processors
+
+A package manifest may declare `preProcessors` that run **once per package**, after all files are parsed **and after mod patches are applied**, but before validators. They see the fully merged-and-patched state of every loaded file. Use them for cross-file derivation that must observe the post-patch data (e.g. back-references that should also cover rows a mod added via a patch).
+
+Unlike file pre-processors — which expose a single `rows`/`file` — a package-scoped processor works over the whole loaded set, keyed the same way package validators key it.
+
+**Available variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `files` / `package` | Map of lowercase file name → that file's row array (each a processor-row proxy with read-only field access) |
+| `packageId` | The owning package's identifier string |
+| `ctx` | Writable table for accumulating state across this package's processors |
+| Published contexts | Data from earlier-loaded files |
+| Code libraries | By name |
+| Helper functions | Same read-side helpers as file validators |
+| Write helpers | `setCell`, `clearCell`, `copy`, and `rowByKey(file, key)` |
+
+**Scoped writes:** a package-scoped processor may only mutate files its package **owns or has declared a patch for**; writing any other file is a reported error.
+
+**`rowByKey` differs from the file-level form:** here it takes **two** arguments — `rowByKey(file, key)`, where `file` is a file key (string) or a wrapped-file array — because the processor can reach into any visible file, not just one. (The file pre-processor form is the single-argument `rowByKey(key)` into the current file.)
+
+**Cross-package ordering:** package-scoped processors run in package load order, refined by each spec's optional `requires` (names of packages whose package-scoped processors must run first). A `requires` cycle is a hard error; requiring an unloaded package warns without failing the load.
+
+**Operation quota:** 50,000 operations per file processed.
+
+## Context: Bulk-Patch Selectors and Transforms
+
+A `bulk_patch` file (a mod that patches parent rows **by a selector** rather than by key) carries two kinds of user expression, both evaluated in the **validator sandbox** at apply time:
+
+- The required `where` expression selects parent rows. It is evaluated **once per candidate parent row**, with `self` / `row` bound to that candidate, plus the validator helpers (`any`, `count`, `all`, …) and published contexts in scope. Return truthy to match.
+- For `patchOp=update`, each transform cell starting with `=` is evaluated against the **matched** target row (`self` = that row), so `=row.price * 2` does what you'd expect. A non-`=` transform cell is a literal parsed by the parent column.
+
+These expressions are kept **raw** at load (an `expression`-typed column tolerates a leading `=` and is not load-evaluated), so they survive to run against the target rather than against the rule row.
 
 ## Context: Row Validators
 
