@@ -30,7 +30,7 @@ shield	Wooden Shield	3	12.50	true
 potion	Health Potion	50	5.00	true
 ```
 
-Column headers use the format `fieldName:fieldType`. The first column is the primary key. See [DATA_FORMAT_README.md](DATA_FORMAT_README.md) for the full type system and data format specification.
+Column headers use the format `fieldName:fieldType`. The first column is the primary key. See [DATA_FORMAT_README.md](documentation/DATA_FORMAT_README.md) for the full type system and data format specification.
 
 ## Installation
 
@@ -74,15 +74,17 @@ cd tabulua
 
 ## Documentation
 
+Most documentation lives in the [documentation/](documentation/) directory.
+
 | Document | Description |
 |----------|-------------|
-| [DATA_FORMAT_README.md](DATA_FORMAT_README.md) | Complete data format and type system specification |
+| [DATA_FORMAT_README.md](documentation/DATA_FORMAT_README.md) | Complete data format and type system specification |
 | [tutorial/README.md](tutorial/README.md) | Hands-on tutorial with RPG-themed example packages |
-| [REFORMATTER.md](REFORMATTER.md) | CLI tool and export format reference |
-| [MIGRATION.md](MIGRATION.md) | Data migration tool and DataSet API reference |
-| [AGENTS.md](AGENTS.md) | Detailed architecture guide, designed to help AI Agents |
-| [CHANGELOG.md](CHANGELOG.md) | List of changes in each version |
-| [MODULES.md](MODULES.md) | Module reference with dependencies |
+| [REFORMATTER.md](documentation/REFORMATTER.md) | CLI tool and export format reference |
+| [MIGRATION.md](documentation/MIGRATION.md) | Data migration tool and DataSet API reference |
+| [CHANGELOG.md](documentation/CHANGELOG.md) | List of changes in each version |
+| [MODULES.md](documentation/MODULES.md) | Module reference with dependencies |
+| [CONTRIBUTING.md](documentation/CONTRIBUTING.md) | Guidelines for contributing to the project |
 
 ## Basic Usage
 
@@ -106,7 +108,7 @@ lua reformatter.lua
 
 **Note:** Always specify package directories (containing `Manifest.transposed.tsv` or `Files.tsv`) directly, not parent directories.
 
-Refer to [REFORMATTER.md](REFORMATTER.md) for the full list of export formats and options.
+Refer to [REFORMATTER.md](documentation/REFORMATTER.md) for the full list of export formats and options.
 
 ### Running from a Separate Data Directory (Windows)
 
