@@ -15,8 +15,8 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local file_util = require("file_util")
-local compression = require("compression")
+local file_util = require("infra.file_util")
+local compression = require("content.compression")
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))

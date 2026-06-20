@@ -3,13 +3,13 @@
 
 local lpeg = require("lpeg")
 
-local string_utils = require("string_utils")
+local string_utils = require("util.string_utils")
 local split = string_utils.split
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local keys = table_utils.keys
 
-local serialization = require("serialization")
+local serialization = require("serde.serialization")
 local serialize = serialization.serialize
 
 local utils = require("parsers.utils")

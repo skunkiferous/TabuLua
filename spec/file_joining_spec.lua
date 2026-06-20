@@ -8,8 +8,8 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local file_joining = require("file_joining")
-local error_reporting = require("error_reporting")
+local file_joining = require("tsv.file_joining")
+local error_reporting = require("infra.error_reporting")
 
 local badValGen = error_reporting.badValGen
 

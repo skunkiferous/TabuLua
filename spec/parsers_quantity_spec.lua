@@ -11,8 +11,8 @@ local it = busted.it
 local before_each = busted.before_each
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
-local read_only = require("read_only")
+local error_reporting = require("infra.error_reporting")
+local read_only = require("util.read_only")
 local unwrap = read_only.unwrap
 
 -- Returns a "badVal" object that stores errors in the given table

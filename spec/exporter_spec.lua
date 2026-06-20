@@ -12,8 +12,8 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local exporter = require("exporter")
-local file_util = require("file_util")
+local exporter = require("serde.exporter")
+local file_util = require("infra.file_util")
 
 -- Simple path join function
 local function path_join(...)
@@ -511,7 +511,7 @@ describe("exporter", function()
         end)
 
         it("should be decodable by MessagePack library", function()
-            local mpk = require("serialization").messagePack
+            local mpk = require("serde.serialization").messagePack
             local process_files = createProcessFiles(temp_dir)
             local exportParams = {
                 exportDir = temp_dir,

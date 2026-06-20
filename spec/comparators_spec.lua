@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local comparators = require("comparators")
+local comparators = require("util.comparators")
 
 describe("comparators", function()
   describe("genTableComparator", function()

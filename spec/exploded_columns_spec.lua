@@ -10,8 +10,8 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local exploded_columns = require("exploded_columns")
-local read_only = require("read_only")
+local exploded_columns = require("tsv.exploded_columns")
+local read_only = require("util.read_only")
 local unwrap = read_only.unwrap
 
 describe("exploded_columns", function()

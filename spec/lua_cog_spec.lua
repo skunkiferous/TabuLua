@@ -10,8 +10,8 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local lua_cog = require("lua_cog")
-local file_util = require("file_util")
+local lua_cog = require("content.lua_cog")
+local file_util = require("infra.file_util")
 
 -- Prefix for snippet file name
 local PREFIX = 'lua_cog_spec_snippet_'

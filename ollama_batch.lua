@@ -8,7 +8,7 @@ local semver = require("semver")
 local VERSION = semver(0, 28, 0)
 local NAME = "ollama_batch"
 
-local named_logger = require("named_logger")
+local named_logger = require("infra.named_logger")
 
 -- Map of log level name strings to level constants
 local LOG_LEVELS = {
@@ -35,10 +35,10 @@ if arg then
     end
 end
 
-local raw_tsv = require("raw_tsv")
-local string_utils = require("string_utils")
-local file_util = require("file_util")
-local read_only = require("read_only")
+local raw_tsv = require("tsv.raw_tsv")
+local string_utils = require("util.string_utils")
+local file_util = require("infra.file_util")
+local read_only = require("util.read_only")
 local dkjson = require("dkjson")
 
 local readOnly = read_only.readOnly

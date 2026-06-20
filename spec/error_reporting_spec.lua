@@ -10,7 +10,7 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 describe("error_reporting", function()
   describe("badValGen", function()
@@ -174,7 +174,7 @@ describe("error_reporting", function()
         local opt_log_messages = {}
 
         -- Create a custom logger that captures messages
-        local named_logger = require("named_logger")
+        local named_logger = require("infra.named_logger")
         local opt_logger = named_logger.new(function(_self, level, message)
           table.insert(opt_log_messages, {level = level, message = message})
           return true
@@ -196,7 +196,7 @@ describe("error_reporting", function()
       end)
 
       it("should restore old logger after function completes", function()
-        local named_logger = require("named_logger")
+        local named_logger = require("infra.named_logger")
         local opt_logger = named_logger.new(function() return true end)
 
         local badVal = error_reporting.badValGen()
@@ -212,7 +212,7 @@ describe("error_reporting", function()
       end)
 
       it("should restore old logger even when function errors", function()
-        local named_logger = require("named_logger")
+        local named_logger = require("infra.named_logger")
         local opt_logger = named_logger.new(function() return true end)
 
         local badVal = error_reporting.badValGen()
@@ -245,7 +245,7 @@ describe("error_reporting", function()
         local outer_messages = {}
         local inner_messages = {}
 
-        local named_logger = require("named_logger")
+        local named_logger = require("infra.named_logger")
         local outer_logger = named_logger.new(function(_self, _level, message)
           table.insert(outer_messages, message)
           return true

@@ -10,10 +10,10 @@ local describe = busted.describe
 local it = busted.it
 local after_each = busted.after_each
 
-local type_wiring = require("type_wiring")
-require("builtin_wiring")
-local manifest_info = require("manifest_info")
-local error_reporting = require("error_reporting")
+local type_wiring = require("wiring.type_wiring")
+require("wiring.builtin_wiring")
+local manifest_info = require("loader.manifest_info")
+local error_reporting = require("infra.error_reporting")
 
 local function mockBadVal()
     local errors = {}

@@ -12,7 +12,7 @@ local before_each = busted.before_each
 
 local parsers = require("parsers")
 local registerEnumParser = parsers.registerEnumParser
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 local semver = require("semver")
 

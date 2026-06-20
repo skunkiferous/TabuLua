@@ -12,9 +12,9 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local importer = require("importer")
-local file_util = require("file_util")
-local serialization = require("serialization")
+local importer = require("serde.importer")
+local file_util = require("infra.file_util")
+local serialization = require("serde.serialization")
 
 -- Simple path join function
 local function path_join(...)

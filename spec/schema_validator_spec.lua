@@ -12,9 +12,9 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local schema_validator = require("schema_validator")
-local exporter = require("exporter")
-local file_util = require("file_util")
+local schema_validator = require("serde.schema_validator")
+local exporter = require("serde.exporter")
+local file_util = require("infra.file_util")
 
 -- Simple path join function
 local function path_join(...)

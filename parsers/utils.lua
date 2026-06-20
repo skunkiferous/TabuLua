@@ -3,14 +3,14 @@
 
 local state = require("parsers.state")
 
-local serialization = require("serialization")
+local serialization = require("serde.serialization")
 local serializeTable = serialization.serializeTable
 local unquotedStr = serialization.unquotedStr
 
-local table_parsing = require("table_parsing")
+local table_parsing = require("util.table_parsing")
 local parseTableStr = table_parsing.parseTableStr
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 local M = {}
 

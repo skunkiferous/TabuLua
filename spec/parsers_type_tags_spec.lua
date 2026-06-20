@@ -10,7 +10,7 @@ local describe = busted.describe
 local it = busted.it
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local introspection = require("parsers.introspection")
 
 -- Returns a "badVal" object that stores errors in the given table

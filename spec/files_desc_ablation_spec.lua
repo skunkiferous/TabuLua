@@ -16,9 +16,9 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local files_desc = require("files_desc")
-local file_util = require("file_util")
-local error_reporting = require("error_reporting")
+local files_desc = require("loader.files_desc")
+local file_util = require("infra.file_util")
+local error_reporting = require("infra.error_reporting")
 
 local badValGen = error_reporting.badValGen
 

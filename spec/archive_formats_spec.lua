@@ -7,8 +7,8 @@ local describe = busted.describe
 local it = busted.it
 local after_each = busted.after_each
 
-local archive_formats = require("archive_formats")
-local compression = require("compression")
+local archive_formats = require("content.archive_formats")
+local compression = require("content.compression")
 
 -- ------------------------------------------------------------
 -- A tiny in-test zip BUILDER. The engine has no zip writer until the

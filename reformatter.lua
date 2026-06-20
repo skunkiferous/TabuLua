@@ -13,7 +13,7 @@ local function getVersion()
     return tostring(VERSION)
 end
 
-local named_logger = require("named_logger")
+local named_logger = require("infra.named_logger")
 
 -- Map of log level name strings to level constants
 local LOG_LEVELS = {
@@ -46,11 +46,11 @@ end
 
 local logger = named_logger.getLogger(NAME)
 
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
 
-local file_util = require("file_util")
+local file_util = require("infra.file_util")
 local safeReplaceFile = file_util.safeReplaceFile
 local safeReplaceFileBinary = file_util.safeReplaceFileBinary
 local normalizePath = file_util.normalizePath
@@ -59,24 +59,24 @@ local emptyDir = file_util.emptyDir
 local mkdir = file_util.mkdir
 local hasExtension = file_util.hasExtension
 
-local manifest_loader = require("manifest_loader")
+local manifest_loader = require("loader.manifest_loader")
 
 -- Reversible decode round-trip (§3.6): lets reformat rewrite a compressed data
 -- source (data.tsv.gz) by reformatting its decoded TSV and re-compressing it.
-local content_pipeline = require("content_pipeline")
+local content_pipeline = require("content.content_pipeline")
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
 
-local exporter = require("exporter")
+local exporter = require("serde.exporter")
 
 -- Export-time COG doc generation (content_pipeline.md §3.10): discover templates,
 -- then expand them after the per-format exporters (which skip them).
-local cog_discovery = require("cog_discovery")
-local doc_generator = require("doc_generator")
+local cog_discovery = require("content.cog_discovery")
+local doc_generator = require("content.doc_generator")
 
-local serialization = require("serialization")
+local serialization = require("serde.serialization")
 local serializeTableJSON = serialization.serializeTableJSON
 local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
 local serializeTableXML = serialization.serializeTableXML

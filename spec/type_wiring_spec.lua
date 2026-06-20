@@ -8,12 +8,12 @@ local describe = busted.describe
 local it = busted.it
 local after_each = busted.after_each
 
-local type_wiring = require("type_wiring")
+local type_wiring = require("wiring.type_wiring")
 -- Loading builtin_wiring registers the three built-in onLoad handlers
 -- (Type, enum, custom_type_def) and snapshots the registry, so after each
 -- test we can call restoreState() to drop test-only additions and get
 -- back to the built-in baseline.
-require("builtin_wiring")
+require("wiring.builtin_wiring")
 
 describe("type_wiring", function()
 

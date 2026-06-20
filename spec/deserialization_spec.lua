@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local deserialization = require("deserialization")
+local deserialization = require("serde.deserialization")
 
 describe("deserialization", function()
   describe("deserialize (Lua literals)", function()
@@ -553,7 +553,7 @@ describe("deserialization", function()
   end)
 
   describe("deserializeMessagePack", function()
-    local mpk = require("serialization").messagePack
+    local mpk = require("serde.serialization").messagePack
 
     it("should deserialize nil", function()
       local packed = mpk.pack(nil)
@@ -667,7 +667,7 @@ describe("deserialization", function()
   end)
 
   describe("deserializeMessagePackSQLBlob", function()
-    local serialization = require("serialization")
+    local serialization = require("serde.serialization")
 
     it("should round-trip through SQL BLOB", function()
       local original = {foo = "bar", num = 42}

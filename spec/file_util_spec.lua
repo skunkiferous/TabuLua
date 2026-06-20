@@ -13,7 +13,7 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 local pending = busted.pending
 
-local file_util = require("file_util")
+local file_util = require("infra.file_util")
 
 -- Simple path join function
 local function path_join(...)

@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local string_utils = require("string_utils")
+local string_utils = require("util.string_utils")
 
 describe("string_utils", function()
   describe("parseVersion", function()

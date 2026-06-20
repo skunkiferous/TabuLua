@@ -6,24 +6,24 @@ local utils = require("parsers.utils")
 local lpeg_parser = require("parsers.lpeg_parser")
 local generators = require("parsers.generators")
 
-local comparators = require("comparators")
+local comparators = require("util.comparators")
 local genSeqComparator = comparators.genSeqComparator
 local genTableComparator = comparators.genTableComparator
 local composeComparator = comparators.composeComparator
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local keys = table_utils.keys
 
-local predicates = require("predicates")
+local predicates = require("util.predicates")
 local isIdentifier = predicates.isIdentifier
 local isValueKeyword = predicates.isValueKeyword
 local isReservedName = predicates.isReservedName
 local isTupleFieldName = predicates.isTupleFieldName
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
 
-local serialization = require("serialization")
+local serialization = require("serde.serialization")
 local serialize = serialization.serialize
 
 local M = {}

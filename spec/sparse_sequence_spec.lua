@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local sparse_sequence = require("sparse_sequence")
+local sparse_sequence = require("util.sparse_sequence")
 
 -- Constants used to make the "test sparse sequences smaller"
 local MAX_NIL_GAP = 2

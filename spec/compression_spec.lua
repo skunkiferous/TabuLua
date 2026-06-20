@@ -6,7 +6,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local compression = require("compression")
+local compression = require("content.compression")
 
 -- A real gzip stream (system `gzip -cn`) of "id\tvalue\nitem1\t42\nitem2\t100\n".
 local REAL_GZIP =

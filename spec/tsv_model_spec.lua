@@ -7,8 +7,8 @@ local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
 
-local tsv_model = require("tsv_model")
-local error_reporting = require("error_reporting")
+local tsv_model = require("tsv.tsv_model")
+local error_reporting = require("infra.error_reporting")
 local parsers = require("parsers")
 
 local canProcessCell = tsv_model.internal.canProcessCell

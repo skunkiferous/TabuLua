@@ -8,8 +8,8 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local validator_executor = require("validator_executor")
-local error_reporting = require("error_reporting")
+local validator_executor = require("wiring.validator_executor")
+local error_reporting = require("infra.error_reporting")
 
 -- Creates a plain value row (validators now see parsed values directly)
 local function makeRow(map)

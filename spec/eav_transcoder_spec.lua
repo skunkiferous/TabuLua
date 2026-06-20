@@ -9,8 +9,8 @@ local it = busted.it
 local before_each = busted.before_each
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
-local eav_transcoder = require("eav_transcoder")
+local error_reporting = require("infra.error_reporting")
+local eav_transcoder = require("content.eav_transcoder")
 
 describe("eav_transcoder", function()
   local badVal, msgs

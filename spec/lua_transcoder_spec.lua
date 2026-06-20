@@ -10,8 +10,8 @@ local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
 
-local error_reporting = require("error_reporting")
-local lua_transcoder = require("lua_transcoder")
+local error_reporting = require("infra.error_reporting")
+local lua_transcoder = require("content.lua_transcoder")
 
 describe("lua_transcoder", function()
     local badVal, msgs

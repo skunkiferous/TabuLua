@@ -6,7 +6,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local sandbox_env = require("sandbox_env")
+local sandbox_env = require("infra.sandbox_env")
 
 -- Globals that must NEVER be reachable from a sandbox environment table.
 local DANGEROUS = {

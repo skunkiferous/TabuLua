@@ -10,8 +10,8 @@ local it = busted.it
 local before_each = busted.before_each
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
-local xml_transcoder = require("xml_transcoder")
+local error_reporting = require("infra.error_reporting")
+local xml_transcoder = require("content.xml_transcoder")
 
 local NS = "urn:tabulua:table:1"
 

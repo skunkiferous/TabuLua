@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local named_logger = require("named_logger")
+local named_logger = require("infra.named_logger")
 
 describe("named_logger", function()
 

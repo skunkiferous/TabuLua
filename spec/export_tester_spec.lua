@@ -13,8 +13,8 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 
 local export_tester = require("export_tester")
-local file_util = require("file_util")
-local exporter = require("exporter")
+local file_util = require("infra.file_util")
+local exporter = require("serde.exporter")
 
 -- Simple path join function
 local function path_join(...)

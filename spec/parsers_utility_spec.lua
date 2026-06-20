@@ -12,8 +12,8 @@ local before_each = busted.before_each
 
 local parsers = require("parsers")
 local registerEnumParser = parsers.registerEnumParser
-local error_reporting = require("error_reporting")
-local serialization = require("serialization")
+local error_reporting = require("infra.error_reporting")
+local serialization = require("serde.serialization")
 local serializeTable = serialization.serializeTable
 
 -- Returns a "badVal" object that store errors in the given table

@@ -9,7 +9,7 @@ M.VERSION = require("semver")(0, 1, 0)
 M.NAME = "parsers"
 
 -- Logger instance
-M.logger = require("named_logger").getLogger(M.NAME)
+M.logger = require("infra.named_logger").getLogger(M.NAME)
 
 -- Are we currently still setting up the module?
 -- Allows keyword parsers (nil, true, false) only during module initialization

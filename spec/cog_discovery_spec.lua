@@ -9,12 +9,12 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local content_pipeline = require("content_pipeline")
+local content_pipeline = require("content.content_pipeline")
 -- Requiring the seed module registers the COG-scan-eligible extensions
 -- (md/markdown/html/txt) that cog_discovery reads.
-require("builtin_content_stages")
-local cog_discovery = require("cog_discovery")
-local file_util = require("file_util")
+require("content.builtin_content_stages")
+local cog_discovery = require("content.cog_discovery")
+local file_util = require("infra.file_util")
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))

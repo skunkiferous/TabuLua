@@ -16,7 +16,7 @@ local function getVersion()
     return tostring(VERSION)
 end
 
-local named_logger = require("named_logger")
+local named_logger = require("infra.named_logger")
 
 -- Map of log level name strings to level constants
 local LOG_LEVELS = {
@@ -46,10 +46,10 @@ end
 
 local logger = named_logger.getLogger(NAME)
 
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
-local file_util = require("file_util")
+local file_util = require("infra.file_util")
 local normalizePath = file_util.normalizePath
 local readFile = file_util.readFile
 local writeFile = file_util.writeFile

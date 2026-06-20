@@ -6,7 +6,8 @@
       "Bash(Select-Object -First 30)",
       "Bash(git log *)",
       "WebSearch",
-      "WebFetch(domain:gitlab.com)"
+      "WebFetch(domain:gitlab.com)",
+      "Bash(git checkout *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Sebastien Diot\\.claude\\projects\\c--Code-TabuLua\\memory"

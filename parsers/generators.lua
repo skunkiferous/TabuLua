@@ -4,7 +4,7 @@
 local state = require("parsers.state")
 local utils = require("parsers.utils")
 
-local predicates = require("predicates")
+local predicates = require("util.predicates")
 local isName = predicates.isName
 local isIdentifier = predicates.isIdentifier
 local isValueKeyword = predicates.isValueKeyword
@@ -12,17 +12,17 @@ local isReservedName = predicates.isReservedName
 local isTupleFieldName = predicates.isTupleFieldName
 local isFullSeq = predicates.isFullSeq
 
-local sparse_sequence = require("sparse_sequence")
+local sparse_sequence = require("util.sparse_sequence")
 local isSparseSequence = sparse_sequence.isSparseSequence
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local keys = table_utils.keys
 local pairsCount = table_utils.pairsCount
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
 
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 local readOnlyTuple = read_only.readOnlyTuple
 
 local M = {}
@@ -414,7 +414,7 @@ function M.get_record_parser(fields_types, fields_parsers, type_spec, self_refs)
     local cache_key = type_spec
     if not state.RECORD_PARSERS[cache_key] then
         local has_self_refs = self_refs and next(self_refs) ~= nil
-        local serialization = require("serialization")
+        local serialization = require("serde.serialization")
         local serializeTable = serialization.serializeTable
         -- Self-ref fields don't have entries in fields_parsers, so compare only non-selfref keys
         local typesKeySet = {}

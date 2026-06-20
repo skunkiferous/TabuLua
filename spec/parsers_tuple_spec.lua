@@ -10,12 +10,12 @@ local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local clearSeq = table_utils.clearSeq
 local parsers = require("parsers")
 local registerEnumParser = parsers.registerEnumParser
-local error_reporting = require("error_reporting")
-local read_only = require("read_only")
+local error_reporting = require("infra.error_reporting")
+local read_only = require("util.read_only")
 local unwrap = read_only.unwrap
 
 -- Returns a "badVal" object that store errors in the given table

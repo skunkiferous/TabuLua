@@ -10,8 +10,8 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local serialization = require("serialization")
-local deserialization = require("deserialization")
+local serialization = require("serde.serialization")
+local deserialization = require("serde.deserialization")
 
 describe("serialization", function()
   describe("serialize and serializeTable", function()
@@ -134,7 +134,7 @@ describe("serialization", function()
   describe("warnDump", function()
     it("should log serialized value as warning", function()
       local log_messages = {}
-      local test_logger = require("named_logger").new(function(self, level, message)
+      local test_logger = require("infra.named_logger").new(function(self, level, message)
         table.insert(log_messages, {level = level, message = message})
         return true
       end)
@@ -147,7 +147,7 @@ describe("serialization", function()
 
     it("should log with optional name", function()
       local log_messages = {}
-      local test_logger = require("named_logger").new(function(self, level, message)
+      local test_logger = require("infra.named_logger").new(function(self, level, message)
         table.insert(log_messages, {level = level, message = message})
         return true
       end)
@@ -579,7 +579,7 @@ describe("serialization", function()
   end)
 
   describe("serializeMessagePack", function()
-    local mpk = require("serialization").messagePack
+    local mpk = require("serde.serialization").messagePack
 
     it("should serialize nil", function()
       local result = serialization.serializeMessagePack(nil)
@@ -670,7 +670,7 @@ describe("serialization", function()
   end)
 
   describe("serializeMessagePackSQLBlob", function()
-    local mpk = require("serialization").messagePack
+    local mpk = require("serde.serialization").messagePack
 
     it("should produce valid SQL BLOB literal", function()
       local result = serialization.serializeMessagePackSQLBlob("test")

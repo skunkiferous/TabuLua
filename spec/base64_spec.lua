@@ -8,8 +8,8 @@ local describe = busted.describe
 local it = busted.it
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
-local base64 = require("base64")
+local error_reporting = require("infra.error_reporting")
+local base64 = require("util.base64")
 
 -- Returns a "badVal" object that stores errors in the given table
 local function mockBadVal(log_messages)

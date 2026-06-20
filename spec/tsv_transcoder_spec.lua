@@ -11,8 +11,8 @@ local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
 
-local error_reporting = require("error_reporting")
-local tsv_transcoders = require("tsv_transcoders")
+local error_reporting = require("infra.error_reporting")
+local tsv_transcoders = require("content.tsv_transcoders")
 
 describe("tsv_transcoders", function()
     local badVal, msgs

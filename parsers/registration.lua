@@ -6,23 +6,23 @@ local utils = require("parsers.utils")
 local lpeg_parser = require("parsers.lpeg_parser")
 local generators = require("parsers.generators")
 
-local predicates = require("predicates")
+local predicates = require("util.predicates")
 local isName = predicates.isName
 local isFullSeq = predicates.isFullSeq
 local isIntegerValue = predicates.isIntegerValue
 
-local number_identifiers = require("number_identifiers")
+local number_identifiers = require("util.number_identifiers")
 local rangeToIdentifier = number_identifiers.rangeToIdentifier
 
-local string_utils = require("string_utils")
+local string_utils = require("util.string_utils")
 local stringToIdentifier = string_utils.stringToIdentifier
 
-local regex_utils = require("regex_utils")
+local regex_utils = require("util.regex_utils")
 local sandbox = require("sandbox")
-local sandbox_env = require("sandbox_env")
-local serialization = require("serialization")
+local sandbox_env = require("infra.sandbox_env")
+local serialization = require("serde.serialization")
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
 
 -- Safe integer range constants (IEEE 754 double precision)

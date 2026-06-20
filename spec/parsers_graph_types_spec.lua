@@ -11,8 +11,8 @@ local describe = busted.describe
 local it = busted.it
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
-local named_logger = require("named_logger")
+local error_reporting = require("infra.error_reporting")
+local named_logger = require("infra.named_logger")
 
 local function mockBadVal(log_messages, warn_messages)
     local log = function(_self, msg) table.insert(log_messages, msg) end

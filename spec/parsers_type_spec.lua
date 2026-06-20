@@ -14,7 +14,7 @@ local parsers = require("parsers")
 local registerEnumParser = parsers.registerEnumParser
 local parsedTypeSpecToStr = parsers.internal.parsedTypeSpecToStr
 local type_parser = parsers.internal.type_parser
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 -- Returns a "badVal" object that store errors in the given table
 local function mockBadVal(log_messages)

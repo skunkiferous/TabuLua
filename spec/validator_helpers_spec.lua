@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local validator_helpers = require("validator_helpers")
+local validator_helpers = require("wiring.validator_helpers")
 
 --- Creates a plain value row (helpers now work with parsed values directly).
 local function makeRow(map)

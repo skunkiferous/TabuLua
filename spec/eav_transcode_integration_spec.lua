@@ -13,10 +13,10 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 
 local lfs = require("lfs")
-local file_util = require("file_util")
-local manifest_loader = require("manifest_loader")
+local file_util = require("infra.file_util")
+local manifest_loader = require("loader.manifest_loader")
 local reformatter = require("reformatter")
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))
@@ -154,7 +154,7 @@ describe("manifest_loader - EAV transcode (extension auto-matched)", function()
         local pkg_dir = makePkg(CANON)
         reformatter.processFiles({pkg_dir})
         local on_disk = file_util.readFile(path_join(pkg_dir, "Item.eav"))
-        local raw_tsv = require("raw_tsv")
+        local raw_tsv = require("tsv.raw_tsv")
         assert.is_true(raw_tsv("isRawTSV", raw_tsv.stringToRawTSV(on_disk)))
         -- Every non-comment row is a 3-cell triple.
         for _, row in ipairs(raw_tsv.stringToRawTSV(on_disk)) do

@@ -12,10 +12,10 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local tsv_model = require("tsv_model")
-local lua_cog = require("lua_cog")
-local sandbox_env = require("sandbox_env")
-local error_reporting = require("error_reporting")
+local tsv_model = require("tsv.tsv_model")
+local lua_cog = require("content.lua_cog")
+local sandbox_env = require("infra.sandbox_env")
+local error_reporting = require("infra.error_reporting")
 
 -- Builds a loadEnv exactly the way manifest_loader.processFiles does.
 local function makeLoadEnv()
@@ -59,7 +59,7 @@ describe("sandbox escape", function()
         end)
 
         it("close the documented read-only unwrap bypass", function()
-            local result, err = eval({}, "=require('read_only').unwrap(self)")
+            local result, err = eval({}, "=require('util.read_only').unwrap(self)")
             assert.is_nil(result)
             assert.is_not_nil(err)
         end)

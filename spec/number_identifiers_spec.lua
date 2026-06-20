@@ -8,8 +8,8 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local number_identifiers = require("number_identifiers")
-local error_reporting = require("error_reporting")
+local number_identifiers = require("util.number_identifiers")
+local error_reporting = require("infra.error_reporting")
 
 describe("number_identifiers", function()
   local nullBadVal = error_reporting.nullBadVal

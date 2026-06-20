@@ -10,10 +10,10 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local raw_tsv = require("raw_tsv")
+local raw_tsv = require("tsv.raw_tsv")
 local tsv_diff = require("tsv_diff")
-local file_util = require("file_util")
-local compression = require("compression")
+local file_util = require("infra.file_util")
+local compression = require("content.compression")
 
 --- Helper: build a raw TSV from a multi-line string.
 local function tsv(s)

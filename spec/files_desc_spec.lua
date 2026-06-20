@@ -10,11 +10,11 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local files_desc = require("files_desc")
-local file_util = require("file_util")
+local files_desc = require("loader.files_desc")
+local file_util = require("infra.file_util")
 local parsers = require("parsers")
-local table_utils = require("table_utils")
-local error_reporting = require("error_reporting")
+local table_utils = require("util.table_utils")
+local error_reporting = require("infra.error_reporting")
 
 local pairsCount = table_utils.pairsCount
 local badValGen = error_reporting.badValGen

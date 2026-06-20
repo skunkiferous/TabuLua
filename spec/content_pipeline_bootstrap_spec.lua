@@ -11,12 +11,12 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local content_pipeline = require("content_pipeline")
-require("builtin_content_stages")
-local manifest_loader = require("manifest_loader")
-local file_util = require("file_util")
-local error_reporting = require("error_reporting")
-local global_reset = require("global_reset")
+local content_pipeline = require("content.content_pipeline")
+require("content.builtin_content_stages")
+local manifest_loader = require("loader.manifest_loader")
+local file_util = require("infra.file_util")
+local error_reporting = require("infra.error_reporting")
+local global_reset = require("util.global_reset")
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))

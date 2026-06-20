@@ -10,12 +10,12 @@ local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local clearSeq = table_utils.clearSeq
 local parsers = require("parsers")
 local registerEnumParser = parsers.registerEnumParser
 local type_parser = parsers.internal.type_parser
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 -- Returns a "badVal" object that store errors in the given table
 local function mockBadVal(log_messages)
@@ -771,7 +771,7 @@ describe("parsers - record types", function()
     local badVal, log_messages
 
     before_each(function()
-      require("global_reset").reset()
+      require("util.global_reset").reset()
       log_messages = {}
       badVal = mockBadVal(log_messages)
     end)

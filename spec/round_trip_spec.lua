@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local round_trip = require("round_trip")
+local round_trip = require("serde.round_trip")
 
 describe("round_trip", function()
     describe("isNaN", function()

@@ -8,27 +8,27 @@ local semver = require("semver")
 local VERSION = semver(0, 28, 0)
 
 -- Dependencies
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
-local file_util = require("file_util")
+local file_util = require("infra.file_util")
 local normalizePath = file_util.normalizePath
 local isDir = file_util.isDir
 local hasExtension = file_util.hasExtension
 
 local lfs = require("lfs")
 
-local importer = require("importer")
-local round_trip = require("round_trip")
+local importer = require("serde.importer")
+local round_trip = require("serde.round_trip")
 local deepEquals = round_trip.deepEquals
 local compareWithTolerance = round_trip.compareWithTolerance
 
-local manifest_loader = require("manifest_loader")
+local manifest_loader = require("loader.manifest_loader")
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 
-local logger = require("named_logger").getLogger(NAME)
+local logger = require("infra.named_logger").getLogger(NAME)
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")

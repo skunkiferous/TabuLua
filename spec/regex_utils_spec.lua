@@ -10,7 +10,7 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local regex_utils = require("regex_utils")
+local regex_utils = require("util.regex_utils")
 
 describe("regex_utils", function()
 

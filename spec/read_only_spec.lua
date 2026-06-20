@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 
 describe("read_only", function()
   describe("readOnly", function()

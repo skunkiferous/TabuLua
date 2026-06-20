@@ -2,7 +2,7 @@
 -- Main entry point for the new modular parsers implementation
 -- Assembles the public API and initializes all submodules
 
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 local readOnlyTuple = read_only.readOnlyTuple
 
@@ -68,7 +68,7 @@ state.BUILT_IN = readOnly(state.BUILT_IN)
 state.snapshotState()
 
 -- Register a reset function that restores parser state to post-initialization
-local global_reset = require("global_reset")
+local global_reset = require("util.global_reset")
 global_reset.register(function()
     state.restoreState()
 end)

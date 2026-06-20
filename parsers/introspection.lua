@@ -5,13 +5,13 @@ local state = require("parsers.state")
 local utils = require("parsers.utils")
 local lpeg_parser = require("parsers.lpeg_parser")
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local keys = table_utils.keys
 
-local sparse_sequence = require("sparse_sequence")
+local sparse_sequence = require("util.sparse_sequence")
 local isSubSetSequence = sparse_sequence.isSubSetSequence
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
 
 local M = {}

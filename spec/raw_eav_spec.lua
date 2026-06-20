@@ -12,8 +12,8 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local file_util = require("file_util")
-local raw_eav = require("raw_eav")
+local file_util = require("infra.file_util")
+local raw_eav = require("tsv.raw_eav")
 
 -- Simple path join function
 local function path_join(...)

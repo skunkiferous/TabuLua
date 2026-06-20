@@ -12,10 +12,10 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local file_util = require("file_util")
+local file_util = require("infra.file_util")
 local parsers = require("parsers")
-local manifest_info = require("manifest_info")
-local error_reporting = require("error_reporting")
+local manifest_info = require("loader.manifest_info")
+local error_reporting = require("infra.error_reporting")
 
 -- Simple path join function
 local function path_join(...)

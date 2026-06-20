@@ -18,10 +18,10 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 
 local lfs = require("lfs")
-local file_util = require("file_util")
-local manifest_loader = require("manifest_loader")
-local compression = require("compression")
-local error_reporting = require("error_reporting")
+local file_util = require("infra.file_util")
+local manifest_loader = require("loader.manifest_loader")
+local compression = require("content.compression")
+local error_reporting = require("infra.error_reporting")
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))

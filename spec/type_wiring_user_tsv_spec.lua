@@ -14,12 +14,12 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local type_wiring = require("type_wiring")
-local builtin_wiring = require("builtin_wiring")
-local files_desc = require("files_desc")
+local type_wiring = require("wiring.type_wiring")
+local builtin_wiring = require("wiring.builtin_wiring")
+local files_desc = require("loader.files_desc")
 local parsers = require("parsers")
-local file_util = require("file_util")
-local error_reporting = require("error_reporting")
+local file_util = require("infra.file_util")
+local error_reporting = require("infra.error_reporting")
 
 local function mockBadVal()
     local errors = {}

@@ -7,7 +7,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local graph_wiring = require("graph_wiring")
+local graph_wiring = require("wiring.graph_wiring")
 
 describe("graph_wiring", function()
 

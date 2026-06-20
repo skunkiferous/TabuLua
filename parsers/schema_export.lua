@@ -5,7 +5,7 @@
 local state = require("parsers.state")
 local lpeg_parser = require("parsers.lpeg_parser")
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 local keys = table_utils.keys
 
 local M = {}

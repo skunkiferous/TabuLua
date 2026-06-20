@@ -9,20 +9,20 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local content_pipeline = require("content_pipeline")
+local content_pipeline = require("content.content_pipeline")
 -- Requiring the seed module registers the built-in stages (normalise-eol, COG,
 -- gzip) and snapshots the registry, so restoreState() returns to exactly those.
-require("builtin_content_stages")
-local file_util = require("file_util")
-local raw_tsv = require("raw_tsv")
+require("content.builtin_content_stages")
+local file_util = require("infra.file_util")
+local raw_tsv = require("tsv.raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
 local rawTSVToString = raw_tsv.rawTSVToString
 local LibDeflate = require("libdeflate")
-local compression = require("compression")
+local compression = require("content.compression")
 local parsers = require("parsers")
 
 -- A record type used by the JSON transcoder tests; schema drives the typed header.
-parsers.registerAlias(require("error_reporting").nullBadVal,
+parsers.registerAlias(require("infra.error_reporting").nullBadVal,
   "CpTestItem", "{name:identifier,price:integer,tag:string|nil}")
 
 -- A real gzip stream (produced by the system `gzip -cn`) of the exact bytes

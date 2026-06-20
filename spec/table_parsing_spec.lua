@@ -8,8 +8,8 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local table_parsing = require("table_parsing")
-local error_reporting = require("error_reporting")
+local table_parsing = require("util.table_parsing")
+local error_reporting = require("infra.error_reporting")
 
 describe("table_parsing", function()
   describe("parseTableStr", function()

@@ -9,7 +9,7 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 local pending = busted.pending
 
-local predicates = require("predicates")
+local predicates = require("util.predicates")
 local isMixedTable = predicates.isMixedTable
 local isCallable = predicates.isCallable
 local isValidASCII = predicates.isValidASCII

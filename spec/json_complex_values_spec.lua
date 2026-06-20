@@ -13,12 +13,12 @@ local before_each = busted.before_each
 local after_each = busted.after_each
 
 local lfs = require("lfs")
-local file_util = require("file_util")
-local manifest_loader = require("manifest_loader")
-local error_reporting = require("error_reporting")
-local json_transcoders = require("json_transcoders")
+local file_util = require("infra.file_util")
+local manifest_loader = require("loader.manifest_loader")
+local error_reporting = require("infra.error_reporting")
+local json_transcoders = require("content.json_transcoders")
 local parsers = require("parsers")
-local serializeJSON = require("serialization").serializeJSON
+local serializeJSON = require("serde.serialization").serializeJSON
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))

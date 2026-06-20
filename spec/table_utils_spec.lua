@@ -8,7 +8,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local table_utils = require("table_utils")
+local table_utils = require("util.table_utils")
 
 describe("table_utils", function()
   describe("tableShallowCopy", function()
@@ -50,7 +50,7 @@ describe("table_utils", function()
   end)
 
   describe("deepCopyUnwrapped", function()
-    local read_only = require("read_only")
+    local read_only = require("util.read_only")
 
     it("returns non-table values unchanged", function()
       assert.are.equal(5, table_utils.deepCopyUnwrapped(5))

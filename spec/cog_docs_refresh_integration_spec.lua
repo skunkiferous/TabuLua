@@ -11,7 +11,7 @@ local it = busted.it
 local before_each = busted.before_each
 local after_each = busted.after_each
 
-local file_util = require("file_util")
+local file_util = require("infra.file_util")
 local reformatter = require("reformatter")
 
 local function path_join(...)

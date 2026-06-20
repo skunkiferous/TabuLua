@@ -6,10 +6,10 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local processor_executor = require("processor_executor")
-local tsv_model = require("tsv_model")
+local processor_executor = require("wiring.processor_executor")
+local tsv_model = require("tsv.tsv_model")
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 -- Returns a "badVal" object that stores errors in the given table
 local function mockBadVal(log_messages)

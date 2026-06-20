@@ -11,7 +11,7 @@ local it = busted.it
 
 local parsers = require("parsers")
 local introspection = require("parsers.introspection")
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 
 -- Returns a "badVal" object that stores errors in the given table
 local function mockBadVal(log_messages)

@@ -11,10 +11,10 @@ local it = busted.it
 local before_each = busted.before_each
 
 local parsers = require("parsers")
-local error_reporting = require("error_reporting")
-local string_utils = require("string_utils")
+local error_reporting = require("infra.error_reporting")
+local string_utils = require("util.string_utils")
 local escapeText = string_utils.escapeText
-local read_only = require("read_only")
+local read_only = require("util.read_only")
 local unwrap = read_only.unwrap
 
 local semver = require("semver")
@@ -813,7 +813,7 @@ end
     local badVal
     local anyParser
     local registerEnumParser = parsers.registerEnumParser
-    local table_utils = require("table_utils")
+    local table_utils = require("util.table_utils")
     local clearSeq = table_utils.clearSeq
 
     before_each(function()

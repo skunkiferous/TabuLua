@@ -9,12 +9,12 @@ local generators = require("parsers.generators")
 local lpeg = require("lpeg")
 local semver = require("semver")
 
-local string_utils = require("string_utils")
+local string_utils = require("util.string_utils")
 local escapeText = string_utils.escapeText
 local unescapeText = string_utils.unescapeText
 local parseVersion = string_utils.parseVersion
 
-local predicates = require("predicates")
+local predicates = require("util.predicates")
 local isString = predicates.isString
 local isName = predicates.isName
 local isIdentifier = predicates.isIdentifier
@@ -25,15 +25,15 @@ local isValidUTF8 = predicates.isValidUTF8
 local isValidHttpUrl = predicates.isValidHttpUrl
 local isPath = predicates.isPath
 
-local regex_utils = require("regex_utils")
+local regex_utils = require("util.regex_utils")
 
-local base64 = require("base64")
+local base64 = require("util.base64")
 
-local error_reporting = require("error_reporting")
+local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
 
-local serialization = require("serialization")
+local serialization = require("serde.serialization")
 local serializeTable = serialization.serializeTable
 
 local M = {}

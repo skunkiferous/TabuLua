@@ -7,7 +7,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 
-local graph_helpers = require("graph_helpers")
+local graph_helpers = require("wiring.graph_helpers")
 
 -- ============================================================
 -- Test fixtures

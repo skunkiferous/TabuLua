@@ -8,7 +8,7 @@ local describe = busted.describe
 local it = busted.it
 
 -- Use the shared instance only for API surface tests that do NOT call reset()
-local global_reset = require("global_reset")
+local global_reset = require("util.global_reset")
 
 --- Creates a fresh, isolated global_reset instance with an empty registry.
 --- The shared instance in package.loaded is preserved so other modules are
@@ -17,7 +17,7 @@ local global_reset = require("global_reset")
 local function getFreshInstance()
     local saved = package.loaded["global_reset"]
     package.loaded["global_reset"] = nil
-    local fresh = require("global_reset")
+    local fresh = require("util.global_reset")
     package.loaded["global_reset"] = saved
     return fresh
 end
