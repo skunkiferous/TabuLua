@@ -15,6 +15,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.29.0] - 2026-06-20
+
+### Changed
+
+- **Grouped the engine's Lua modules into topical sub-directories.** The repository
+  root previously held 59 flat module files; it now holds **7** (the CLI entry-point
+  scripts `migration`, `ollama_batch`, `tsv_diff`, `reformatter`, `export_tester`,
+  `extract_test_errors`, plus the `parsers` aggregator). The other 52 library modules
+  moved into eight relationship-based packages — `util/`, `infra/`, `tsv/`, `serde/`,
+  `content/`, `wiring/`, `overrides/`, `loader/` — mirroring the dependency layering and
+  the existing `parsers/` package. Each is now required by its **dotted, namespaced
+  name** (e.g. `require("util.read_only")`, `require("tsv.tsv_model")`,
+  `require("content.content_pipeline")`); all ~540 internal `require` sites were updated
+  accordingly. This is a **purely structural change** — no runtime behavior, public
+  CLI invocation, data format, or API surface changed, and the full test suite passes
+  unchanged (3014 assertions). **Breaking only for external code that requires an engine
+  module by its old bare name** (`require("read_only")` → `require("util.read_only")`);
+  in-project data packages and sandboxed user code are unaffected, since they never
+  require engine modules directly. `documentation/MODULES.md` was reorganized to match
+  (grouped index, a directory-layout table, and corrected file links).
+
 ## [0.28.0] - 2026-06-15
 
 ### Added

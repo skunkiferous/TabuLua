@@ -5,7 +5,7 @@ local NAME = "round_trip"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 28, 0)
+local VERSION = semver(0, 29, 0)
 
 -- Dependencies
 local read_only = require("util.read_only")

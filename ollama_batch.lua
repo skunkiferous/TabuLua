@@ -5,7 +5,7 @@
 
 -- Module versioning
 local semver = require("semver")
-local VERSION = semver(0, 28, 0)
+local VERSION = semver(0, 29, 0)
 local NAME = "ollama_batch"
 
 local named_logger = require("infra.named_logger")
