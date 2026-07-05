@@ -147,6 +147,12 @@ local ROW_VALIDATOR_QUOTA = 1000
 local FILE_VALIDATOR_QUOTA = 10000
 local PACKAGE_VALIDATOR_QUOTA = 100000
 
+-- Extra quota granted per row, so file validators that legitimately scan
+-- every row (e.g. the auto-wired graph validators) scale with file size
+-- instead of failing on large files, while runaway expressions still hit
+-- a bound proportional to the work they were given
+local FILE_VALIDATOR_QUOTA_PER_ROW = 1000
+
 --- Normalizes a validator_spec into a consistent record format.
 --- @param spec string|table Either a simple expression string or {expr, level} record
 --- @return table Normalized record {expr=string, level="error"|"warn"}
@@ -350,10 +356,11 @@ local function runFileValidators(validators, rows, fileName, badVal, extraEnv)
         ctx = ctx,
     }
 
+    local quota = FILE_VALIDATOR_QUOTA + FILE_VALIDATOR_QUOTA_PER_ROW * #rows
     for _, spec in ipairs(validators) do
         local normalized = normalizeValidatorSpec(spec)
         local isValid, errorMsg = executeValidator(
-            normalized.expr, context, FILE_VALIDATOR_QUOTA, extraEnv)
+            normalized.expr, context, quota, extraEnv)
 
         if not isValid then
             if normalized.level == "warn" then

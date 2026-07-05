@@ -71,6 +71,12 @@ local PROCESSOR_READ_HELPERS = {
 -- mutation work is more expensive than pure checking
 local PROCESSOR_QUOTA = 50000
 
+-- Extra quota granted per data row, so processors that legitimately touch
+-- every row (e.g. the auto-wired graph completion pass) scale with file
+-- size instead of failing on large files, while runaway expressions still
+-- hit a bound proportional to the work they were given
+local PROCESSOR_QUOTA_PER_ROW = 10000
+
 -- Default processor priority (lower runs first; matches loadOrder convention)
 local DEFAULT_PRIORITY = 100
 
@@ -553,11 +559,12 @@ local function runFilePreProcessors(processors, rows, header, fileName, badVal, 
     local procCtx = {}
     local warnings = {}
     local allOk = true
+    local quota = PROCESSOR_QUOTA + PROCESSOR_QUOTA_PER_ROW * #rows
 
     for _, entry in ipairs(normalized) do
         local spec = entry.spec
         local env = createProcessorEnv(wrappedRows, fileName, procCtx, extraEnv)
-        local ok, msg = executeProcessor(spec.expr, env, PROCESSOR_QUOTA)
+        local ok, msg = executeProcessor(spec.expr, env, quota)
         if not ok then
             if spec.level == "warn" then
                 warnings[#warnings + 1] = {
@@ -705,6 +712,11 @@ local function runPackagePreProcessors(processors, fileEntries, packageId, badVa
     local procCtx = {}
     local warnings = {}
     local allOk = true
+    local totalRows = 0
+    for _, entry in pairs(fileEntries) do
+        totalRows = totalRows + #entry.rows
+    end
+    local quota = PROCESSOR_QUOTA + PROCESSOR_QUOTA_PER_ROW * totalRows
     local label = "package:" .. tostring(packageId)
     -- A package-scoped processor's writes are attributed to its package in the lineage.
     local linCtx = opt_lineage and {lineage = opt_lineage, source = label}
@@ -712,7 +724,7 @@ local function runPackagePreProcessors(processors, fileEntries, packageId, badVa
     for _, entry in ipairs(normalized) do
         local spec = entry.spec
         local env = createPackageProcessorEnv(wrappedFiles, packageId, procCtx, extraEnv, linCtx)
-        local ok, msg = executeProcessor(spec.expr, env, PROCESSOR_QUOTA)
+        local ok, msg = executeProcessor(spec.expr, env, quota)
         if not ok then
             if spec.level == "warn" then
                 warnings[#warnings + 1] = {
