@@ -802,14 +802,39 @@ local function collectAndLogFiles(directories, file2dir, opt_excludeDirs)
     return files
 end
 
--- Resolves package dependencies and returns package order and packages table
-local function resolvePackageDependencies(badVal, files, raw_files, manifest_tsv_files, loadEnv)
+-- Resolves package dependencies and returns package order and packages table.
+-- `directories` (the caller's input roots, in argument order) and `file2dir`
+-- (file -> the root it was collected from) rank each manifest by its root's
+-- position, so packages unrelated by `dependencies` / `load_after` load in
+-- input-root order (then alphabetical package_id within one root) — a host
+-- application expresses user-controlled load order simply by argument order.
+-- See TODO/package_order_determinism.md Phase 2.
+local function resolvePackageDependencies(badVal, files, raw_files, manifest_tsv_files, loadEnv,
+    directories, file2dir)
     local manifest_files_names = extractManifestFiles(files)
     for _, file in ipairs(manifest_files_names) do
         logger:info('Found manifest file: ' .. file)
     end
 
-    local package_order, packages = resolveDependencies(badVal, raw_files, manifest_tsv_files, loadEnv, manifest_files_names)
+    -- Rank each manifest by the position of its input root directory. A
+    -- directory listed twice keeps its first position; collectFiles ignored
+    -- nil / "" entries, so they are skipped here too.
+    local dirRank = {}
+    for i, directory in ipairs(directories or {}) do
+        if directory and directory ~= "" and dirRank[directory] == nil then
+            dirRank[directory] = i
+        end
+    end
+    local manifestRank = {}
+    for _, file in ipairs(manifest_files_names) do
+        local directory = file2dir and file2dir[file]
+        if directory then
+            manifestRank[file] = dirRank[directory]
+        end
+    end
+
+    local package_order, packages = resolveDependencies(badVal, raw_files, manifest_tsv_files, loadEnv,
+        manifest_files_names, manifestRank)
     if not package_order then
         logger:error("Could not resolve package dependencies. Aborting.")
         return nil, nil
@@ -1262,7 +1287,8 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     local loadEnv = setmetatable({}, {__index = sandbox_env.cogGlobals()})
     loadEnv.files = {}   -- populated with each parsed dataset; available in cog scripts
 
-    local package_order, packages = resolvePackageDependencies(badVal, files, raw_files, manifest_tsv_files, loadEnv)
+    local package_order, packages = resolvePackageDependencies(badVal, files, raw_files,
+        manifest_tsv_files, loadEnv, directories, file2dir)
     if not package_order then
         return nil
     end

@@ -2113,11 +2113,17 @@ overlays compose more gently: defaults are last-wins, type widenings are *unione
 suppressed validator takes the *lowest* severity any overlay asked for — so multiple mods
 loosening the same column rarely conflict.
 
-Package load order is fully deterministic. Dependency edges (`dependencies` /
-`load_after`) always dominate; two packages **not** related by any such edge load in
-**alphabetical `package_id` order**. This tie-break is stable across runs (it does not
-depend on filesystem or hash-table iteration order), so conflict resolution — and every
-diagnostic derived from it (`--explain-patch`, `--export-merged`) — is reproducible.
+Package load order is fully deterministic — and, for unrelated packages,
+**user-controllable**. Dependency edges (`dependencies` / `load_after`) always dominate:
+the engine repeatedly loads the lowest-ranked package whose prerequisites have all
+loaded. A package's rank is the position of its **input root directory** in the
+directory list passed to the loader (CLI argument order), then alphabetical
+`package_id` among packages from the same root. A host application (game launcher, mod
+manager) therefore controls the relative order of independent mods simply by the order
+it passes their directories — no manifest edits needed. The order is stable across runs
+(it never depends on filesystem or hash-table iteration order), so conflict resolution —
+and every diagnostic derived from it (`--explain-patch`, `--export-merged`) — is
+reproducible.
 
 ### Inspecting Overrides
 

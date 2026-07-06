@@ -482,10 +482,15 @@ local function runPackageBootstraps(badVal, packages, package_order, loadEnv, ap
     end
 end
 
--- Loads and processes all manifest files, building a dependency graph
-local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_env, manifest_files)
+-- Loads and processes all manifest files, building a dependency graph.
+-- opt_manifestRank (optional) maps a manifest file path to a numeric load
+-- preference (smaller = earlier; see resolveDependencies); the returned
+-- pkgRank re-keys it by package_id for the topological sort's tie-break.
+local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_env, manifest_files,
+    opt_manifestRank)
     local graph = {}
     local packages = {}
+    local pkgRank = opt_manifestRank and {} or nil
     local fail = false
 
     -- Scan and load package metadata
@@ -494,6 +499,9 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
         if manifest then
             packages[manifest.package_id] = manifest
             graph[manifest.package_id] = {}
+            if pkgRank then
+                pkgRank[manifest.package_id] = opt_manifestRank[manifest_file]
+            end
             if not registerCustomTypes(badVal, manifest) then
                 fail = true
             end
@@ -539,59 +547,117 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
         end
     end
 
-    return graph, packages, fail
+    return graph, packages, fail, pkgRank
 end
 
--- Finds the load order, based on the dependencies graph
-local function topologicalSort(graph)
-    local result = {}
-    local visited = {}
-    local recursion_stack = {}
-
-    local function dfs(node, path)
-        if recursion_stack[node] then
-            logger:error("Circular dependency detected: " .. table.concat(path, " -> ")
-                .. " -> " .. node)
-            return false
-        end
-
-        if not visited[node] then
-            visited[node] = true
-            recursion_stack[node] = true
-
-            for _, neighbor in ipairs(graph[node]) do
-                local new_path = {table.unpack(path)}
-                table.insert(new_path, node)
-                if not dfs(neighbor, new_path) then
-                    return false
-                end
-            end
-
-            recursion_stack[node] = false
-            table.insert(result, node)
-        end
-        return true
-    end
-
-    -- Seed the DFS roots in sorted package-id order. Combined with the
-    -- deterministic edge lists from buildDependencyGraph, this makes the
-    -- topological order fully deterministic: packages unrelated by
-    -- `dependencies` / `load_after` load in alphabetical `package_id` order,
-    -- rather than in the randomized `pairs()` order of the graph table.
-    -- See TODO/package_order_determinism.md.
-    local roots = {}
+-- Finds and logs one dependency cycle among the nodes not yet loaded. Called
+-- when the greedy topological sort stalls: every remaining node then has an
+-- unmet prerequisite among the remaining nodes, so walking prerequisite edges
+-- restricted to those nodes must revisit one, yielding the cycle path. The
+-- walk starts at the smallest remaining id and follows the smallest remaining
+-- prerequisite, so the reported path is deterministic.
+local function logCycle(graph, done)
+    local start = nil
     for node in pairs(graph) do
-        roots[#roots + 1] = node
-    end
-    table.sort(roots)
-    for _, node in ipairs(roots) do
-        if not visited[node] then
-            if not dfs(node, {}) then
-                return nil
-            end
+        if not done[node] and (start == nil or node < start) then
+            start = node
         end
     end
+    local path = {}
+    local pos = {}
+    local node = start
+    while node and not pos[node] do
+        pos[node] = #path + 1
+        path[#path + 1] = node
+        local nextNode = nil
+        for _, pre in ipairs(graph[node]) do
+            if not done[pre] and (nextNode == nil or pre < nextNode) then
+                nextNode = pre
+            end
+        end
+        node = nextNode
+    end
+    if not node then
+        -- Unreachable when called from a stalled sort; guard for direct misuse.
+        logger:error("Circular dependency detected")
+        return
+    end
+    local cycle = {}
+    for i = pos[node], #path do
+        cycle[#cycle + 1] = path[i]
+    end
+    cycle[#cycle + 1] = node
+    logger:error("Circular dependency detected: " .. table.concat(cycle, " -> "))
+end
 
+-- Finds the load order, based on the dependencies graph.
+-- Greedy deterministic topological sort (Kahn): at each step, load the
+-- lowest-ranked package whose prerequisites have all loaded. A package's rank
+-- is the pair (opt_rank[id] or +infinity, id): the caller-supplied numeric
+-- preference first — resolveDependencies derives it from the order the input
+-- root directories were given, so a host application controls the order of
+-- unrelated packages by argument order — then alphabetical package_id. So
+-- `dependencies` / `load_after` edges always dominate, unrelated packages
+-- follow the caller's preference, and remaining ties are alphabetical (never
+-- the randomized `pairs()` order of the graph table).
+-- See TODO/package_order_determinism.md.
+local function topologicalSort(graph, opt_rank)
+    local rank = opt_rank or {}
+    -- Node list sorted by id: a stable scan order for the greedy pick.
+    local nodes = {}
+    for node in pairs(graph) do
+        nodes[#nodes + 1] = node
+    end
+    table.sort(nodes)
+    -- unmet[node] = number of distinct prerequisites not yet loaded;
+    -- dependents[prereq] = nodes whose unmet count drops when prereq loads.
+    local unmet = {}
+    local dependents = {}
+    for _, node in ipairs(nodes) do
+        local seen = {}
+        local count = 0
+        for _, pre in ipairs(graph[node]) do
+            if not seen[pre] then
+                seen[pre] = true
+                count = count + 1
+                local dl = dependents[pre]
+                if not dl then
+                    dl = {}
+                    dependents[pre] = dl
+                end
+                dl[#dl + 1] = node
+            end
+        end
+        unmet[node] = count
+    end
+    local function before(a, b)
+        local ra = rank[a] or math.huge
+        local rb = rank[b] or math.huge
+        if ra ~= rb then
+            return ra < rb
+        end
+        return a < b
+    end
+    local result = {}
+    local done = {}
+    for _ = 1, #nodes do
+        local best = nil
+        for _, node in ipairs(nodes) do
+            if not done[node] and unmet[node] == 0 and (best == nil or before(node, best)) then
+                best = node
+            end
+        end
+        if not best then
+            -- Every remaining node waits on another remaining node: a cycle.
+            logCycle(graph, done)
+            return nil
+        end
+        done[best] = true
+        result[#result + 1] = best
+        for _, dep in ipairs(dependents[best] or {}) do
+            unmet[dep] = unmet[dep] - 1
+        end
+    end
     return result
 end
 
@@ -628,11 +694,18 @@ local function checkPackagesDoNotOverlap(packages)
     return fail
 end
 
--- Loads and processes all manifest files, resolving the package load order
-local function resolveDependencies(badVal, raw_files, manifest_tsv_files, cog_env, manifest_files)
-    local graph, packages, fail = buildDependencyGraph(badVal, raw_files, manifest_tsv_files,
-        cog_env, manifest_files)
-    local load_order = topologicalSort(graph)
+-- Loads and processes all manifest files, resolving the package load order.
+-- opt_manifestRank (optional) maps a manifest file path to a numeric load
+-- preference for packages the dependency graph leaves unordered (smaller =
+-- earlier; ties and unranked packages fall back to alphabetical package_id).
+-- manifest_loader derives it from the position of each package's input root
+-- directory in the caller's `directories` argument, giving a host application
+-- (game launcher, mod manager) user-controlled load order by argument order.
+local function resolveDependencies(badVal, raw_files, manifest_tsv_files, cog_env, manifest_files,
+    opt_manifestRank)
+    local graph, packages, fail, pkgRank = buildDependencyGraph(badVal, raw_files, manifest_tsv_files,
+        cog_env, manifest_files, opt_manifestRank)
+    local load_order = topologicalSort(graph, pkgRank)
     fail = checkPackagesDoNotOverlap(packages) or fail
     if fail or not load_order then
         return nil

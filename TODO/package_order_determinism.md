@@ -5,8 +5,23 @@
 **Phase 1 landed (2026-07-06).** `buildDependencyGraph` and `topologicalSort` now
 iterate in sorted `package_id` order, so unrelated packages load alphabetically and
 deterministically; the rule is documented in DATA_FORMAT_README (Conflict Resolution)
-and covered by two new `manifest_info_spec` tests. Phase 2 (user-controlled load
-order) remains optional and deferred.
+and covered by two new `manifest_info_spec` tests.
+
+**Phase 2 landed (2026-07-06).** `topologicalSort` is now a greedy **ranked Kahn**
+scheduler: at each step it loads the lowest-ranked package whose prerequisites have
+all loaded, with rank = (input-root position, `package_id`) — so unrelated packages
+follow the order their root directories were passed to `processFiles` / the CLI, then
+alphabetical `package_id` within one root. `manifest_info.resolveDependencies` gained
+`opt_manifestRank` (manifest path → number); `manifest_loader.resolvePackageDependencies`
+derives it from `directories` + `file2dir`. Cycle diagnostics keep the same
+"Circular dependency detected: a -> b -> a" path message (new `logCycle` walks the
+stalled remainder). Note the refinement over Phase 1: in a dependency-entangled set
+the greedy rule can order packages differently than the DFS post-order did (both
+deterministic; "earliest ready package loads first" is the simpler rule, and it is
+what a rank-based preference requires). Tests: 3 new in `manifest_info_spec`
+(rank order, edges dominate rank, ranked-before-unranked) + 1 integration in
+`manifest_loader_spec` (directory argument order controls unrelated package order,
+both directions). **Both phases done; nothing remains in this document.**
 
 Bug analysis + fix plan. Found during a modding-ecosystem review of the landed
 [mod_overrides.md](mod_overrides.md) work (2026-07-03). Small, fix-ready; no open
@@ -92,7 +107,7 @@ Tests:
 Risk: near zero. Any load that *observably* changes behaviour from this fix was
 already non-deterministic.
 
-## Phase 2 (optional, deferred) — user-controlled load order
+## Phase 2 — user-controlled load order ✅ LANDED (2026-07-06; see Status)
 
 Real modding ecosystems let the **user** order unrelated mods (Bethesda
 loadorder.txt / LOOT, the Paradox launcher list, Factorio's mod list). Alphabetical

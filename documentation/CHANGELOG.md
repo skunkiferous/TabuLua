@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **User-controlled load order for unrelated packages (mod-manager support).** Packages
+  *not* related by `dependencies` / `load_after` now load in the order their **root
+  directories were passed to the loader** (CLI argument order), falling back to
+  alphabetical `package_id` order among packages sharing one root — so a host
+  application (game launcher, mod manager) controls the relative order of independent
+  mods simply by argument order, with no manifest edits. Implemented by replacing the
+  topological sort's DFS with a **greedy ranked Kahn scheduler**: at each step the
+  lowest-ranked package whose prerequisites have all loaded is loaded next, with rank =
+  (input-root position, `package_id`); dependency edges always dominate, and cycle
+  detection keeps the same "Circular dependency detected: a -> b -> a" path diagnostic.
+  In a dependency-entangled set the alphabetical fallback can order packages differently
+  than the previous DFS post-order did (both fully deterministic — the new rule is the
+  simpler "earliest ready package loads first"). `manifest_info.resolveDependencies`
+  gains an optional `opt_manifestRank` (manifest path → numeric preference), which
+  `manifest_loader` derives from the `directories` argument via the collector's
+  `file2dir` map. Completes `TODO/package_order_determinism.md` (Phase 2); documented
+  under Conflict Resolution in `DATA_FORMAT_README.md`.
+
 ### Changed
 
 ### Removed

@@ -469,6 +469,47 @@ describe("manifest_info", function()
       assert.same({"one", "three", "two"}, order1)
       assert.same(order1, order2)
     end)
+
+    it("should follow opt_manifestRank for unrelated packages", function()
+      -- Phase 2 of TODO/package_order_determinism.md: a caller-supplied rank
+      -- (manifest file path -> number, smaller = earlier) orders the packages
+      -- the dependency graph leaves unordered, overriding the alphabetical
+      -- fallback. manifest_loader derives the rank from input-root order.
+      local files = writeUnrelatedPackages({"Alpha", "Bravo", "Charlie"})
+      local rank = { [files[1]] = 3, [files[2]] = 2, [files[3]] = 1 }
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, files, rank)
+      assert.same({}, log_messages)
+      assert.same({"Charlie", "Bravo", "Alpha"}, load_order)
+    end)
+
+    it("should let dependency edges dominate opt_manifestRank", function()
+      -- B declares load_after A; the rank prefers B first. The graph edge
+      -- must win: A still loads before B.
+      local a_file = path_join(temp_dir, 'a', MANIFEST_FILENAME)
+      lfs.mkdir(path_join(temp_dir, 'a'))
+      assert.is_true(file_util.writeFile(a_file, PKG_A))
+      local b_file = path_join(temp_dir, 'b', MANIFEST_FILENAME)
+      lfs.mkdir(path_join(temp_dir, 'b'))
+      assert.is_true(file_util.writeFile(b_file, PKG_B))
+      local rank = { [b_file] = 1, [a_file] = 2 }
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {},
+        { a_file, b_file }, rank)
+      assert.same({}, log_messages)
+      assert.same({"A", "B"}, load_order)
+    end)
+
+    it("should load ranked packages before unranked ones", function()
+      -- A package without a rank entry sorts after every ranked one (its rank
+      -- is +infinity); unranked packages stay alphabetical among themselves.
+      local files = writeUnrelatedPackages({"Alpha", "Bravo", "Charlie"})
+      local rank = { [files[3]] = 1 }  -- only Charlie ranked
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, files, rank)
+      assert.same({}, log_messages)
+      assert.same({"Charlie", "Alpha", "Bravo"}, load_order)
+    end)
   end)
 
   describe("versionSatisfies", function()

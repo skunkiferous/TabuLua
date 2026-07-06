@@ -33,7 +33,7 @@ compose.
 ## 1. Survey: mod-on-mod scenarios in real ecosystems
 
 | # | Scenario | Real-world examples | TabuLua today |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Mod hard-depends on another mod (library/framework mods, "requires Bob's Metals") | Factorio `dependencies`, Forge `depends`, RimWorld `loadAfter`+error | ✅ `dependencies` + version constraint |
 | 2 | Mod patches rows another mod **added** | Ubiquitous — balance mods over content mods | ✅ works: patches apply in package order; each apply re-indexes by PK, so rows added by an earlier mod are targetable (worth a dedicated spec, see Phase 7) |
 | 3 | **Optional compatibility**: mod B adjusts itself *if* mod A is present, works fine without | Factorio `? optional-dependency`, RimWorld `PatchOperationFindMod`, Stellaris compat patches folded into the mod | ❌ not expressible (§2) |
@@ -43,7 +43,7 @@ compose.
 | 7 | Compatibility patch spanning several base-game versions (rows come and go) | Common on slow-updating mods | ⚠️ `update`/`replace_oldvalue_` on a missing key is a hard error; tolerance was designed (mod_overrides.md §5.2) but deliberately left out of v1 (§6) |
 | 8 | Many mods naming files freely → name collisions | Namespacing by mod id (Minecraft `modid:item`, Factorio prototype names) | ⚠️ `patchOf`/`schemaOverlayOf`/`bulkPatchOf`/`joinInto` resolve by **basename only**; on collision "last file wins (arbitrary)" per the comment in `patch_executor.applyPatches` (§4) |
 | 9 | Mod adds a **column** to a parent file, visible to other mods | RimWorld defModExtensions, Bethesda new records | ⚠️ `joinInto` exists but joins apply at **export** only (`exporter.lua` skips secondary files); load-time expressions/validators never see the joined columns (§7; mod_overrides.md §8.5 NOTE still open) |
-| 10 | User-controlled load order between unrelated mods | loadorder.txt, launcher lists | ⚠️ see [package_order_determinism.md](package_order_determinism.md) Phase 2 |
+| 10 | User-controlled load order between unrelated mods | loadorder.txt, launcher lists | ✅ input-root argument order ([package_order_determinism.md](package_order_determinism.md) Phase 2, landed 2026-07-06) |
 
 Scenarios 3, 5, 6, 7, 8 are the actionable gaps; 9 and 10 are tracked here as
 design notes / deferred phases.
@@ -54,8 +54,8 @@ The single biggest gap. A mod cannot ship content that applies **only when
 another mod is present**, because:
 
 - A patch / overlay / bulk-patch file whose target file is not loaded is a
-  **hard error** ("patch target '<x>' not found (must match a loaded file by
-  basename)" in `patch_executor.applyPatches`; the overlay and bulk paths
+  **hard error** (`patch target '<x>' not found (must match a loaded file by
+  basename)` in `patch_executor.applyPatches`; the overlay and bulk paths
   behave the same way). So `CompatA/ItemPatch.tsv` targeting mod A's file
   kills the load whenever A is absent.
 - Nothing can gate a `Files.tsv` row on package presence.
@@ -143,7 +143,7 @@ Forge `breaks`).
 
 Add a manifest field, mirroring `load_after`'s shape:
 
-```
+```text
 conflicts:{package_id}|nil
 ```
 
@@ -217,7 +217,7 @@ in one version only — cannot be written without erroring on one of them.
 
 Add a per-patch-file policy, as a descriptor column beside `patchOf`:
 
-```
+```text
 ifMissing:missing_policy|nil      -- enum: error | warn | silent  (default error)
 ```
 
@@ -261,14 +261,27 @@ ifMissing:missing_policy|nil      -- enum: error | warn | silent  (default error
   document*; they patch the merged result, which TabuLua's load-ordered apply
   already gives. Explicitly out of scope (a patch file is not a patchable
   target — its `typeName` is the `patch` keyword, not a record type).
-- **User-controlled load order** — tracked in
-  [package_order_determinism.md](package_order_determinism.md) Phase 2.
+- **User-controlled load order** — ✅ landed 2026-07-06
+  ([package_order_determinism.md](package_order_determinism.md) Phase 2): unrelated
+  packages load in input-root argument order, then alphabetical `package_id`.
 
 ## 8. Implementation phases (proposed)
 
 Each phase is independently shippable; order chosen so each unlocks the next's
 tests. All new columns/types register through the type-wiring registry (no core
 `files_desc` edits), per the established pattern.
+
+**Where [package_order_determinism.md](package_order_determinism.md) Phase 2
+(user-controlled load order) fits: FIRST — before Phase 1 below. ✅ Landed
+2026-07-06 in exactly that slot.** It refines
+the load-order tie-break rule (input-root order, then alphabetical `package_id`)
+that every later phase's tests and tutorial content observe: the Phase 2
+tutorial `compat` package, Phase 3's conflict semantics, and especially
+Phase 5's `--check-conflicts` chains (whose whole point is showing users a
+last-writer-wins order they can then *reorder* — the lever must exist before
+the report telling them to pull it). Landing it first avoids re-touching those
+phases' fixtures when the rule changes underneath them. At the absolute latest
+it must precede Phase 5.
 
 **Phase 1 — `packages` published context + sandbox presence helpers (§2.2).**
 Small: build the read-only table in `processFiles` after dependency

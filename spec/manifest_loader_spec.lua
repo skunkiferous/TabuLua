@@ -240,6 +240,41 @@ b1	2
       assert.equals("PkgB", result.package_order[2])
     end)
 
+    it("should order unrelated packages by directory argument order", function()
+      -- Phase 2 of TODO/package_order_determinism.md: packages unrelated by
+      -- dependencies / load_after load in the order their root directories
+      -- were passed to processFiles, so a host application (game launcher,
+      -- mod manager) controls the load order of independent mods simply by
+      -- argument order. Within one root, alphabetical package_id still rules.
+      local function makePkg(dirName, pkgId)
+        local dir = path_join(temp_dir, dirName)
+        assert(lfs.mkdir(dir))
+        local manifest = "package_id:package_id\t" .. pkgId .. "\n"
+          .. "name:string\tPackage " .. pkgId .. "\n"
+          .. "version:version\t1.0.0\n"
+          .. "description:markdown\tUnrelated package " .. pkgId .. "\n"
+        assert.is_true(file_util.writeFile(path_join(dir, MANIFEST_FILENAME), manifest))
+        -- Header-only files descriptor: no data files, so the two processFiles
+        -- runs below register no types and cannot interfere with each other.
+        local files_desc = "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\t"
+          .. "baseType:boolean\tloadOrder:number\tdescription:text\n"
+        assert.is_true(file_util.writeFile(path_join(dir, "files.tsv"), files_desc))
+        return dir
+      end
+      local zed_dir = makePkg("zed", "Zed")
+      local ann_dir = makePkg("ann", "Ann")
+
+      -- Zed's root passed first: Zed loads before Ann despite "Ann" < "Zed".
+      local result = manifest_loader.processFiles({zed_dir, ann_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.same({"Zed", "Ann"}, result.package_order)
+
+      -- The same two roots in the opposite order: alphabetical order restored.
+      local result2 = manifest_loader.processFiles({ann_dir, zed_dir}, badVal)
+      assert.is_not_nil(result2)
+      assert.same({"Ann", "Zed"}, result2.package_order)
+    end)
+
     it("should handle enum files correctly", function()
       local pkg_dir = path_join(temp_dir, "enumpkg")
       assert(lfs.mkdir(pkg_dir))

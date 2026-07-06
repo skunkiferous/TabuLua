@@ -401,7 +401,7 @@ Content-pipeline `transcode` stage that reads TabuLua's `--file=lua` export — 
 ### manifest_info
 **File:** [manifest_info.lua](../loader/manifest_info.lua)
 
-Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations.
+Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations. `resolveDependencies` computes the package load order with a greedy ranked topological sort (Kahn): `dependencies` / `load_after` edges always dominate, then a caller-supplied per-manifest rank (`opt_manifestRank` — [manifest_loader](#manifest_loader) passes each manifest's input-root position, giving a host application user-controlled load order by argument order), then alphabetical `package_id`. Fully deterministic; see `TODO/package_order_determinism.md`.
 
 **Dependencies:** error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model
 
