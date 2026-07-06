@@ -46,6 +46,7 @@ local isManifestFile = manifest_info.isManifestFile
 local resolveDependencies = manifest_info.resolveDependencies
 local runPackageBootstraps = manifest_info.runPackageBootstraps
 local validateVariantGroups = manifest_info.validateVariantGroups
+local versionSatisfies = manifest_info.versionSatisfies
 
 local files_desc = require("loader.files_desc")
 local extractFilesDescriptors = files_desc.extractFilesDescriptors
@@ -234,7 +235,7 @@ end
 -- Builds the table subscribers. The context that the subscribers should use is stored under
 -- contexts[1]. The name of the context that the subscribers should use is stored under
 -- contexts[2]. The default context(loadEnv) is stored under contexts['']
-local function buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
+local function buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col, badVal)
     local table_subscribers = nil
     local publishContext = lcFn2Ctx[lcFNKey]
     local publishColumn = lcFn2Col[lcFNKey]
@@ -243,6 +244,17 @@ local function buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
         if publishContext then
             local context = contexts[publishContext]
             if context == nil then
+                -- A new context is attached to the default env (loadEnv), so its
+                -- name must not shadow an existing expression-environment name:
+                -- an engine surface (`files`, `packages`, `versionSatisfies`), a
+                -- code library, or a curated sandbox global (`math`, `table`,
+                -- ...). Shadowing would silently break every later expression
+                -- that reads the original name.
+                if contexts[''][publishContext] ~= nil then
+                    badVal(publishContext, "publishContext '" .. publishContext
+                        .. "' conflicts with an existing expression-environment name")
+                    return nil
+                end
                 logger:info("Creating context " .. publishContext.." for expressions evaluation")
                 context = {}
                 contexts[publishContext] = context
@@ -379,7 +391,7 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     end
     local rawtsv = stringToRawTSV(content)
 
-    local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col)
+    local table_subscribers = buildTableSubscribers(contexts, lcFNKey, lcFn2Ctx, lcFn2Col, badVal)
     logFile(file_name, fileType, extends, table_subscribers)
 
     -- Look up parent file's header for inheriting column defaults
@@ -1286,12 +1298,40 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     -- Code-library exports and `loadEnv.files` are added as direct keys below.
     local loadEnv = setmetatable({}, {__index = sandbox_env.cogGlobals()})
     loadEnv.files = {}   -- populated with each parsed dataset; available in cog scripts
+    -- Reserve the `packages` / `versionSatisfies` expression-environment names
+    -- BEFORE code libraries load (they load during dependency resolution, below),
+    -- so a code library claiming either name fails with the standard "conflicts
+    -- with existing environment variable" error instead of silently clobbering
+    -- the engine surface. The `packages` placeholder is replaced with the real
+    -- read-only content once the package set is resolved.
+    -- See TODO/mod_ecosystem.md §2.2 (Phase 1).
+    loadEnv.packages = {}
+    loadEnv.versionSatisfies = versionSatisfies
 
     local package_order, packages = resolvePackageDependencies(badVal, files, raw_files,
         manifest_tsv_files, loadEnv, directories, file2dir)
     if not package_order then
         return nil
     end
+
+    -- Publish the loaded-package set to every sandbox surface that sees loadEnv
+    -- (`=expr` cells, COG blocks, validators — including bulk_patch `where`
+    -- selectors — and pre-processors): `packages` maps each loaded package_id to
+    -- a read-only {name, version} record, so an expression can branch on another
+    -- mod's presence (`packages["some.mod"]`) or version
+    -- (`versionSatisfies(">=", "2.0.0", packages["some.mod"].version)`); an
+    -- absent package indexes to nil. Version is exposed as a plain string.
+    -- Manifest-file COG cannot see this (manifests load while the package set is
+    -- still being resolved and only ever see the empty placeholder above).
+    local packagesCtx = {}
+    for _, pkg_id in ipairs(package_order) do
+        local manifest = packages[pkg_id]
+        packagesCtx[pkg_id] = readOnly({
+            name = manifest.name,
+            version = tostring(manifest.version),
+        })
+    end
+    loadEnv.packages = readOnly(packagesCtx)
 
     -- Validate variant groups declared in manifests; collect defaults
     local variantsSet = nil

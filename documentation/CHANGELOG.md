@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Expressions can detect other loaded packages (`packages` + `versionSatisfies`) —
+  the expression half of optional mod compatibility.** Every sandbox surface that sees
+  the load environment — `=expr` cells, COG blocks, row / file / package validators,
+  bulk-patch `where` selectors, and pre-processors — now has a read-only **`packages`**
+  table mapping each loaded `package_id` to `{name, version}` (an absent package
+  indexes to `nil`, so presence is a truthiness test) and the
+  **`versionSatisfies(op, required, installed)`** helper (the manifest `dependencies`
+  operators: `=`, `>`, `>=`, `<`, `<=`, `~`, `^`). A compat rule can now say
+  `packages["some.mod"] and row.tags has "metal"` in a `where` selector, or warn from a
+  validator unless a rebalance mod is loaded. Both names are **reserved**: they are
+  seeded into the load environment *before* code libraries load, so a library claiming
+  either fails with the standard name-conflict error; a `publishContext` that would
+  shadow **any** existing expression-environment name (`files`, `packages`, a code
+  library, a curated sandbox global like `math`) is now likewise a load error instead
+  of a silent clobber. Manifest-file COG cannot see `packages` (manifests load while
+  the package set is still being resolved). Phase 1 of `TODO/mod_ecosystem.md`;
+  documented under *Detecting Other Packages* in `DATA_FORMAT_README.md`.
+
 - **User-controlled load order for unrelated packages (mod-manager support).** Packages
   *not* related by `dependencies` / `load_after` now load in the order their **root
   directories were passed to the loader** (CLI argument order), falling back to

@@ -410,7 +410,7 @@ Handles `Manifest.transposed.tsv` files for package metadata, versioning, type a
 ### manifest_loader
 **File:** [manifest_loader.lua](../loader/manifest_loader.lua)
 
-Orchestrates package loading: discovers packages, resolves dependencies, dispatches type-wiring `onLoad` callbacks (via [type_wiring](#type_wiring) — replaces the former hand-written `Type` / `enum` / `custom_type_def` branches), registers types, loads data files in order, and runs all validators (row, file, package) after loading.
+Orchestrates package loading: discovers packages, resolves dependencies, dispatches type-wiring `onLoad` callbacks (via [type_wiring](#type_wiring) — replaces the former hand-written `Type` / `enum` / `custom_type_def` branches), registers types, loads data files in order, and runs all validators (row, file, package) after loading. Publishes the loaded-package set into the expression environment as the reserved names `packages` (package_id → `{name, version}`, read-only) and `versionSatisfies`, seeded before code libraries load so a name collision errors loudly; a `publishContext` shadowing any existing expression-environment name is likewise rejected.
 
 **`extractDataRows` preserves the dataset's PK index.** The internal `extractDataRows(tsv_file)` helper returns the data rows as a plain array but also copies the dataset's column-1 PK keys onto the result, so callers receive a row array that is still PK-indexed (`rows[someName]` is O(1)). Direct consumers — file validators, file pre-processors, package validators — should reuse this index instead of rebuilding a name→row map.
 

@@ -892,6 +892,12 @@ code_libraries:{{name,string}}|nil	{{'utils','libs/utils.lua'},{'calc','libs/cal
 - `name`: The key used to access the library in expressions (e.g., `utils.myFunc()`)
 - `path`: Relative path from the package directory to the `.lua` file
 
+**Reserved names.** A library name must not collide with an existing
+expression-environment name — the engine surfaces **`files`**, **`packages`**, and
+**`versionSatisfies`**, or another package's library — and loading fails with a clear
+error if it does. The same rule applies to `publishContext` names (see
+*Detecting Other Packages* under Mod Overrides).
+
 ### Library File Format
 
 Libraries must be Lua files that return a table of exports:
@@ -1887,6 +1893,7 @@ Configured in `Files.tsv` via the `rowValidators` column:
 - `ctx` - Writable table shared across all rows in the file, for accumulating state
 - Published contexts from earlier-loaded files
 - Code libraries defined in the manifest
+- `packages` / `versionSatisfies` - the loaded-package set (see *Detecting Other Packages*)
 - Standard sandbox utilities (`math`, `string`, etc.)
 
 **Example:**
@@ -1920,6 +1927,7 @@ Configured in `Files.tsv` via the `fileValidators` column:
 - `ctx` - Writable table shared across all file validator expressions
 - Published contexts from earlier-loaded files
 - Code libraries defined in the manifest
+- `packages` / `versionSatisfies` - the loaded-package set (see *Detecting Other Packages*)
 - Helper functions (see below)
 
 **Example:**
@@ -1946,6 +1954,7 @@ Configured in `Manifest.transposed.tsv` via the `package_validators` field:
 - `ctx` - Writable table shared across all package validator expressions
 - All published contexts (including from dependency packages)
 - Code libraries defined in the manifest
+- `packages` / `versionSatisfies` - the loaded-package set (see *Detecting Other Packages*)
 - Helper functions (see below)
 
 **Example in Manifest.transposed.tsv:**
@@ -2104,6 +2113,32 @@ patched, and schema overlays keep the parent's *declared* type and default in th
 text. Exporters (JSON/SQL/…) **do** see the overridden data; only the on-disk parent TSV
 stays byte-for-byte the author's original. This is the same "derived data is not
 source-of-truth" rule that governs `=expr` defaults and pre-processor output.
+
+### Detecting Other Packages
+
+Every expression surface — `=expr` cells, COG blocks, row / file / package validators,
+bulk-patch `where` selectors, and pre-processors — can inspect the **loaded-package
+set**:
+
+- **`packages`** is a read-only table mapping each loaded `package_id` to a
+  `{name, version}` record; an absent package indexes to `nil`, so presence is a simple
+  truthiness test.
+- **`versionSatisfies(op, required, installed)`** compares versions with the same
+  operators the manifest `dependencies` field uses (`=`, `>`, `>=`, `<`, `<=`, `~`, `^`).
+
+```lua
+packages["tutorial.core"] ~= nil                        -- is the core loaded?
+packages["some.mod"] and packages["some.mod"].version    -- its version (a string), or nil
+versionSatisfies(">=", "2.0.0", packages["some.mod"].version)
+```
+
+This is the *expression half* of optional mod compatibility: a bulk-patch `where`
+selector or a validator can branch on another mod's presence or version. (Declarative
+gating — skipping a whole file when a package is absent — is planned separately; see
+`TODO/mod_ecosystem.md`.) Two caveats: **manifest-file** COG blocks cannot see
+`packages` (manifests load while the package set is still being resolved), and
+`packages` / `versionSatisfies` are **reserved names** — a code library or
+`publishContext` claiming either fails the load.
 
 ### Conflict Resolution
 

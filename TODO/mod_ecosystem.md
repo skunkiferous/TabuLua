@@ -36,7 +36,7 @@ compose.
 | --- | --- | --- | --- |
 | 1 | Mod hard-depends on another mod (library/framework mods, "requires Bob's Metals") | Factorio `dependencies`, Forge `depends`, RimWorld `loadAfter`+error | ✅ `dependencies` + version constraint |
 | 2 | Mod patches rows another mod **added** | Ubiquitous — balance mods over content mods | ✅ works: patches apply in package order; each apply re-indexes by PK, so rows added by an earlier mod are targetable (worth a dedicated spec, see Phase 7) |
-| 3 | **Optional compatibility**: mod B adjusts itself *if* mod A is present, works fine without | Factorio `? optional-dependency`, RimWorld `PatchOperationFindMod`, Stellaris compat patches folded into the mod | ❌ not expressible (§2) |
+| 3 | **Optional compatibility**: mod B adjusts itself *if* mod A is present, works fine without | Factorio `? optional-dependency`, RimWorld `PatchOperationFindMod`, Stellaris compat patches folded into the mod | ⚠️ expression half landed 2026-07-06 (`packages` context, §2.2 / Phase 1); declarative file gating pending (§2.1 / Phase 2) |
 | 4 | Separate "A+B compatibility patch" mini-mod | The workaround every ecosystem uses where #3 is missing | ✅ a third package hard-depending on both |
 | 5 | Declared incompatibility ("this overhaul breaks with X") | Factorio `!mod`, Forge `breaks` | ❌ no `conflicts` field (§3) |
 | 6 | Player-visible conflict report ("which of my 40 mods touch the same thing?") | LOOT, Wrye Bash — entire third-party tools | ⚠️ lineage records it; `--explain-patch` shows one cell at a time; no conflicts-only report (§5) |
@@ -283,12 +283,24 @@ the report telling them to pull it). Landing it first avoids re-touching those
 phases' fixtures when the rule changes underneath them. At the absolute latest
 it must precede Phase 5.
 
-**Phase 1 — `packages` published context + sandbox presence helpers (§2.2).**
-Small: build the read-only table in `processFiles` after dependency
-resolution, inject into `loadEnv`, expose `versionSatisfies` as a sandbox
-helper. Reserve the `packages` name in docs. Tests: `where` selector and
-package validator branching on presence/version; collision with a user code
-library named `packages` errors loudly.
+**Phase 1 — `packages` published context + sandbox presence helpers (§2.2).
+✅ LANDED (2026-07-06).** As designed, with two refinements: (a) the reserved
+names are seeded into `loadEnv` **before** code libraries load (they load
+during dependency resolution), so the existing library-name conflict check
+fires naturally — `packages` starts as an empty placeholder and is replaced
+with the real read-only table once the package set is resolved (manifest-file
+COG therefore sees only the placeholder, documented); (b) the reservation was
+generalised: `buildTableSubscribers` now rejects a `publishContext` that would
+shadow **any** existing expression-environment name (`files`, `packages`,
+`versionSatisfies`, a code library, or a curated sandbox global) instead of
+silently clobbering it — closing a pre-existing latent bug for `files` too.
+Version is exposed as a plain string. Tests (4, in `manifest_loader_spec`):
+`=expr` cells reading `packages[...].version` / absent-package nil /
+`versionSatisfies`; a package validator branching on presence; the
+code-library collision failing the load; the `publishContext` shadow rejected.
+Documented under *Detecting Other Packages* in DATA_FORMAT_README. The `where`
+selector integration lands with Phase 2's tutorial compat package (same
+evaluation path as validators, already covered).
 
 **Phase 2 — `onlyIfPackages` descriptor column (§2.1).** The conditional-load
 mechanism. Registry-contributed column; gating inside

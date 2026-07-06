@@ -275,6 +275,127 @@ b1	2
       assert.same({"Ann", "Zed"}, result2.package_order)
     end)
 
+    it("should expose the loaded package set to expressions via `packages`", function()
+      -- TODO/mod_ecosystem.md §2.2 Phase 1: `packages` maps each loaded
+      -- package_id to {name, version}; an absent package indexes to nil; the
+      -- `versionSatisfies` helper compares versions. All three are visible to
+      -- =expr cells (and, through the same loadEnv, validators / COG / where
+      -- selectors).
+      local pkg_dir = path_join(temp_dir, "pkgctx")
+      assert(lfs.mkdir(pkg_dir))
+      local FILES_PKGCTX = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	loadOrder:number	description:text
+PkgInfo.tsv	PkgInfo		true	1	Package info via expressions
+]]
+      local DATA_PKGCTX = "name:identifier\tver:string\tabsent:boolean\tokVer:boolean\n"
+        .. "info\t=packages['Test'].version"
+        .. "\t=packages['NotLoaded'] == nil"
+        .. "\t=versionSatisfies('>=', '0.1.0', packages['Test'].version)\n"
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_PKGCTX))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "PkgInfo.tsv"), DATA_PKGCTX))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.is_true(result.validationPassed)
+
+      local info_file = nil
+      for file_name, tsv_data in pairs(result.tsv_files) do
+        if file_name:match("PkgInfo%.tsv$") then
+          info_file = tsv_data
+          break
+        end
+      end
+      assert.is_not_nil(info_file, "PkgInfo.tsv should be in tsv_files")
+      local row = info_file[2]
+      assert.is_not_nil(row, "PkgInfo.tsv should have a data row")
+      local ver, absent, okVer = row[2], row[3], row[4]
+      assert.is_not_nil(ver)
+      assert.is_not_nil(absent)
+      assert.is_not_nil(okVer)
+      assert.equals("0.1.0", ver.parsed)
+      assert.is_true(absent.parsed)
+      assert.is_true(okVer.parsed)
+    end)
+
+    it("should let a package validator branch on package presence", function()
+      -- A package validator reads `packages` through the same loadEnv as
+      -- every other validator: presence of a loaded package is truthy.
+      local pkg_dir = path_join(temp_dir, "pkgval")
+      assert(lfs.mkdir(pkg_dir))
+      local MANIFEST_VAL = [[package_id:package_id	Test
+name:string	Test Package
+version:version	0.1.0
+description:markdown	Package validator reads the packages context
+package_validators:{validator_spec}|nil	"packages['Test'] ~= nil or 'Test should see itself in packages'"
+]]
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_VAL))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "TestData.tsv"), TEST_DATA))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_not_nil(result)
+      assert.is_true(result.validationPassed)
+      assert.same({}, log_messages)
+    end)
+
+    it("should fail the load when a code library claims a reserved sandbox name", function()
+      -- `packages` (and `versionSatisfies`) are reserved expression-environment
+      -- names: they are seeded into loadEnv before code libraries load, so the
+      -- existing library-name conflict check fires loudly.
+      local pkg_dir = path_join(temp_dir, "pkglib")
+      assert(lfs.mkdir(pkg_dir))
+      local MANIFEST_LIB = [[package_id:package_id	Test
+name:string	Test Package
+version:version	0.1.0
+description:markdown	Claims the reserved 'packages' library name
+code_libraries:{{name,string}}|nil	{"packages","packages_lib.lua"}
+]]
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_LIB))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "packages_lib.lua"),
+        "return { dummy = function() return 1 end }\n"))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_DESC))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "TestData.tsv"), TEST_DATA))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      assert.is_nil(result)
+      local found = false
+      for _, msg in ipairs(log_messages) do
+        if tostring(msg):find("conflicts with existing environment variable", 1, true) then
+          found = true
+          break
+        end
+      end
+      assert.is_true(found, "expected the library-name conflict error")
+    end)
+
+    it("should reject a publishContext that shadows a reserved name", function()
+      -- Publishing a context attaches it to loadEnv by name; a name that
+      -- already exists there (`packages`, `files`, a code library, a curated
+      -- sandbox global) must error instead of silently clobbering it.
+      local pkg_dir = path_join(temp_dir, "pkgshadow")
+      assert(lfs.mkdir(pkg_dir))
+      local FILES_SHADOW = [[fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+TestData.tsv	TestData		true	packages	value	1	Shadows the reserved packages name
+]]
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST_TEST))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "files.tsv"), FILES_SHADOW))
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "TestData.tsv"), TEST_DATA))
+
+      local result = manifest_loader.processFiles({pkg_dir}, badVal)
+      local found = false
+      for _, msg in ipairs(log_messages) do
+        if tostring(msg):find("conflicts with an existing expression-environment name", 1, true) then
+          found = true
+          break
+        end
+      end
+      assert.is_true(found, "expected the publishContext conflict error")
+      -- The engine surface must survive: `packages` still holds the package set.
+      if result then
+        assert.is_not_nil(result.loadEnv.packages["Test"])
+      end
+    end)
+
     it("should handle enum files correctly", function()
       local pkg_dir = path_join(temp_dir, "enumpkg")
       assert(lfs.mkdir(pkg_dir))
