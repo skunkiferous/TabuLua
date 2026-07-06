@@ -506,8 +506,18 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
         end
     end
 
-    -- Build dependency graph
-    for package_id, manifest in pairs(packages) do
+    -- Build dependency graph. Iterate packages in sorted package-id order so
+    -- the edge lists are built deterministically; `pairs()` order over string
+    -- keys is randomized per process (Lua 5.2+ hash seed), which would make
+    -- the resulting load order of mutually-unrelated packages non-deterministic
+    -- between runs. See TODO/package_order_determinism.md.
+    local sorted_package_ids = {}
+    for package_id in pairs(packages) do
+        sorted_package_ids[#sorted_package_ids + 1] = package_id
+    end
+    table.sort(sorted_package_ids)
+    for _, package_id in ipairs(sorted_package_ids) do
+        local manifest = packages[package_id]
         for _, dep in ipairs(manifest.dependencies or {}) do
             if not packages[dep.package_id] then
                 logger:error("Missing dependency: " .. dep.package_id .. " for package " .. package_id)
@@ -563,7 +573,18 @@ local function topologicalSort(graph)
         return true
     end
 
+    -- Seed the DFS roots in sorted package-id order. Combined with the
+    -- deterministic edge lists from buildDependencyGraph, this makes the
+    -- topological order fully deterministic: packages unrelated by
+    -- `dependencies` / `load_after` load in alphabetical `package_id` order,
+    -- rather than in the randomized `pairs()` order of the graph table.
+    -- See TODO/package_order_determinism.md.
+    local roots = {}
     for node in pairs(graph) do
+        roots[#roots + 1] = node
+    end
+    table.sort(roots)
+    for _, node in ipairs(roots) do
         if not visited[node] then
             if not dfs(node, {}) then
                 return nil

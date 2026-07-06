@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- **Made package load order deterministic across runs.** The relative load order of two
+  packages *not* related by `dependencies` or `load_after` could previously differ between
+  runs of the same command on the same data: `buildDependencyGraph` and `topologicalSort`
+  iterated string-keyed tables with `pairs()`, whose order Lua 5.2+ randomizes per process
+  via the string-hash seed. Both now iterate in sorted `package_id` order, so unrelated
+  packages load in **alphabetical `package_id` order** — a stable tie-break that matches
+  the existing file-level rule (lowercased-path alphabetical). Dependency edges still
+  dominate. This makes every load order derived from `package_order` reproducible,
+  including mod-override conflict resolution (last-writer-wins) and the `--explain-patch`
+  / `--export-merged` diagnostics. Documented under Conflict Resolution in
+  `DATA_FORMAT_README.md`.
+
 ## [0.29.0] - 2026-06-20
 
 ### Changed

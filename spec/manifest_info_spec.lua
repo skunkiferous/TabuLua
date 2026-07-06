@@ -412,6 +412,63 @@ describe("manifest_info", function()
       assert.is_not_nil(packages)
       assert.same({}, load_order)
     end)
+
+    -- Builds a minimal, dependency-free manifest for a package with the given id.
+    local function minimalManifest(id)
+      return "package_id:package_id\t" .. id .. "\n"
+        .. "name:string\tThe " .. id .. " package\n"
+        .. "version:version\t0.1.0\n"
+        .. "description:markdown\tUnrelated package " .. id .. "\n"
+    end
+
+    -- Writes minimal manifests for the given ids (one per directory) and returns
+    -- the list of manifest file paths in the same order as `ids`.
+    local function writeUnrelatedPackages(ids)
+      local files = {}
+      for _, id in ipairs(ids) do
+        local dir = path_join(temp_dir, id)
+        lfs.mkdir(dir)
+        local f = path_join(dir, MANIFEST_FILENAME)
+        assert.is_true(file_util.writeFile(f, minimalManifest(id)), id .. " manifest")
+        files[#files + 1] = f
+      end
+      return files
+    end
+
+    it("should load mutually-unrelated packages in alphabetical package_id order", function()
+      -- Three packages with no dependencies / load_after between them. Their
+      -- relative order must be deterministic (alphabetical by package_id),
+      -- regardless of the order the manifest files are passed in.
+      -- Regression guard for TODO/package_order_determinism.md.
+      local files = writeUnrelatedPackages({"Delta", "Alpha", "Charlie", "Bravo"})
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, files)
+      assert.same({}, log_messages)
+      assert.same({"Alpha", "Bravo", "Charlie", "Delta"}, load_order)
+    end)
+
+    it("should produce the same order regardless of input file order", function()
+      -- Same set of unrelated packages, passed in two different orders, must
+      -- yield the identical (alphabetical) load order.
+      local order1 = manifest_info.resolveDependencies(badVal, {}, {}, {},
+        writeUnrelatedPackages({"one", "two", "three"}))
+      -- Fresh temp dir contents for the second run to avoid overlap errors.
+      local td2 = path_join(file_util.getSystemTempDir(), "lua_raw_tsv_test2_" .. os.time() .. "_" .. os.clock())
+      assert(lfs.mkdir(td2))
+      local files2 = {}
+      for _, id in ipairs({"three", "one", "two"}) do
+        local dir = path_join(td2, id)
+        lfs.mkdir(dir)
+        local f = path_join(dir, MANIFEST_FILENAME)
+        assert.is_true(file_util.writeFile(f, minimalManifest(id)))
+        files2[#files2 + 1] = f
+      end
+      local order2 = manifest_info.resolveDependencies(badVal, {}, {}, {}, files2)
+      file_util.deleteTempDir(td2)
+
+      assert.same({"one", "three", "two"}, order1)
+      assert.same(order1, order2)
+    end)
   end)
 
   describe("versionSatisfies", function()

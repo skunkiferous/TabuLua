@@ -2113,6 +2113,12 @@ overlays compose more gently: defaults are last-wins, type widenings are *unione
 suppressed validator takes the *lowest* severity any overlay asked for — so multiple mods
 loosening the same column rarely conflict.
 
+Package load order is fully deterministic. Dependency edges (`dependencies` /
+`load_after`) always dominate; two packages **not** related by any such edge load in
+**alphabetical `package_id` order**. This tie-break is stable across runs (it does not
+depend on filesystem or hash-table iteration order), so conflict resolution — and every
+diagnostic derived from it (`--explain-patch`, `--export-merged`) — is reproducible.
+
 ### Inspecting Overrides
 
 Two reformatter flags make the override layer observable (see [REFORMATTER.md](REFORMATTER.md)):
