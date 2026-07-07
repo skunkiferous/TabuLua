@@ -32,6 +32,9 @@ bootstrap:{{fn:name,library:name}}|nil	{fn="bootstrap",library="bossLib"}
 dependencies:{{package_id,cmp_version}}|nil	{"tutorial.core",">=1.0.0"}
 # LOAD_AFTER: ensures tutorial.core is fully loaded before this package.
 # This guarantees that core's enums, custom types, and published data are available.
-load_after:{package_id}|nil	"tutorial.core"
+# tutorial.seasons is NOT installed: a load_after on an absent package is a no-op.
+# It pairs with SeasonalPatch.tsv's onlyIfPackages="tutorial.seasons" gate in
+# Files.tsv — the optional-compatibility idiom (ordering half + presence half).
+load_after:{package_id}|nil	"tutorial.core","tutorial.seasons"
 # Package-level validator
 package_validators:{validator_spec}|nil	{expr="count(files) > 0 or 'expansion must have data files'",level="warn"}

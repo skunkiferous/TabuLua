@@ -1,0 +1,2 @@
+fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	publishContext:name|nil	publishColumn:name|nil	loadOrder:number	description:text
+Files.tsv	Files		true	Files		0	This file

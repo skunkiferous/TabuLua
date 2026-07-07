@@ -86,6 +86,10 @@ local MANIFEST_SPEC = [[{
     }}|nil,
     # Specifies the ids of packages that, if present, must be loaded *before* this package
     load_after:{package_id}|nil,
+    # Specifies the ids of packages this package is incompatible with: if any
+    # listed package is loaded alongside, the load fails. Symmetric by
+    # construction (either side declaring the conflict is enough).
+    conflicts:{package_id}|nil,
     # Package-level validators run after all files are loaded
     # Each validator is either a simple expression string (error level) or
     # a structured record {expr:expression, level:error_level|nil}
@@ -207,6 +211,11 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         manifest.load_after = readOnly(manifest.load_after)
     else
         manifest.load_after = nil
+    end
+    if manifest.conflicts and #manifest.conflicts > 0 then
+        manifest.conflicts = readOnly(manifest.conflicts)
+    else
+        manifest.conflicts = nil
     end
     if manifest.custom_types and next(unwrap(manifest.custom_types)) then
         manifest.custom_types = readOnly(manifest.custom_types)
@@ -543,6 +552,22 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
         for _, load_after_pkg in ipairs(manifest.load_after or {}) do
             if packages[load_after_pkg] then
                 table.insert(graph[package_id], load_after_pkg)
+            end
+        end
+        -- Declared incompatibilities: a load with both sides present fails.
+        -- Checked from every package's manifest, so the declaration is
+        -- symmetric by construction — either side declaring it is enough. A
+        -- conflict naming an absent package is silently vacuous (that is the
+        -- point: the declaration only bites when both are installed).
+        for _, conflict_pkg in ipairs(manifest.conflicts or {}) do
+            if conflict_pkg == package_id then
+                logger:error("Package " .. package_id
+                    .. " declares a conflict with itself")
+                fail = true
+            elseif packages[conflict_pkg] then
+                logger:error("Conflicting packages loaded together: " .. package_id
+                    .. " declares a conflict with " .. conflict_pkg)
+                fail = true
             end
         end
     end

@@ -1,0 +1,11 @@
+name:name	patchOp:patch_op	price:gold|nil	append_tags:{name}|nil
+# ^ Optional-compatibility demonstration (onlyIfPackages).
+# ^ This patch file is gated in Files.tsv with onlyIfPackages="tutorial.seasons",
+# ^ a package that is NOT part of the tutorial — so the loader SKIPS this file
+# ^ entirely: never parsed, never exported, exempt from the on-disk existence
+# ^ check. If a tutorial.seasons package were installed alongside, the row
+# ^ below would apply to core Item.tsv. The expansion manifest also lists
+# ^ tutorial.seasons in load_after — that pairing is the optional-compat
+# ^ idiom: load_after gives the ordering half (vacuous when the package is
+# ^ absent), onlyIfPackages the presence half.
+healthPotion	update	3	"winter_sale"

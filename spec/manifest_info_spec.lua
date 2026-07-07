@@ -103,6 +103,22 @@ description:markdown	The G package depends on F
 dependencies:{{package_id,cmp_version}}|nil	{'F','=0.1.0'}
 ]]
 
+-- Package H declares a conflict with A (incompatibility test)
+local PKG_H_CONFLICTS_A = [[package_id:package_id	H
+name:string	The H package
+version:version	0.1.0
+description:markdown	The H package is incompatible with A
+conflicts:{package_id}|nil	'A'
+]]
+
+-- Package I declares a conflict with itself (manifest error test)
+local PKG_I_SELF_CONFLICT = [[package_id:package_id	I
+name:string	The I package
+version:version	0.1.0
+description:markdown	The I package declares a conflict with itself
+conflicts:{package_id}|nil	'I'
+]]
+
 -- Manifest filename constant
 local MANIFEST_FILENAME = "Manifest.transposed.tsv"
 
@@ -509,6 +525,41 @@ describe("manifest_info", function()
       local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, files, rank)
       assert.same({}, log_messages)
       assert.same({"Charlie", "Alpha", "Bravo"}, load_order)
+    end)
+
+    it("should fail when conflicting packages are loaded together", function()
+      -- H declares conflicts={'A'}; loading both must fail. Symmetric by
+      -- construction: only H declares it, yet the combined load is rejected.
+      local a_file = path_join(temp_dir, 'a', MANIFEST_FILENAME)
+      lfs.mkdir(path_join(temp_dir, 'a'))
+      assert.is_true(file_util.writeFile(a_file, PKG_A))
+      local h_file = path_join(temp_dir, 'h', MANIFEST_FILENAME)
+      lfs.mkdir(path_join(temp_dir, 'h'))
+      assert.is_true(file_util.writeFile(h_file, PKG_H_CONFLICTS_A))
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, { a_file, h_file })
+      assert.is_nil(load_order)
+    end)
+
+    it("should ignore a conflict with an absent package", function()
+      -- The whole point of `conflicts`: it only bites when both packages are
+      -- installed. H alone (conflicting with the absent A) loads fine.
+      local h_file = path_join(temp_dir, 'h', MANIFEST_FILENAME)
+      lfs.mkdir(path_join(temp_dir, 'h'))
+      assert.is_true(file_util.writeFile(h_file, PKG_H_CONFLICTS_A))
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, { h_file })
+      assert.same({}, log_messages)
+      assert.same({"H"}, load_order)
+    end)
+
+    it("should reject a package that declares a conflict with itself", function()
+      local i_file = path_join(temp_dir, 'i', MANIFEST_FILENAME)
+      lfs.mkdir(path_join(temp_dir, 'i'))
+      assert.is_true(file_util.writeFile(i_file, PKG_I_SELF_CONFLICT))
+
+      local load_order = manifest_info.resolveDependencies(badVal, {}, {}, {}, { i_file })
+      assert.is_nil(load_order)
     end)
   end)
 

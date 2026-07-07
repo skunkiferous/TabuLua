@@ -316,6 +316,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local log = opts.log
     local variants = opts.variants
     local lcSkippedFiles = opts.lcSkippedFiles
+    local loadedPackages = opts.loadedPackages or {}
 
     local indicesByName = parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = indicesByName
@@ -326,6 +327,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local baseTypeIdx  = indicesByName.baseType
     local loadOrderIdx = indicesByName.loadOrder
     local variantIdx   = indicesByName.variant
+    local onlyIfIdx    = indicesByName.onlyIfPackages
 
     -- Registered optional columns the loader will populate into joinMeta.
     -- The per-column `parse` function (when set) normalises the raw cell
@@ -360,6 +362,34 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                     local variantVal = row[variantIdx] and row[variantIdx].parsed
                     if variantVal and variantVal ~= '' then
                         if not variants or not variants[variantVal] then
+                            if lcSkippedFiles then
+                                lcSkippedFiles[lcfn] = true
+                            end
+                            goto continue
+                        end
+                    end
+                end
+                -- Package gating (optional mod compatibility, see
+                -- TODO/mod_ecosystem.md §2.1): a row listing package ids in
+                -- `onlyIfPackages` is active only when EVERY listed package
+                -- is loaded. Otherwise it is skipped exactly like a
+                -- variant-filtered row above — no parse, no export, exempt
+                -- from the on-disk existence check. Skipping is logged with
+                -- the missing id so a user can see why a compat file (or a
+                -- typo'd gate) did not apply.
+                if onlyIfIdx then
+                    local required = row[onlyIfIdx] and row[onlyIfIdx].parsed
+                    if type(required) == "table" and #required > 0 then
+                        local missing = nil
+                        for _, package_id in ipairs(required) do
+                            if not loadedPackages[package_id] then
+                                missing = package_id
+                                break
+                            end
+                        end
+                        if missing then
+                            log:info("Skipping '" .. fn .. "' (onlyIfPackages): package '"
+                                .. missing .. "' is not loaded")
                             if lcSkippedFiles then
                                 lcSkippedFiles[lcfn] = true
                             end
@@ -623,6 +653,13 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         log = log,
         variants = variants,
         lcSkippedFiles = lcSkippedFiles,
+        -- The loaded-package set for `onlyIfPackages` gating: the same
+        -- published `packages` table expressions see (package_id ->
+        -- {name, version}), set by manifest_loader.processFiles after
+        -- dependency resolution — which always precedes descriptor loading.
+        -- A caller whose loadEnv has no `packages` gates everything off
+        -- (no packages known = every gated row skips).
+        loadedPackages = loadEnv and loadEnv.packages or nil,
     }
     for field, map in pairs(metaMaps) do
         opts[field] = map

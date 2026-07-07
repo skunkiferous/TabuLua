@@ -1,0 +1,5 @@
+package_id:package_id	test.conflict.omega
+name:string	Test Conflict Omega
+version:version	1.0.0
+description:markdown	Declares a conflict with alpha; loading both must fail
+conflicts:{package_id}|nil	'test.conflict.alpha'

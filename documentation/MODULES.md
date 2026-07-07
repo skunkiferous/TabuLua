@@ -328,7 +328,7 @@ File system operations including path manipulation, file reading/writing, and di
 ### files_desc
 **File:** [files_desc.lua](../loader/files_desc.lua)
 
-Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically.
+Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically. Two row-level gates run in `processFilesDesc` before a row takes effect: the `variant` filter and `onlyIfPackages` package gating (a row listing package ids is active only when every one is loaded — the declarative half of optional mod compatibility); a gated-off row's file is skipped like a variant-filtered one (not parsed, not exported, exempt from the existence check).
 
 **Dependencies:** builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring
 
@@ -401,7 +401,7 @@ Content-pipeline `transcode` stage that reads TabuLua's `--file=lua` export — 
 ### manifest_info
 **File:** [manifest_info.lua](../loader/manifest_info.lua)
 
-Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations. `resolveDependencies` computes the package load order with a greedy ranked topological sort (Kahn): `dependencies` / `load_after` edges always dominate, then a caller-supplied per-manifest rank (`opt_manifestRank` — [manifest_loader](#manifest_loader) passes each manifest's input-root position, giving a host application user-controlled load order by argument order), then alphabetical `package_id`. Fully deterministic; see `TODO/package_order_determinism.md`.
+Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations (`dependencies` with version constraints, `load_after` soft ordering, and `conflicts` — declared incompatibilities that fail the load when both packages are present). `resolveDependencies` computes the package load order with a greedy ranked topological sort (Kahn): `dependencies` / `load_after` edges always dominate, then a caller-supplied per-manifest rank (`opt_manifestRank` — [manifest_loader](#manifest_loader) passes each manifest's input-root position, giving a host application user-controlled load order by argument order), then alphabetical `package_id`. Fully deterministic; see `TODO/package_order_determinism.md`.
 
 **Dependencies:** error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model
 

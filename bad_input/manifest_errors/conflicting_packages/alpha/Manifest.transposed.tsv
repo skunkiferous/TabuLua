@@ -1,0 +1,4 @@
+package_id:package_id	test.conflict.alpha
+name:string	Test Conflict Alpha
+version:version	1.0.0
+description:markdown	Loaded together with omega, which declares a conflict with this package

@@ -36,9 +36,9 @@ compose.
 | --- | --- | --- | --- |
 | 1 | Mod hard-depends on another mod (library/framework mods, "requires Bob's Metals") | Factorio `dependencies`, Forge `depends`, RimWorld `loadAfter`+error | ✅ `dependencies` + version constraint |
 | 2 | Mod patches rows another mod **added** | Ubiquitous — balance mods over content mods | ✅ works: patches apply in package order; each apply re-indexes by PK, so rows added by an earlier mod are targetable (worth a dedicated spec, see Phase 7) |
-| 3 | **Optional compatibility**: mod B adjusts itself *if* mod A is present, works fine without | Factorio `? optional-dependency`, RimWorld `PatchOperationFindMod`, Stellaris compat patches folded into the mod | ⚠️ expression half landed 2026-07-06 (`packages` context, §2.2 / Phase 1); declarative file gating pending (§2.1 / Phase 2) |
+| 3 | **Optional compatibility**: mod B adjusts itself *if* mod A is present, works fine without | Factorio `? optional-dependency`, RimWorld `PatchOperationFindMod`, Stellaris compat patches folded into the mod | ✅ landed 2026-07-06: `packages` context (§2.2 / Phase 1) + `onlyIfPackages` file gating (§2.1 / Phase 2) |
 | 4 | Separate "A+B compatibility patch" mini-mod | The workaround every ecosystem uses where #3 is missing | ✅ a third package hard-depending on both |
-| 5 | Declared incompatibility ("this overhaul breaks with X") | Factorio `!mod`, Forge `breaks` | ❌ no `conflicts` field (§3) |
+| 5 | Declared incompatibility ("this overhaul breaks with X") | Factorio `!mod`, Forge `breaks` | ✅ `conflicts` manifest field (§3 / Phase 3, landed 2026-07-06) |
 | 6 | Player-visible conflict report ("which of my 40 mods touch the same thing?") | LOOT, Wrye Bash — entire third-party tools | ⚠️ lineage records it; `--explain-patch` shows one cell at a time; no conflicts-only report (§5) |
 | 7 | Compatibility patch spanning several base-game versions (rows come and go) | Common on slow-updating mods | ⚠️ `update`/`replace_oldvalue_` on a missing key is a hard error; tolerance was designed (mod_overrides.md §5.2) but deliberately left out of v1 (§6) |
 | 8 | Many mods naming files freely → name collisions | Namespacing by mod id (Minecraft `modid:item`, Factorio prototype names) | ⚠️ `patchOf`/`schemaOverlayOf`/`bulkPatchOf`/`joinInto` resolve by **basename only**; on collision "last file wins (arbitrary)" per the comment in `patch_executor.applyPatches` (§4) |
@@ -302,20 +302,42 @@ Documented under *Detecting Other Packages* in DATA_FORMAT_README. The `where`
 selector integration lands with Phase 2's tutorial compat package (same
 evaluation path as validators, already covered).
 
-**Phase 2 — `onlyIfPackages` descriptor column (§2.1).** The conditional-load
-mechanism. Registry-contributed column; gating inside
-`files_desc.processFilesDesc` via the variant-skip path; info-level skip
-logging. Tests: conditional patch applies when the package is present and is
-skipped (whole load green) when absent; conditional *data* file likewise;
-skipped file exempt from the on-disk existence check; `load_after` +
-`onlyIfPackages` idiom in the tutorial (a small `compat` package).
+**Phase 2 — `onlyIfPackages` descriptor column (§2.1). ✅ LANDED (2026-07-06).**
+As designed: column registered via the type-wiring registry (module
+`package_gating`, `fieldOnMeta=lcFn2OnlyIfPackages`, type
+`{package_id}|nil`); gating runs in `files_desc.processFilesDesc` directly
+after the variant filter, reusing the `lcSkippedFiles` machinery, keyed on the
+same published `packages` set expressions see (threaded as
+`opts.loadedPackages` from the `loadEnv` the function already received —
+dependency resolution always precedes descriptor loading, so the set is
+final). Info-level skip log names the missing id. New
+`spec/only_if_packages_spec.lua` (2 integration tests over a core+mod fixture)
+covers: gated patch + gated bulk_patch (whose `where` reads `packages` — the
+ME-P1 deferred integration) applying when the required package is loaded;
+AND semantics (a two-package gate with one absent skips); a gated row whose
+file doesn't exist on disk raising no existence error; and the headline
+scenario — the mod loading standalone with its whole compat layer quietly
+deactivated, no "patch target not found". Tutorial: rather than a third
+package, `tutorial/expansion/SeasonalPatch.tsv` is gated on the not-installed
+`tutorial.seasons` package, and the expansion manifest adds it to `load_after`
+— demonstrating the full idiom (and that `load_after` on an absent package is
+a no-op). One scope note: because a skipped row exits before descriptor-column
+storage, `lcFn2OnlyIfPackages` only holds entries for *active* gated rows —
+the Phase 7 typo heuristic will need to read gate ids from the skipped rows'
+cells instead of that map.
 
-**Phase 3 — `conflicts` manifest field (§3).** Depends on
-[package_order_determinism.md](package_order_determinism.md) Phase 1 landing
-first only in spirit (conflict *semantics* assume stable order); code-wise
-independent. MANIFEST_SPEC addition + check in `buildDependencyGraph`. Tests:
-both-loaded errors naming both packages; absent conflict target is silent;
-self-conflict is a manifest error.
+**Phase 3 — `conflicts` manifest field (§3). ✅ LANDED (2026-07-06).** As
+designed: `conflicts:{package_id}|nil` in MANIFEST_SPEC (normalised like
+`load_after` in `extractManifestFromTSV`), checked in `buildDependencyGraph`'s
+sorted per-package loop — both-loaded → "Conflicting packages loaded together"
+error naming both sides, absent target silently vacuous, self-conflict a
+manifest error. Symmetric by construction (every loaded manifest's list is
+checked). Version-ranged conflicts stay deferred as designed. Tests: 3 in
+`manifest_info_spec` plus a new bad-input fixture
+`bad_input/manifest_errors/conflicting_packages` (CLI-mode case — `args.txt`
+passing the two package directories, since a data-mode case dir can hold only
+one package). No tutorial change (a conflict fails the load; nothing
+demonstrable in a shipping tutorial).
 
 **Phase 4 — ambiguous-target warning + qualified targeting (§4).** Step 1
 (warning) can ship alone if step 2 grows. Tests: two packages shipping the

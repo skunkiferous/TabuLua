@@ -1,0 +1,1 @@
+--log-level=error bad_input/manifest_errors/conflicting_packages/alpha bad_input/manifest_errors/conflicting_packages/omega

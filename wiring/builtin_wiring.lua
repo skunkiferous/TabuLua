@@ -290,6 +290,23 @@ type_wiring.registerModule("variants", {
     },
 })
 
+-- Conditional file loading for optional mod compatibility
+-- (TODO/mod_ecosystem.md §2.1). A Files.tsv row listing package ids in
+-- `onlyIfPackages` is active only when EVERY listed package is loaded (AND);
+-- otherwise the row is skipped exactly like a variant-filtered row — the file
+-- is not parsed, not exported, and exempt from the on-disk existence check.
+-- This lets a mod ship a patch / overlay / data file that targets another mod
+-- and quietly deactivates when that mod is absent. The gating itself runs in
+-- files_desc.processFilesDesc (same spot as `variant`); the column registers
+-- here so header recognition and the joinMeta map lifecycle stay
+-- registry-driven. (`package_id` is the manifest alias for `name`.)
+type_wiring.registerModule("package_gating", {
+    descriptorColumns = {
+        {name = "onlyIfPackages", type = "{package_id}|nil",
+         fieldOnMeta = "lcFn2OnlyIfPackages", parse = listOrNil},
+    },
+})
+
 type_wiring.registerModule("validators", {
     descriptorColumns = {
         {name = "rowValidators",  type = "{validator_spec}|nil",

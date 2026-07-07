@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Declared package incompatibility: the `conflicts` manifest field.** A package
+  manifest may now list package ids in `conflicts:{package_id}|nil`: if any listed
+  package is loaded alongside, the load **fails** with an explicit
+  "Conflicting packages loaded together" error naming both sides — instead of two
+  incompatible mods (e.g. two total overhauls) silently composing via last-writer-wins.
+  The check is symmetric by construction (every loaded manifest's `conflicts` list is
+  checked, so either side declaring it is enough), a conflict naming an **absent**
+  package is silently vacuous (the declaration only bites when both are installed),
+  and a self-conflict is a manifest error. Mirrors Factorio's `!mod` / Forge's
+  `breaks`. Checked in `manifest_info.buildDependencyGraph` where both manifests are
+  in hand. Phase 3 of `TODO/mod_ecosystem.md`; documented under *Manifest Fields* in
+  `DATA_FORMAT_README.md`. New bad-input fixture
+  `bad_input/manifest_errors/conflicting_packages` plus 3 `manifest_info_spec` tests.
+
+- **Conditional file loading: the `onlyIfPackages` Files.tsv column — the declarative
+  half of optional mod compatibility.** A `Files.tsv` row listing package ids in a new
+  optional `onlyIfPackages:{package_id}|nil` column is active only when **every**
+  listed package is loaded (AND semantics; use two rows for OR). When any listed
+  package is absent the row is skipped exactly like a variant-filtered row: the file
+  is not parsed, not exported, exempt from the on-disk existence check, and — the
+  point for compat patches — a gated `patchOf` / `bulkPatchOf` / `schemaOverlayOf`
+  whose target lives in the absent package no longer kills the load with "patch target
+  not found". Each skip logs the missing id at info level. Combined with `load_after`
+  (the ordering half, a no-op when the package is absent) this is the
+  **optional-compatibility idiom**: a mod ships built-in support for another mod that
+  quietly deactivates when that mod is not installed, replacing the separate
+  "A+B compatibility patch" package that ecosystems without conditionals force on
+  authors. Applies to any file kind (patches, overlays, bulk patches, data, joins).
+  The column registers through the type-wiring registry (module `package_gating`);
+  the gating runs beside the variant filter in `files_desc.processFilesDesc`, keyed
+  on the same published `packages` set expressions see. Tutorial:
+  `tutorial/expansion/SeasonalPatch.tsv` is gated on the not-installed
+  `tutorial.seasons` package (and the expansion manifest pairs it with `load_after`).
+  Phase 2 of `TODO/mod_ecosystem.md`; documented under *Conditional Files* in
+  `DATA_FORMAT_README.md`. New `spec/only_if_packages_spec.lua` covers the
+  gated-compat load in both directions (required package present → patch + bulk
+  `where` reading `packages` apply; absent → whole compat layer skips, load green).
+
 - **Expressions can detect other loaded packages (`packages` + `versionSatisfies`) —
   the expression half of optional mod compatibility.** Every sandbox surface that sees
   the load environment — `=expr` cells, COG blocks, row / file / package validators,

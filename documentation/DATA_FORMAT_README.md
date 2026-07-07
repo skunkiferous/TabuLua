@@ -1527,6 +1527,7 @@ Since the file has only a single data row and multiple values can be quite long,
 | `bootstrap` | `{{fn:name,library:name}}\|nil` | Functions invoked once at engine init with the type-wiring registration `api` — see [Type Wiring](#type-wiring-attaching-behaviour-to-a-type) |
 | `dependencies` | `{{package_id,cmp_version}}\|nil` | Package dependencies with version requirements |
 | `load_after` | `{package_id}\|nil` | IDs of packages that must be loaded before this one (if present) |
+| `conflicts` | `{package_id}\|nil` | IDs of packages this package is **incompatible** with: if any listed package is loaded alongside, the load fails with an error. Symmetric — either side declaring the conflict is enough; a conflict naming an absent package is silently vacuous. Use for mods that cannot meaningfully compose (e.g. two total overhauls), instead of letting last-writer-wins silently pick one. A self-conflict is a manifest error. |
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
 | `preProcessors` | `{processor_spec}\|nil` | Package-scoped pre-processors that mutate the merged-and-patched state of every file after patches and before validators (see [Mod Overrides](#mod-overrides)) |
 | `variant_groups` | `{{name,{name},name\|nil}}\|nil` | Declares groups of mutually exclusive variant names with optional default (see [Variant Group Validation](#variant-group-validation)) |
@@ -2133,12 +2134,41 @@ versionSatisfies(">=", "2.0.0", packages["some.mod"].version)
 ```
 
 This is the *expression half* of optional mod compatibility: a bulk-patch `where`
-selector or a validator can branch on another mod's presence or version. (Declarative
-gating — skipping a whole file when a package is absent — is planned separately; see
-`TODO/mod_ecosystem.md`.) Two caveats: **manifest-file** COG blocks cannot see
+selector or a validator can branch on another mod's presence or version. The
+*declarative half* — skipping a whole file when a package is absent — is
+`onlyIfPackages`, below. Two caveats: **manifest-file** COG blocks cannot see
 `packages` (manifests load while the package set is still being resolved), and
 `packages` / `versionSatisfies` are **reserved names** — a code library or
 `publishContext` claiming either fails the load.
+
+### Conditional Files (`onlyIfPackages`)
+
+A `Files.tsv` row may list package ids in an optional `onlyIfPackages` column:
+
+```tsv
+fileName:filepath	typeName:type_spec	patchOf:filepath|nil	onlyIfPackages:{package_id}|nil
+SeasonalPatch.tsv	patch	Item.tsv	"some.seasons.mod"
+```
+
+The row is active only when **every** listed package is loaded (a list is an AND; for
+OR, use two rows). When any listed package is absent, the row is skipped exactly like
+a variant-filtered row: the file is **not parsed, not exported, and exempt from the
+on-disk existence check** — and, crucially for compat patches, a gated `patchOf` /
+`bulkPatchOf` / `schemaOverlayOf` target that only exists in the absent package does
+**not** produce a "target not found" error. Each skip is logged at info level with the
+missing package id.
+
+This is the **optional-compatibility idiom**: a mod ships built-in support for another
+mod that activates only when that mod is installed, instead of publishing a separate
+"A+B compatibility patch" package. Pair the gate with a manifest
+`load_after: {"the.other.mod"}` — `load_after` supplies the *ordering* half (a no-op
+when the package is absent), `onlyIfPackages` the *presence* half. The tutorial
+demonstrates this with `tutorial/expansion/SeasonalPatch.tsv`, gated on the
+not-installed `tutorial.seasons` package.
+
+One sharp edge: a **misspelled package id** is indistinguishable from an absent
+package — the file is silently (info-log only) skipped forever. Check the log line if
+a compat file unexpectedly fails to apply.
 
 ### Conflict Resolution
 
@@ -2147,6 +2177,10 @@ When two packages override the same thing, **package load order decides** (deriv
 overlays compose more gently: defaults are last-wins, type widenings are *unioned*, and a
 suppressed validator takes the *lowest* severity any overlay asked for — so multiple mods
 loosening the same column rarely conflict.
+
+For packages that should never compose at all (say, two total overhauls of the same
+base game), a manifest can declare `conflicts` (see *Manifest Fields*): loading both
+fails with an explicit error instead of last-writer-wins silently picking a winner.
 
 Package load order is fully deterministic — and, for unrelated packages,
 **user-controllable**. Dependency edges (`dependencies` / `load_after`) always dominate:
