@@ -1097,9 +1097,10 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `fileValidators` | `{validator_spec}\|nil` | Validators run on the complete file |
 | `preProcessors` | `{processor_spec}\|nil` | Pre-processors run on parsed rows before validation (see [Pre-Processors](#pre-processors)) |
 | `variant` | `name\|nil` | Variant tag for conditional file inclusion (see [Variant-Based Conditional File Inclusion](#variant-based-conditional-file-inclusion)) |
-| `schemaOverlayOf` | `filepath\|nil` | Marks this file as a schema overlay on the named parent file (see [Mod Overrides](#mod-overrides)) |
-| `patchOf` | `filepath\|nil` | Marks this file as a row patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
-| `bulkPatchOf` | `filepath\|nil` | Marks this file as a filter/transform (bulk) patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `onlyIfPackages` | `{package_id}\|nil` | Row is active only when every listed package is loaded — optional mod compatibility (see [Conditional Files](#conditional-files-onlyifpackages)) |
+| `schemaOverlayOf` | `filepath\|nil` (or `override_target\|nil`) | Marks this file as a schema overlay on the named parent file (see [Mod Overrides](#mod-overrides); the `override_target` spelling allows a `package.id:` qualifier — see *Targeting a Parent File*) |
+| `patchOf` | `filepath\|nil` (or `override_target\|nil`) | Marks this file as a row patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `bulkPatchOf` | `filepath\|nil` (or `override_target\|nil`) | Marks this file as a filter/transform (bulk) patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
 
 ### Publishing Data
 
@@ -2088,6 +2089,33 @@ Two consequences worth internalising:
 - **Validators run once, at the end, against the final state.** A parent validator is
   re-applied to the patched data, so a mod that introduces a violation is caught loudly
   (unless a schema overlay downgraded that validator).
+
+### Targeting a Parent File
+
+`schemaOverlayOf` / `patchOf` / `bulkPatchOf` name their parent file by **basename** —
+any directory prefix in the value is ignored, and the target binds to exactly **one**
+loaded file. When two loaded packages ship the same file name, an unqualified target is
+**ambiguous**: it resolves deterministically to the alphabetically-first full name, with
+a warning naming every candidate. To bind the target to a specific package's file,
+**qualify it with the package id**:
+
+```tsv
+fileName:filepath	typeName:type_spec	patchOf:override_target|nil
+SharedPatch.tsv	patch	some.mod:Shared.tsv
+```
+
+The qualifier is the owning `package_id` before a `:` (matched case-insensitively;
+ownership is by directory, the same rule package processors use). Because `:` is not a
+legal `filepath` character, the qualified form needs the column declared with the
+**`override_target`** type (a filepath optionally prefixed with a package qualifier) —
+the plain `filepath|nil` spelling remains valid for unqualified targets, and both
+header spellings are recognised. A qualifier naming an unloaded package, or a package
+that owns no such file, is a load error; a target basename no loaded file has is a load
+error too (gate the row with `onlyIfPackages` when the target belongs to an optional
+package — see *Conditional Files*).
+
+(`joinInto` is different: it targets the **full path as listed in `fileName`**, not a
+basename, so it does not take a package qualifier.)
 
 ### Downstream `=expr` Recompute
 

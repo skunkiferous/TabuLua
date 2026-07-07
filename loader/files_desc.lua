@@ -181,9 +181,16 @@ local function parseFilesDescHeader(file_name, file, log)
     local indicesByName = {}
     local optCols = descriptorColumnsByName()
     -- Build a header-string lookup for registry columns: "name:type" -> decl.
+    -- A declaration may list alternative accepted type spellings (altTypes) —
+    -- e.g. the override target columns accept both the default filepath|nil
+    -- and the opt-in override_target|nil that allows a 'package.id:'
+    -- qualifier. The cell still parses under the type the file declares.
     local optByHeader = {}
     for _, decl in pairs(optCols) do
         optByHeader[decl.name .. ":" .. decl.type] = decl
+        for _, alt in ipairs(decl.altTypes or {}) do
+            optByHeader[decl.name .. ":" .. alt] = decl
+        end
     end
     for idx, col in ipairs(header) do
         local colStr = tostring(col)

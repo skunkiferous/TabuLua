@@ -533,10 +533,42 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
     end
 end
 
+-- Builds a map from each loaded data file (full tsv_files key) to the id of the
+-- package that owns it. Ownership is by directory: a file belongs to the package
+-- whose root (the manifest's directory) is the longest path prefix of the file's
+-- directory — the same rule files_desc.matchDescriptorFiles uses for Files.tsv.
+-- `names` is any table whose KEYS are the file names (tsv_files, or a plain set).
+local function buildFileToPackage(packages, names)
+    local paths = {}
+    local path2pkg = {}
+    for pid, pkg in pairs(packages) do
+        local root = (file_util.getParentPath(pkg.path) or ""):lower()
+        paths[#paths + 1] = root
+        path2pkg[root] = pid
+    end
+    local fn2pkg = {}
+    for file_name in pairs(names) do
+        local parent = (file_util.getParentPath(file_name) or ""):lower()
+        local pid = path2pkg[parent]
+        if not pid then
+            -- Subdirectory of a package: longest matching root prefix wins.
+            local best = ""
+            for _, root in ipairs(paths) do
+                if #root > #best and parent:sub(1, #root) == root then
+                    best = root
+                end
+            end
+            pid = path2pkg[best]
+        end
+        fn2pkg[file_name] = pid
+    end
+    return fn2pkg
+end
+
 -- Process files once the order has been established.
 -- Returns the TSV files and join metadata.
 local function processOrderedFiles(badVal, files, file2dir, desc_files_order, desc_file2pkg_id,
-    raw_files, loadEnv, opt_variants)
+    raw_files, loadEnv, opt_variants, packages)
     local priorities = {}
     local post_proc_files = {}
     local extends = {}
@@ -638,7 +670,7 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         tsv_files[desc_file[1].__source] = desc_file
     end
     -- Schema overlays: collect every overlay file (now that `files` is in load
-    -- order, so newDefault last-writer-wins is correct) and parse them ahead of the
+    -- order, so newDefault last-wins is correct) and parse them ahead of the
     -- main load loop. The resulting per-target column overrides (widenTo /
     -- newDefault) are threaded into each target file's parse.
     local overlayFiles = {}
@@ -647,9 +679,57 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             overlayFiles[#overlayFiles + 1] = fn
         end
     end
+    -- Overlay-target resolver (pre-parse): the same deterministic, optionally
+    -- 'package.id:'-qualified resolution patches use, but over the relative
+    -- file keys the overlay application looks up (computeFilenameKey space) —
+    -- so an overlay binds to exactly ONE file even when two packages ship the
+    -- same basename (previously both were silently overlaid). A missing target
+    -- is a reported error (mod_ecosystem §4; gate the overlay row with
+    -- onlyIfPackages when its target belongs to an optional package).
+    local resolveOverlayTarget = nil
+    if #overlayFiles > 0 then
+        local relKeySet, relKey2pkg = {}, {}
+        local fullSet = {}
+        for _, fn in ipairs(files) do fullSet[fn] = true end
+        local full2pkg = buildFileToPackage(packages or {}, fullSet)
+        for _, fn in ipairs(files) do
+            local key = computeFilenameKey(fn, file2dir)
+            relKeySet[key] = true
+            relKey2pkg[key] = full2pkg[fn]
+        end
+        local resolve = patch_executor.newTargetResolver(relKeySet, relKey2pkg)
+        resolveOverlayTarget = function(target, sourceFile)
+            local resolved, info = resolve(target)
+            if not resolved then
+                local reason = info and info.reason
+                badVal.source_name = sourceFile
+                badVal.line_no = 0
+                if reason == "not_in_package" then
+                    badVal(target, "schema overlay target '" .. target
+                        .. "': package '" .. info.pkg
+                        .. "' is not loaded or owns no such file")
+                else
+                    badVal(target, "schema overlay target '" .. target
+                        .. "' not found (must match a loaded file by basename,"
+                        .. " optionally qualified as 'package.id:Name.tsv')")
+                end
+                return nil
+            end
+            if info and info.ambiguous then
+                local _, targetBase = patch_executor.splitQualifiedTarget(target)
+                logger:warn(sourceFile .. ": schema overlay target '" .. target
+                    .. "' is ambiguous — candidates: "
+                    .. table.concat(info.ambiguous, ", ")
+                    .. "; using '" .. resolved
+                    .. "' (qualify the target as 'package.id:" .. targetBase
+                    .. "' to disambiguate)")
+            end
+            return resolved
+        end
+    end
     local schemaOverlays = schema_overlay.collectOverlays(overlayFiles, file2dir,
         computeFilenameKey, lcFn2SchemaOverlayOf, lcFn2Transcoder,
-        raw_files, loadEnv, badVal)
+        raw_files, loadEnv, badVal, resolveOverlayTarget)
     -- Row patches: build the apply plan in load order (so newDefault /
     -- last-writer-wins is deterministic). Each entry pairs a patch file with the
     -- basename of the parent file it targets; patch_executor.applyPatches consumes
@@ -668,7 +748,15 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             kind = "bulk"
         end
         if target then
-            local targetBase = (target:match("[/\\]([^/\\]+)$") or target):lower()
+            -- Preserve an optional 'package.id:' qualifier (mod_ecosystem §4);
+            -- the file part reduces to its lowercased basename either way,
+            -- matching patch_executor's resolution convention.
+            local qual, rest = target:match("^([^:/\\]+):(.+)$")
+            local filePart = rest or target
+            local targetBase = (filePart:match("[/\\]([^/\\]+)$") or filePart):lower()
+            if qual then
+                targetBase = qual:lower() .. ":" .. targetBase
+            end
             patchPlan[#patchPlan + 1] = {file = fn, target = targetBase, kind = kind}
         end
     end
@@ -954,37 +1042,6 @@ local function runAllPreProcessors(tsv_files, joinMeta, loadEnv, badVal)
     return allOk, allWarnings
 end
 
--- Builds a map from each loaded data file (full tsv_files key) to the id of the
--- package that owns it. Ownership is by directory: a file belongs to the package
--- whose root (the manifest's directory) is the longest path prefix of the file's
--- directory — the same rule files_desc.matchDescriptorFiles uses for Files.tsv.
-local function buildFileToPackage(packages, tsv_files)
-    local paths = {}
-    local path2pkg = {}
-    for pid, pkg in pairs(packages) do
-        local root = (file_util.getParentPath(pkg.path) or ""):lower()
-        paths[#paths + 1] = root
-        path2pkg[root] = pid
-    end
-    local fn2pkg = {}
-    for file_name in pairs(tsv_files) do
-        local parent = (file_util.getParentPath(file_name) or ""):lower()
-        local pid = path2pkg[parent]
-        if not pid then
-            -- Subdirectory of a package: longest matching root prefix wins.
-            local best = ""
-            for _, root in ipairs(paths) do
-                if #root > #best and parent:sub(1, #root) == root then
-                    best = root
-                end
-            end
-            pid = path2pkg[best]
-        end
-        fn2pkg[file_name] = pid
-    end
-    return fn2pkg
-end
-
 -- Topologically orders the loaded packages, refining the load order by the
 -- `requires` edges declared on package-scoped processors. An edge Q->P means
 -- "package Q's package-scoped processors must run before P's". Edges
@@ -1073,7 +1130,8 @@ end
 -- (b) runs the package's manifest-declared package-scoped processors with write
 -- access scoped to files it owns or has declared patches for.
 -- Returns (ok, warnings).
-local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package_order, loadEnv, badVal, opt_lineage)
+local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package_order, loadEnv, badVal, opt_lineage,
+    opt_fn2pkg)
     local lcFn2PreProcessors = joinMeta.lcFn2PreProcessors or {}
     local patchPlan = joinMeta.patchPlan or {}
 
@@ -1103,15 +1161,13 @@ local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package
         return true, {}
     end
 
-    local fn2pkg = buildFileToPackage(packages, tsv_files)
+    local fn2pkg = opt_fn2pkg or buildFileToPackage(packages, tsv_files)
 
-    -- Resolve patch targets (basename) to full file names, and accumulate the
-    -- write scope of each package: files it owns + files it patches.
-    local base2fn = {}
-    for file_name in pairs(tsv_files) do
-        local base = (file_name:match("[/\\]([^/\\]+)$") or file_name):lower()
-        base2fn[base] = file_name
-    end
+    -- Resolve patch targets to full file names (same deterministic,
+    -- optionally package-qualified resolution applyPatches used — see
+    -- patch_executor.newTargetResolver), and accumulate the write scope of
+    -- each package: files it owns + files it patches.
+    local resolveTarget = patch_executor.newTargetResolver(tsv_files, fn2pkg)
     local writableByPkg = {}
     local function grantWrite(pid, fn)
         if not pid or not fn then return end
@@ -1123,7 +1179,7 @@ local function runAllPackagePreProcessors(tsv_files, joinMeta, packages, package
     end
     for _, entry in ipairs(patchPlan) do
         local ownerPid = fn2pkg[entry.file]
-        grantWrite(ownerPid, base2fn[entry.target])
+        grantWrite(ownerPid, (resolveTarget(entry.target)))
     end
 
     local order = schedulePackageProcessors(package_order, pkgProcessors, badVal)
@@ -1395,7 +1451,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
 
     local tsv_files, joinMeta = processOrderedFiles(badVal, files, file2dir,
         desc_files_order, desc_file2pkg_id,
-        raw_files, loadEnv, opt_variants)
+        raw_files, loadEnv, opt_variants, packages)
 
     loadRemainingFiles(files, raw_files)
     mergeManifestFiles(tsv_files, manifest_tsv_files)
@@ -1435,8 +1491,13 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         schema_overlay.recordLineage(joinMeta.schemaOverlays, lineage)
     end
 
+    -- File ownership (tsv_files key -> package id), computed once and shared by
+    -- the patch executor (package-qualified targets, ambiguity diagnostics) and
+    -- the package-scoped processor write scope below.
+    local fn2pkg = buildFileToPackage(packages, tsv_files)
+
     local patchesOk, patchedTargets = patch_executor.applyPatches(
-        tsv_files, joinMeta.patchPlan, loadEnv, badVal, lineage)
+        tsv_files, joinMeta.patchPlan, loadEnv, badVal, lineage, fn2pkg)
     joinMeta.patchedTargets = patchedTargets
 
     -- Recompute downstream `=expr` cells whose same-row inputs an override changed
@@ -1458,7 +1519,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     -- rerunAfterPatches re-derives against the patched data. Runs after patches,
     -- before validators, in requires-refined package load order.
     local pkgProcessorsOk, pkgProcessorWarnings = runAllPackagePreProcessors(
-        tsv_files, joinMeta, packages, package_order, loadEnv, badVal, lineage)
+        tsv_files, joinMeta, packages, package_order, loadEnv, badVal, lineage, fn2pkg)
 
     -- Second recompute pass: recompute again after the processors, now that they may
     -- have changed more cells. `dirtyCells()` includes their writes too.

@@ -309,6 +309,26 @@ local function isPath(v)
     return true
 end
 
+--- Checks if a string is a valid file path optionally prefixed with a
+--- "<package_id>:" qualifier — the syntax of the mod-override target columns
+--- (patchOf / bulkPatchOf / schemaOverlayOf, see TODO/mod_ecosystem.md §4).
+--- The qualifier is everything before the first ':'; it must be non-empty and
+--- contain no path separator, and what follows must be a valid path. A value
+--- with no ':' is a plain path. ':' can never appear in a plain path (per
+--- isPath/isFileName), so the two forms cannot be confused.
+--- @param v any The value to check
+--- @return boolean True if v is a valid (optionally qualified) path
+local function isQualifiedPath(v)
+    if type(v) ~= "string" then
+        return false
+    end
+    local qual, rest = v:match("^([^:/\\]+):(.+)$")
+    if qual then
+        return isPath(rest)
+    end
+    return isPath(v)
+end
+
 -- Returns true if the value is a blank string
 local function isBlankStr(s)
     return type(s) == "string" and (s:gsub("^%s*(.-)%s*$", "%1") == "")
@@ -494,6 +514,7 @@ local API = {
     isNumber=isNumber,
     isPath=isPath,
     isPercent=isPercent,
+    isQualifiedPath=isQualifiedPath,
     isReservedName=isReservedName,
     isTupleFieldName=isTupleFieldName,
     isPositiveInteger=isPositiveInteger,

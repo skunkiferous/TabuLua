@@ -327,9 +327,16 @@ type_wiring.registerModule("pre_processors", {
 -- parent file by basename — same lookup convention as joinInto / edgesFor —
 -- and loosens that file's column metadata before its cells are parsed. The
 -- value lowercases for case-insensitive basename matching.
+-- The three override target columns accept an alternative declared type,
+-- `override_target|nil`, which additionally allows a 'package.id:' qualifier
+-- ("some.pkg:Item.tsv") binding the target to one package's file when two
+-- packages ship the same file name (TODO/mod_ecosystem.md §4). The default
+-- `filepath|nil` spelling stays valid for unqualified targets (':' does not
+-- parse as part of a filepath, which is also why the qualifier is unambiguous).
 type_wiring.registerModule("schema_overlay", {
     descriptorColumns = {
         {name = "schemaOverlayOf", type = "filepath|nil",
+         altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2SchemaOverlayOf", parse = lowerOrNil},
     },
 })
@@ -343,11 +350,13 @@ parsers.registerEnumParser(nullBadVal, {"add", "remove", "update", "replace"}, "
 type_wiring.registerModule("row_patch", {
     descriptorColumns = {
         {name = "patchOf", type = "filepath|nil",
+         altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2PatchOf", parse = lowerOrNil},
         -- Bulk filter/transform patches: a file
         -- with `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` selects parent
         -- rows by a `where` expression and updates/removes the matches.
         {name = "bulkPatchOf", type = "filepath|nil",
+         altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2BulkPatchOf", parse = lowerOrNil},
     },
 })

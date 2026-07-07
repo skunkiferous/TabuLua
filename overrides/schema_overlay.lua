@@ -192,7 +192,8 @@ end
 -- collected file_name to its lowercased relative key, matching how the
 -- descriptor maps are keyed.
 local function collectOverlays(overlayFiles, file2dir, computeKey,
-    lcFn2SchemaOverlayOf, lcFn2Transcoder, raw_files, loadEnv, badVal)
+    lcFn2SchemaOverlayOf, lcFn2Transcoder, raw_files, loadEnv, badVal,
+    opt_resolveTarget)
     local overlays = {}
     if not overlayFiles or #overlayFiles == 0 then
         return overlays
@@ -204,19 +205,36 @@ local function collectOverlays(overlayFiles, file2dir, computeKey,
         local target = lcFn2SchemaOverlayOf[key]
         if target then
             badVal.source = file_name
-            ingestOverlayFile(overlays, file_name, basename(target),
-                lcFn2Transcoder[key], raw_files, loadEnv, expr_eval, badVal)
+            -- With a resolver (the engine path), the target — optionally
+            -- 'package.id:'-qualified — resolves to the ONE relative file key
+            -- it applies to, so same-basename files in two packages are no
+            -- longer both overlaid; nil means the resolver already reported
+            -- an error and this overlay file is skipped. Without a resolver
+            -- (direct API use), fall back to keying by bare basename, the
+            -- pre-qualification behaviour.
+            local resolvedKey
+            if opt_resolveTarget then
+                resolvedKey = opt_resolveTarget(target, file_name)
+            else
+                resolvedKey = basename(target)
+            end
+            if resolvedKey then
+                ingestOverlayFile(overlays, file_name, resolvedKey,
+                    lcFn2Transcoder[key], raw_files, loadEnv, expr_eval, badVal)
+            end
         end
     end
     return overlays
 end
 
--- Returns the per-column override map for a target file (keyed by basename),
--- in the {colName = {widenTo=?, newDefault=?}} shape tsv_model expects, or
--- nil when the file has no overlay. `targetKey` is the file's relative key.
+-- Returns the per-column override map for a target file, in the
+-- {colName = {widenTo=?, newDefault=?}} shape tsv_model expects, or nil when
+-- the file has no overlay. `targetKey` is the file's relative key; overlays
+-- are keyed by resolved relative key (engine path) or bare basename
+-- (resolver-less direct API use), so both are tried.
 local function columnOverridesFor(overlays, targetKey)
     if not overlays then return nil end
-    local tgt = overlays[basename(targetKey)]
+    local tgt = overlays[targetKey] or overlays[basename(targetKey)]
     if not tgt or next(tgt.columns) == nil then
         return nil
     end
@@ -224,17 +242,33 @@ local function columnOverridesFor(overlays, targetKey)
 end
 
 -- Finds the validator-list map key (in lcFn2RowValidators / lcFn2FileValidators)
--- whose basename matches `wantBasename`. The descriptor maps are keyed by the
--- Files.tsv-listed name, which is usually the basename but may carry a
--- directory prefix; runtime validator lookup uses the basename, so we match
--- on that to mutate the exact list both sides agree on.
-local function findListKey(map, wantBasename)
+-- matching an overlay's target key. The descriptor maps are keyed by the
+-- Files.tsv-listed (package-relative) name, while the overlay key is the
+-- resolved input-relative key (or a bare basename on the resolver-less API
+-- path), so the match is by basename. When several listed names share the
+-- basename (same-named files in different packages), a listed name that is a
+-- path suffix of the overlay key wins; otherwise the alphabetically-first
+-- match is used (deterministic — and the ambiguity was already warned about
+-- when the overlay target resolved).
+local function findListKey(map, targetKey)
+    local wantBasename = basename(targetKey)
+    local matches = {}
     for k in pairs(map) do
         if basename(k) == wantBasename then
+            matches[#matches + 1] = k
+        end
+    end
+    if #matches == 0 then return nil end
+    if #matches == 1 then return matches[1] end
+    table.sort(matches)
+    for _, k in ipairs(matches) do
+        if targetKey == k
+            or targetKey:sub(-#k - 1) == "/" .. k
+            or targetKey:sub(-#k - 1) == "\\" .. k then
             return k
         end
     end
-    return nil
+    return matches[1]
 end
 
 -- Applies the suppressValidator / validatorLevel overlays to the per-file
@@ -247,11 +281,14 @@ local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage)
     local rowMap = joinMeta.lcFn2RowValidators or {}
     local fileMap = joinMeta.lcFn2FileValidators or {}
 
-    for targetBasename, tgt in pairs(overlays) do
+    for targetKey, tgt in pairs(overlays) do
+        -- Lineage and warnings key by basename, so overlay events group with
+        -- the patch events for the same file (patch lineage keys by basename).
+        local targetBasename = basename(targetKey)
         if tgt.validators and next(tgt.validators) then
             local matched = {}
             local function rewrite(map)
-                local k = findListKey(map, targetBasename)
+                local k = findListKey(map, targetKey)
                 if not k then return end
                 local list = map[k]
                 if type(list) ~= "table" then return end
@@ -297,7 +334,10 @@ end
 -- No-op when `lineage` is nil. Call after collectOverlays.
 local function recordLineage(overlays, lineage)
     if not overlays or not lineage then return end
-    for targetBasename, tgt in pairs(overlays) do
+    for targetKey, tgt in pairs(overlays) do
+        -- Keyed by basename so overlay events group with patch events for the
+        -- same file (patch lineage keys by basename of the resolved target).
+        local targetBasename = basename(targetKey)
         for col, entry in pairs(tgt.columns) do
             if entry.widenTo then
                 lineage:schema(targetBasename, col, "widenTo " .. entry.widenTo,

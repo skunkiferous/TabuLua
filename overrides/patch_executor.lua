@@ -924,6 +924,74 @@ local function recomputeRow(header, rawRow, dirtyCols, expr_eval, badVal)
     return ok
 end
 
+-- Splits a possibly package-qualified target ("some.pkg:Item.tsv") into its
+-- lowercased package qualifier (nil when unqualified) and the lowercased
+-- basename of the file part. The qualifier is everything before the first ':'
+-- provided it contains no path separator (a plain relative path never does;
+-- ':' cannot appear in a package_id-adjacent file name, and target values are
+-- package-relative so drive letters cannot occur). See TODO/mod_ecosystem.md §4.
+local function splitQualifiedTarget(target)
+    local pkg, rest = target:match("^([^:/\\]+):(.+)$")
+    if pkg then
+        return pkg:lower(), basename(rest)
+    end
+    return nil, basename(target)
+end
+
+-- Returns a resolver closure over the loaded datasets for patch/bulk targets.
+-- resolve(target) -> fullName|nil, info:
+--   * fullName is the resolved tsv_files key; on a multi-candidate match it is
+--     the alphabetically-first full name (deterministic), and info.ambiguous
+--     carries the sorted candidate list so the caller can warn.
+--   * nil fullName: info.reason is "not_found" (no loaded file has that
+--     basename), "not_in_package" (qualified, but the named package owns no
+--     such file; info.pkg names it), or "missing_fn2pkg" (qualified target but
+--     the caller supplied no ownership map).
+-- `opt_fn2pkg` maps each tsv_files key to its owning package id (see
+-- manifest_loader.buildFileToPackage); package ids match case-insensitively.
+local function newTargetResolver(tsv_files, opt_fn2pkg)
+    local candidates = {}
+    for fn in pairs(tsv_files) do
+        local base = basename(fn)
+        local list = candidates[base]
+        if not list then
+            list = {}
+            candidates[base] = list
+        end
+        list[#list + 1] = fn
+    end
+    for _, list in pairs(candidates) do
+        table.sort(list)
+    end
+    return function(target)
+        local wantPkg, wantBase = splitQualifiedTarget(target)
+        local list = candidates[wantBase]
+        if not list then
+            return nil, {reason = "not_found"}
+        end
+        if wantPkg then
+            if not opt_fn2pkg then
+                return nil, {reason = "missing_fn2pkg", pkg = wantPkg}
+            end
+            local filtered = {}
+            for _, fn in ipairs(list) do
+                local pid = opt_fn2pkg[fn]
+                if pid and pid:lower() == wantPkg then
+                    filtered[#filtered + 1] = fn
+                end
+            end
+            if #filtered == 0 then
+                return nil, {reason = "not_in_package", pkg = wantPkg}
+            end
+            list = filtered
+        end
+        if #list > 1 then
+            return list[1], {ambiguous = list}
+        end
+        return list[1], nil
+    end
+end
+
 -- Recomputes downstream `=expr` cells for every row an override touched. `dirtyMap`
 -- is the patch lineage's directly-set-cell set (`target -> pk -> col -> true`).
 -- Only rows that actually changed are revisited, and only their non-directly-set
@@ -932,14 +1000,15 @@ local function recomputeAfterPatches(tsv_files, dirtyMap, loadEnv, badVal)
     if not dirtyMap or next(dirtyMap) == nil then
         return true
     end
-    local base2fn = {}
-    for fn in pairs(tsv_files) do
-        base2fn[basename(fn)] = fn
-    end
+    -- dirtyMap targets are lineage keys (lowercased basenames of the resolved
+    -- target files); resolve them back with the same deterministic
+    -- alphabetically-first rule applyPatches uses, so a basename collision
+    -- recomputes the same file the patches actually wrote.
+    local resolve = newTargetResolver(tsv_files)
     local expr_eval = expressionEvaluatorGenerator(loadEnv)
     local ok = true
     for target, rows in pairs(dirtyMap) do
-        local fn = base2fn[target]
+        local fn = resolve(target)
         local tsv = fn and tsv_files[fn]
         if tsv then
             badVal.source_name = fn
@@ -969,35 +1038,54 @@ end
 -- Applies every declared row patch to its target dataset, in package load order.
 --
 -- `patchPlan` is an array of {file=<full patch file name>, target=<lowercased
--- basename of the parent file>} in load order, prepared by the loader (so
--- last-writer-wins is deterministic). Returns (ok, patchedTargets) where
--- patchedTargets is a set of full target file names the reformatter must NOT
--- rewrite (so patches are never baked into parent source).
-local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage)
+-- basename of the parent file, optionally 'package.id:'-qualified>} in load
+-- order, prepared by the loader (so last-writer-wins is deterministic).
+-- `opt_fn2pkg` (tsv_files key -> owning package id) enables the qualified form
+-- and the ambiguity diagnostics; an unqualified target matching several loaded
+-- files resolves to the alphabetically-first full name with a warning naming
+-- every candidate. Returns (ok, patchedTargets) where patchedTargets is a set
+-- of full target file names the reformatter must NOT rewrite (so patches are
+-- never baked into parent source).
+local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage, opt_fn2pkg)
     local patchedTargets = {}
     if not patchPlan or #patchPlan == 0 then
         return true, patchedTargets
     end
-    -- Precompute basename -> full tsv_files key once, so each patch entry resolves
-    -- its target in O(1) instead of rescanning every loaded file per entry. On a
-    -- basename collision the last file wins (arbitrary, as before).
-    local basenameToFile = {}
-    for fn in pairs(tsv_files) do
-        basenameToFile[basename(fn)] = fn
-    end
+    local resolve = newTargetResolver(tsv_files, opt_fn2pkg)
     local expr_eval = expressionEvaluatorGenerator(loadEnv)
     local ok = true
     for _, entry in ipairs(patchPlan) do
         local patchTsv = tsv_files[entry.file]
         if patchTsv then
-            local targetName = basenameToFile[entry.target]
+            local targetName, info = resolve(entry.target)
             if not targetName then
+                local reason = info and info.reason
                 badVal.source_name = entry.file
                 badVal.line_no = 0
-                badVal(entry.target, "patch target '" .. entry.target
-                    .. "' not found (must match a loaded file by basename)")
+                if reason == "not_in_package" then
+                    badVal(entry.target, "patch target '" .. entry.target
+                        .. "': package '" .. info.pkg
+                        .. "' is not loaded or owns no such file")
+                elseif reason == "missing_fn2pkg" then
+                    badVal(entry.target, "patch target '" .. entry.target
+                        .. "' is package-qualified, but no file-ownership map"
+                        .. " was provided to applyPatches")
+                else
+                    badVal(entry.target, "patch target '" .. entry.target
+                        .. "' not found (must match a loaded file by basename,"
+                        .. " optionally qualified as 'package.id:Name.tsv')")
+                end
                 ok = false
             else
+                if info and info.ambiguous then
+                    local _, targetBase = splitQualifiedTarget(entry.target)
+                    logger:warn(entry.file .. ": patch target '" .. entry.target
+                        .. "' is ambiguous — candidates: "
+                        .. table.concat(info.ambiguous, ", ")
+                        .. "; using '" .. targetName
+                        .. "' (qualify the target as 'package.id:" .. targetBase
+                        .. "' to disambiguate)")
+                end
                 local applied
                 if entry.kind == "bulk" then
                     applied = applyOneBulkPatch(entry.file, patchTsv, targetName,
@@ -1026,6 +1114,10 @@ local API = {
     getVersion = getVersion,
     applyPatches = applyPatches,
     recomputeAfterPatches = recomputeAfterPatches,
+    -- Target-resolution helpers, shared with the loader (write-scope
+    -- resolution for package processors) and the schema-overlay collector.
+    splitQualifiedTarget = splitQualifiedTarget,
+    newTargetResolver = newTargetResolver,
 }
 
 -- Enables the module to be called as a function

@@ -41,7 +41,7 @@ compose.
 | 5 | Declared incompatibility ("this overhaul breaks with X") | Factorio `!mod`, Forge `breaks` | ✅ `conflicts` manifest field (§3 / Phase 3, landed 2026-07-06) |
 | 6 | Player-visible conflict report ("which of my 40 mods touch the same thing?") | LOOT, Wrye Bash — entire third-party tools | ⚠️ lineage records it; `--explain-patch` shows one cell at a time; no conflicts-only report (§5) |
 | 7 | Compatibility patch spanning several base-game versions (rows come and go) | Common on slow-updating mods | ⚠️ `update`/`replace_oldvalue_` on a missing key is a hard error; tolerance was designed (mod_overrides.md §5.2) but deliberately left out of v1 (§6) |
-| 8 | Many mods naming files freely → name collisions | Namespacing by mod id (Minecraft `modid:item`, Factorio prototype names) | ⚠️ `patchOf`/`schemaOverlayOf`/`bulkPatchOf`/`joinInto` resolve by **basename only**; on collision "last file wins (arbitrary)" per the comment in `patch_executor.applyPatches` (§4) |
+| 8 | Many mods naming files freely → name collisions | Namespacing by mod id (Minecraft `modid:item`, Factorio prototype names) | ✅ landed 2026-07-07 (§4 / Phase 4): deterministic pick + warning on ambiguity, `package.id:Name.tsv` qualified form via the `override_target` column type; `joinInto` was never basename-based (full-path targeting, see Phase 4 notes) |
 | 9 | Mod adds a **column** to a parent file, visible to other mods | RimWorld defModExtensions, Bethesda new records | ⚠️ `joinInto` exists but joins apply at **export** only (`exporter.lua` skips secondary files); load-time expressions/validators never see the joined columns (§7; mod_overrides.md §8.5 NOTE still open) |
 | 10 | User-controlled load order between unrelated mods | loadorder.txt, launcher lists | ✅ input-root argument order ([package_order_determinism.md](package_order_determinism.md) Phase 2, landed 2026-07-06) |
 
@@ -159,13 +159,18 @@ conflicts:{package_id}|nil
 
 ## 4. Gap: basename-only targeting collides at scale
 
-All cross-package references — `patchOf`, `schemaOverlayOf`, `bulkPatchOf`,
-`joinInto` — resolve by **lowercased basename** across every loaded file. With
-a handful of first-party packages that's fine; with many independently-authored
-mods, two packages shipping an `Item.tsv` is *when*, not *if*. Today the
-resolution comment in `patch_executor.applyPatches` says it plainly: "on a
-basename collision the last file wins (arbitrary, as before)". A patch can
-silently bind to the wrong package's file.
+The override references — `patchOf`, `schemaOverlayOf`, `bulkPatchOf` —
+resolve by **lowercased basename** across every loaded file. (*Correction to
+the original survey: `joinInto` does NOT — it targets the full path as listed
+in `fileName`, and duplicate listed names already trigger the generic
+"Multiple files with name" warning; it is out of scope here.*) With a handful
+of first-party packages basename resolution is fine; with many
+independently-authored mods, two packages shipping an `Item.tsv` is *when*,
+not *if*. Before Phase 4, the resolution comment in
+`patch_executor.applyPatches` said it plainly: "on a basename collision the
+last file wins (arbitrary, as before)" — a patch could silently bind to the
+wrong package's file, and a schema overlay silently applied to *every* file
+sharing the target basename.
 
 Two steps:
 
@@ -339,11 +344,41 @@ passing the two package directories, since a data-mode case dir can hold only
 one package). No tutorial change (a conflict fails the load; nothing
 demonstrable in a shipping tutorial).
 
-**Phase 4 — ambiguous-target warning + qualified targeting (§4).** Step 1
-(warning) can ship alone if step 2 grows. Tests: two packages shipping the
-same basename + a patch targeting it warns and names the winner; qualified
-`pkg:basename` binds to the named package's file; qualified miss ("package has
-no such file") errors; `joinInto` gets the same treatment.
+**Phase 4 — ambiguous-target warning + qualified targeting (§4).
+✅ LANDED (2026-07-07), with three as-implemented corrections to the design:**
+
+1. **`joinInto` was mis-described in §4 and is out of scope.** It does *not*
+   resolve by basename — it targets the **full path as listed in `fileName`**
+   (`files_desc.validateJoinTargetsExist`), and duplicate listed names already
+   trigger the generic "Multiple files with name" warning. No qualifier
+   needed; documented in DATA_FORMAT_README (*Targeting a Parent File*).
+2. **The qualified form is opt-in per column declaration.** `:` is not a legal
+   `filepath` character (which is also why the qualifier is unambiguous), and
+   a Files.tsv cell parses under the type the file *declares* — so the
+   qualified syntax cannot ride on `patchOf:filepath|nil`. A new built-in
+   **`override_target`** type (predicate `isQualifiedPath`: plain path, or
+   `qualifier:path`) is accepted as an alternative header spelling via a new
+   `altTypes` field on descriptor-column declarations
+   (`patchOf:override_target|nil` etc.); existing `filepath|nil` headers are
+   untouched.
+3. **Schema overlays got the full re-key, not just a warning.** Overlays are
+   now collected against the *resolved* target file key (loader passes a
+   resolver into `collectOverlays`), fixing a latent bug where an overlay
+   silently applied to **every** loaded file sharing the target basename —
+   and an overlay target matching no loaded file is now a reported error
+   (previously silently inert; doc §3.5 always said error).
+
+Resolution itself is shared: `patch_executor.newTargetResolver` /
+`splitQualifiedTarget` (exported) — deterministic alphabetically-first pick +
+warning naming all candidates on unqualified ambiguity; qualified filter by
+`manifest_loader.buildFileToPackage` ownership (case-insensitive id match);
+errors for unknown-package / package-owns-no-such-file. The same resolver
+replaced three independent hash-order basename maps (patch apply, package-
+processor write scope, `=expr` recompute), removing more collision
+nondeterminism. Tests: `spec/target_resolution_spec.lua` (5 integration
+tests: ambiguous-unqualified deterministic pick, qualified patch binding,
+unknown-qualifier error, qualified overlay binding, and the counter-case
+proving the same-basename double-overlay is gone).
 
 **Phase 5 — `--check-conflicts` report (§5).** Pure lineage consumer +
 reformatter flag (mutually exclusive with `--cog-docs`, like its siblings).

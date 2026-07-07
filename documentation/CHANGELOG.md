@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Package-qualified override targets + ambiguity diagnostics.** With many
+  independently-authored mods, two packages shipping the same file name is inevitable,
+  and `patchOf` / `bulkPatchOf` / `schemaOverlayOf` resolve by basename. Three changes
+  make that safe (`TODO/mod_ecosystem.md` Phase 4):
+  - **Deterministic resolution + warning on ambiguity.** An unqualified target whose
+    basename matches several loaded files now binds to the **alphabetically-first full
+    name** (previously an arbitrary, hash-order-dependent pick) and logs a warning
+    naming every candidate and the winner.
+  - **The `package.id:Name.tsv` qualified form.** A target may name the owning package
+    (`patchOf=some.mod:Shared.tsv`, matched case-insensitively; ownership by directory,
+    the same rule package processors use), binding it to that package's file. A
+    qualifier naming an unloaded package or one that owns no such file is a load error.
+    Because `:` is not a legal `filepath` character, the qualified form is **opt-in per
+    column declaration**: a new built-in **`override_target`** type (a filepath
+    optionally prefixed with a package qualifier) — declare `patchOf:override_target|nil`
+    instead of `patchOf:filepath|nil`; both header spellings are recognised
+    (descriptor-column declarations gained an `altTypes` field).
+  - **Schema overlays now bind to exactly one file.** Overlays are collected against
+    the resolved target file (with the same diagnostics), fixing a latent bug where an
+    overlay silently applied to **every** loaded file sharing the target's basename.
+    Also stricter: an overlay whose target matches no loaded file is now a reported
+    error (previously silently inert) — gate the overlay row with `onlyIfPackages` when
+    its target belongs to an optional package.
+
+  Internals: new `patch_executor.splitQualifiedTarget` / `newTargetResolver` (shared by
+  patch application, package-processor write scope, and the `=expr` recompute, removing
+  three independent hash-order basename maps); `schema_overlay.collectOverlays` takes an
+  optional resolver and keys overlays by resolved file key. `joinInto` is unaffected —
+  it targets the full path as listed in `fileName`, not a basename (documented).
+  Documented under *Targeting a Parent File* in `DATA_FORMAT_README.md`; new
+  `spec/target_resolution_spec.lua` (5 integration tests).
+
 - **Declared package incompatibility: the `conflicts` manifest field.** A package
   manifest may now list package ids in `conflicts:{package_id}|nil`: if any listed
   package is loaded alongside, the load **fails** with an explicit

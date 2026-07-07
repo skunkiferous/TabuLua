@@ -24,6 +24,7 @@ local isValidASCII = predicates.isValidASCII
 local isValidUTF8 = predicates.isValidUTF8
 local isValidHttpUrl = predicates.isValidHttpUrl
 local isPath = predicates.isPath
+local isQualifiedPath = predicates.isQualifiedPath
 
 local regex_utils = require("util.regex_utils")
 
@@ -474,6 +475,14 @@ function M.registerDerivedParsers()
 
     -- A file path (Unix-style, forward slashes, each component a valid file name)
     registration.restrictWithValidator(ownBadVal, 'ascii', 'filepath', isPath)
+
+    -- A file path optionally prefixed with a "<package_id>:" qualifier — the
+    -- opt-in declared type for the mod-override target columns (patchOf /
+    -- bulkPatchOf / schemaOverlayOf), letting a target bind to one package's
+    -- file when two packages ship the same file name. See
+    -- TODO/mod_ecosystem.md §4; ':' can never appear in a plain filepath, so
+    -- the two forms cannot be confused.
+    registration.restrictWithValidator(ownBadVal, 'ascii', 'override_target', isQualifiedPath)
 
     -- An HTTP(S) URL
     registration.restrictWithValidator(ownBadVal, 'string', 'http', isValidHttpUrl)
