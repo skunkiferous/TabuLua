@@ -69,6 +69,15 @@ local function dispName(key)
     return key and (key:match("[/\\]([^/\\]+)$") or key) or ""
 end
 
+-- Lineage source display: the overlay file's basename, prefixed with the
+-- owning package id when known ("ModA:PricePolicy.tsv") — so two mods
+-- shipping same-named overlay files stay distinguishable in reports.
+local function srcName(fn, opt_fn2pkg)
+    local pkg = fn and opt_fn2pkg and opt_fn2pkg[fn]
+    local base = dispName(fn)
+    return pkg and (pkg .. ":" .. base) or base
+end
+
 -- Reads a cell's parsed value (falling back to evaluated) by column name.
 -- Returns nil when the column is absent from this overlay file's header
 -- (overlay headers may be any subset of the SchemaOverlay columns).
@@ -147,10 +156,15 @@ local function ingestOverlayFile(overlays, file_name, targetBasename, transcoder
                     entry = {}
                     tgt.columns[column] = entry
                 end
-                -- newDefault: later overlay (in load order) wins.
+                -- newDefault: later overlay (in load order) wins. The full
+                -- per-source history is kept so lineage shows the overwritten
+                -- defaults too (--check-conflicts flags multi-source defaults).
                 if newDefault ~= nil and newDefault ~= "" then
                     entry.newDefault = newDefault
                     entry.newDefaultSrc = file_name   -- for --explain-patch lineage
+                    local hist = entry.newDefaultHist
+                    if not hist then hist = {}; entry.newDefaultHist = hist end
+                    hist[#hist + 1] = {value = newDefault, src = file_name}
                 end
                 -- widenTo: order-independent union of every declared widening.
                 if widenTo ~= nil and widenTo ~= "" then
@@ -276,7 +290,7 @@ end
 -- override drops the matched validator; `warn` / `error` rebinds its level.
 -- Each list is rebuilt (rather than mutated) because the parsed validator
 -- specs may be read-only. Unmatched suppressors warn (likely a typo).
-local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage)
+local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage, opt_fn2pkg)
     if not overlays then return end
     local rowMap = joinMeta.lcFn2RowValidators or {}
     local fileMap = joinMeta.lcFn2FileValidators or {}
@@ -310,7 +324,7 @@ local function applyValidatorOverrides(overlays, joinMeta, badVal, opt_lineage)
             end
             rewrite(rowMap)
             rewrite(fileMap)
-            local linSource = dispName(tgt.sources[1])
+            local linSource = srcName(tgt.sources[1], opt_fn2pkg)
             for expr in pairs(tgt.validators) do
                 if not matched[expr] then
                     badVal.source_name = tgt.sources[1] or targetBasename
@@ -332,21 +346,35 @@ end
 -- lineage object for `--explain-patch`. Validator suppressions are
 -- recorded separately, in applyValidatorOverrides (where match info is known).
 -- No-op when `lineage` is nil. Call after collectOverlays.
-local function recordLineage(overlays, lineage)
+local function recordLineage(overlays, lineage, opt_fn2pkg)
     if not overlays or not lineage then return end
-    for targetKey, tgt in pairs(overlays) do
+    -- Sorted iteration so the event (and thus report) order is deterministic.
+    local targetKeys = {}
+    for targetKey in pairs(overlays) do targetKeys[#targetKeys + 1] = targetKey end
+    table.sort(targetKeys)
+    for _, targetKey in ipairs(targetKeys) do
+        local tgt = overlays[targetKey]
         -- Keyed by basename so overlay events group with patch events for the
         -- same file (patch lineage keys by basename of the resolved target).
         local targetBasename = basename(targetKey)
-        for col, entry in pairs(tgt.columns) do
+        local cols = {}
+        for col in pairs(tgt.columns) do cols[#cols + 1] = col end
+        table.sort(cols)
+        for _, col in ipairs(cols) do
+            local entry = tgt.columns[col]
             if entry.widenTo then
                 lineage:schema(targetBasename, col, "widenTo " .. entry.widenTo,
-                    dispName(entry.widenToSrc or tgt.sources[1]))
+                    srcName(entry.widenToSrc or tgt.sources[1], opt_fn2pkg))
             end
             if entry.newDefault ~= nil then
-                lineage:schema(targetBasename, col,
-                    "newDefault " .. tostring(entry.newDefault),
-                    dispName(entry.newDefaultSrc or tgt.sources[1]))
+                -- One event per declaring source, apply order, winner last —
+                -- the same chain shape cell events use.
+                local hist = entry.newDefaultHist
+                    or {{value = entry.newDefault, src = entry.newDefaultSrc or tgt.sources[1]}}
+                for _, h in ipairs(hist) do
+                    lineage:schema(targetBasename, col,
+                        "newDefault " .. tostring(h.value), srcName(h.src, opt_fn2pkg))
+                end
             end
         end
     end

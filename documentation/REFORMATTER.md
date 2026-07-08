@@ -444,16 +444,16 @@ Example output (full report):
 === Patch lineage ===
 
 spell.tsv
-  [schema] cooldown  newDefault 3.0   <- SpellTuning.tsv
+  [schema] cooldown  newDefault 3.0   <- tutorial.expansion:SpellTuning.tsv
 
 item.tsv
-  [schema] price  widenTo gold|int   <- ItemPricePolicy.tsv
-  [schema] validator  suppress -> warn: self.price > 0 or 'price must be positive'   <- ItemPricePolicy.tsv
+  [schema] price  widenTo gold|int   <- tutorial.expansion:ItemPricePolicy.tsv
+  [schema] validator  suppress -> warn: self.price > 0 or 'price must be positive'   <- tutorial.expansion:ItemPricePolicy.tsv
   healthPotion
-    price = -5   <- ItemPatch.tsv
-    tags append {clearance}   <- ItemPatch.tsv
+    price = -5   <- tutorial.expansion:ItemPatch.tsv
+    tags append {clearance}   <- tutorial.expansion:ItemPatch.tsv
   shadowCloak
-    price = 2100 (bulk 'epic_surcharge')   <- ItemBulk.tsv
+    price = 2100 (bulk 'epic_surcharge')   <- tutorial.expansion:ItemBulk.tsv
 ```
 
 - **What it records.** Every kind of mod override: schema overlays (`widenTo`,
@@ -462,12 +462,63 @@ item.tsv
   `bulk` rule matches (named by their rule), and package-processor writes
   (attributed to `package:<id>`). When two mods write the same cell, both entries appear
   in apply order — the chain, last-writer-last.
+- **Sources are package-qualified.** An override file is attributed as
+  `<package_id>:<basename>` (e.g. `tutorial.expansion:ItemPatch.tsv`), so two mods
+  shipping same-named patch files stay distinguishable.
 - **Filter.** `<filter>` = `<file>[:<pk>[:<column>]]` narrows the report, e.g.
   `--explain-patch=Item.tsv` (one file), `…=Item.tsv:sword` (one row), or
   `…=Item.tsv:sword:price` (one cell). The file part is matched case-insensitively.
 - **Cost.** Lineage tracking is **off by default** and adds zero overhead to a normal
   run; it is enabled only for this flag. Loads and reports; it does not require an
   export and is **mutually exclusive with `--cog-docs`**.
+
+## Check Conflicts (`--check-conflicts`)
+
+`--check-conflicts` prints a **conflicts-only report** answering "where do my mods
+fight?". Where `--explain-patch` lists every override write, `--check-conflicts`
+filters that lineage down to the slots where a later write **discards** an earlier
+source's work, each shown as its apply-order chain (last writer wins).
+
+```bash
+lua reformatter.lua --check-conflicts tutorial/core/ tutorial/expansion/ mods/...
+```
+
+Example output:
+
+```text
+=== Override conflicts ===
+
+item.tsv
+  [schema] price  -- multiple defaults, last wins
+    newDefault 50   <- ModA:PricePolicy.tsv
+    newDefault 60   <- ModB:PricePolicy.tsv
+  sword : price  -- multiple writers, last wins
+    = 110   <- ModA:PricePatch.tsv
+    = 120   <- ModB:PricePatch.tsv
+  oldSword  -- row remove/replace vs. other writes
+    price = 90   <- ModA:PricePatch.tsv
+    [remove]   <- ModB:CleanupPatch.tsv
+
+3 conflicting slot(s). Conflicts are legal; load order decides the winner (input-root order, dependencies, load_after).
+```
+
+- **What is flagged.** A cell whose whole value is rewritten (`= v` /
+  `replace_whole`) after a *different* source already wrote it; a row removed or
+  replaced while another source also wrote to it (in either order); a column
+  default set by two or more overlays (`newDefault` is last-writer-wins).
+- **What is NOT flagged (benign composition).** List/map deltas from several mods
+  (`append` / `remove` / in-place `replace` compose in load order), `widenTo` from
+  several overlays (order-independent union), validator suppressions
+  (order-independent minimum), and a mod patching cells of a row another mod
+  *added* — that is intentional mod-on-mod layering.
+- **Diagnostic, not a gate.** Conflicts are legal by design — load order decides —
+  so the exit code stays 0. To change a winner, reorder the input-root arguments or
+  add `load_after` / `dependencies` (see *Conflict Resolution* in the data-format
+  guide); re-run to confirm.
+- **Cost.** Same as `--explain-patch`: lineage tracking is enabled only for this
+  flag (or when override work exists anyway). Loads and reports; no export needed;
+  **mutually exclusive with `--cog-docs`**. Both reports can be printed in one run
+  by passing both flags.
 
 ## Error Handling
 

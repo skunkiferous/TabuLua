@@ -39,7 +39,7 @@ compose.
 | 3 | **Optional compatibility**: mod B adjusts itself *if* mod A is present, works fine without | Factorio `? optional-dependency`, RimWorld `PatchOperationFindMod`, Stellaris compat patches folded into the mod | ✅ landed 2026-07-06: `packages` context (§2.2 / Phase 1) + `onlyIfPackages` file gating (§2.1 / Phase 2) |
 | 4 | Separate "A+B compatibility patch" mini-mod | The workaround every ecosystem uses where #3 is missing | ✅ a third package hard-depending on both |
 | 5 | Declared incompatibility ("this overhaul breaks with X") | Factorio `!mod`, Forge `breaks` | ✅ `conflicts` manifest field (§3 / Phase 3, landed 2026-07-06) |
-| 6 | Player-visible conflict report ("which of my 40 mods touch the same thing?") | LOOT, Wrye Bash — entire third-party tools | ⚠️ lineage records it; `--explain-patch` shows one cell at a time; no conflicts-only report (§5) |
+| 6 | Player-visible conflict report ("which of my 40 mods touch the same thing?") | LOOT, Wrye Bash — entire third-party tools | ✅ `--check-conflicts` (§5 / Phase 5, landed 2026-07-08): conflicts-only apply-order chains, benign composition filtered out, package-qualified sources |
 | 7 | Compatibility patch spanning several base-game versions (rows come and go) | Common on slow-updating mods | ⚠️ `update`/`replace_oldvalue_` on a missing key is a hard error; tolerance was designed (mod_overrides.md §5.2) but deliberately left out of v1 (§6) |
 | 8 | Many mods naming files freely → name collisions | Namespacing by mod id (Minecraft `modid:item`, Factorio prototype names) | ✅ landed 2026-07-07 (§4 / Phase 4): deterministic pick + warning on ambiguity, `package.id:Name.tsv` qualified form via the `override_target` column type; `joinInto` was never basename-based (full-path targeting, see Phase 4 notes) |
 | 9 | Mod adds a **column** to a parent file, visible to other mods | RimWorld defModExtensions, Bethesda new records | ⚠️ `joinInto` exists but joins apply at **export** only (`exporter.lua` skips secondary files); load-time expressions/validators never see the joined columns (§7; mod_overrides.md §8.5 NOTE still open) |
@@ -380,11 +380,36 @@ tests: ambiguous-unqualified deterministic pick, qualified patch binding,
 unknown-qualifier error, qualified overlay binding, and the counter-case
 proving the same-basename double-overlay is gone).
 
-**Phase 5 — `--check-conflicts` report (§5).** Pure lineage consumer +
-reformatter flag (mutually exclusive with `--cog-docs`, like its siblings).
-Tests: two mods updating one cell → reported chain; overlay-union composition
-not reported; remove-vs-update tension reported; no override work → empty
-report, exit 0.
+**Phase 5 — `--check-conflicts` report (§5). ✅ LANDED (2026-07-08).** As
+designed — `Lineage:conflictReport()` (pure lineage consumer) + reformatter flag
+(mutually exclusive with `--cog-docs`, exit stays 0) — with the classification
+made concrete and two supporting lineage changes:
+
+1. **What counts as a fight.** A whole-value cell write (`= v` /
+   `replace_whole`) landing *after* an event from a different source; a row
+   removed/replaced while 2+ sources touched it (either order; the row's full
+   chain is printed and its cell slots are subsumed, not double-reported); and
+   a `newDefault` slot with 2+ distinct sources. Deltas (`append` / `prepend` /
+   `remove` / in-place `replace`), `widenTo` unions, validator suppressions,
+   and cells written to a row another mod *added* are benign composition —
+   including a delta layered on a different source's `= v` (only the reverse
+   order clobbers).
+2. **Lineage sources are now package-qualified** (`ModA:PricePatch.tsv`) via
+   Phase 4's `buildFileToPackage` ownership map, threaded into
+   `applyOnePatch` / `applyOneBulkPatch` / `recordLineage` /
+   `applyValidatorOverrides`. Without this, two mods shipping the
+   conventionally same-named patch file counted as ONE source — a false
+   negative in the headline scenario. Also visible in `--explain-patch`.
+3. **`newDefault` records its full per-source history** (winner last) in
+   `ingestOverlayFile`; previously only the merged winner reached the lineage,
+   so an overwritten default was invisible to any consumer. `recordLineage`
+   also iterates targets/columns sorted, making schema-event order (and thus
+   both reports) deterministic.
+
+Tests: `spec/check_conflicts_spec.lua` (14 — 9 classification units + 5
+end-to-end multi-package fixtures, exactly the four designed scenarios plus
+row-tension subsumption). Documented in `REFORMATTER.md` (*Check Conflicts*)
+and `DATA_FORMAT_README.md` (*Inspecting Overrides*).
 
 **Phase 6 — `ifMissing` tolerance policy (§6).** New `missing_policy` enum +
 descriptor column; thread into `applyOnePatch` / delta appliers / target

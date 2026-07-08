@@ -300,6 +300,13 @@ local function generateUsage()
         "                        report (e.g. --explain-patch=Item.tsv:sword:price). Loads",
         "                        and reports; does not require an export.",
         "",
+        "  --check-conflicts     Report where mod overrides fight: cells / rows / column",
+        "                        defaults written by 2+ sources where the later write",
+        "                        discards the earlier (last-writer-wins), as apply-order",
+        "                        chains. Benign composition (list/map deltas, widenTo",
+        "                        unions, patching a row another mod added) is not flagged.",
+        "                        Diagnostic only: conflicts never fail the run.",
+        "",
         "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
         "                        block) in place against the loaded data, keeping markers.",
         "                        Independent of reformat/export; nothing is exported.",
@@ -387,6 +394,9 @@ local function generateUsage()
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua --explain-patch tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Print which mod override set each cell / row / column")
+    table.insert(lines, "")
+    table.insert(lines, "  lua reformatter.lua --check-conflicts tutorial/core/ tutorial/expansion/")
+    table.insert(lines, "      Report cells / rows / defaults where two or more mods overwrite each other")
 
     return table.concat(lines, "\n")
 end
@@ -768,10 +778,11 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         if mc then excludeDirs[mc] = true end
     end
 
-    -- --explain-patch: enable patch-lineage tracking during load.
+    -- --explain-patch / --check-conflicts: enable patch-lineage tracking during load.
     local explainPatch = exportParams and exportParams.explainPatch
+    local checkConflicts = exportParams and exportParams.checkConflicts
     local result = manifest_loader.processFiles(directories, badVal, excludeDirs,
-        opt_variants, explainPatch ~= nil)
+        opt_variants, explainPatch ~= nil or checkConflicts == true)
     if result then
         local tsv_files = result.tsv_files
         local raw_files = result.raw_files
@@ -781,6 +792,11 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         -- Print the override lineage report (independent of reformat/export).
         if explainPatch ~= nil and result.lineage then
             print(result.lineage:report(parseExplainFilter(explainPatch)))
+        end
+        -- Print the conflicts-only report: slots 2+ sources overwrote, as
+        -- apply-order chains. Diagnostic only — never affects the exit code.
+        if checkConflicts and result.lineage then
+            print((result.lineage:conflictReport()))
         end
         local errors = badVal.errors
         if errors > 0 then
@@ -935,6 +951,7 @@ if isMainScript then
         local mergedDir = nil           -- --export-merged[=<dir>] target (nil = off)
         local mergedSet = false         -- whether --export-merged was given
         local explainPatch = nil        -- --explain-patch[=<filter>] (nil = off, true = all)
+        local checkConflicts = false    -- --check-conflicts flag (conflicts-only report)
         local variants = {}             -- --variant=<name> values
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
@@ -1012,6 +1029,8 @@ if isMainScript then
                 if explainPatch == "" then explainPatch = true end
             elseif arg_i == "--explain-patch" then
                 explainPatch = true
+            elseif arg_i == "--check-conflicts" then
+                checkConflicts = true
             elseif arg_i:match("^%-%-log%-level=") then
                 local levelName = arg_i:match("^%-%-log%-level=(.+)$")
                 local level = LOG_LEVELS[levelName:lower()]
@@ -1069,6 +1088,7 @@ if isMainScript then
             if exportDirSet then offending[#offending + 1] = "--export-dir=" end
             if mergedSet then offending[#offending + 1] = "--export-merged" end
             if explainPatch ~= nil then offending[#offending + 1] = "--explain-patch" end
+            if checkConflicts then offending[#offending + 1] = "--check-conflicts" end
             if #offending > 0 then
                 logger:error("--cog-docs cannot be combined with export options ("
                     .. table.concat(offending, ", ") .. "). It refreshes COG doc "
@@ -1111,6 +1131,10 @@ if isMainScript then
             -- --explain-patch[=<filter>]: track + print override lineage.
             if explainPatch ~= nil then
                 exportParams.explainPatch = explainPatch
+            end
+            -- --check-conflicts: track lineage + print the conflicts-only report.
+            if checkConflicts then
+                exportParams.checkConflicts = true
             end
             processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
         end

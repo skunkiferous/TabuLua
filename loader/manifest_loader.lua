@@ -1485,16 +1485,16 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         lineage = patch_lineage.new()
     end
 
+    -- File ownership (tsv_files key -> package id), computed once and shared by
+    -- lineage source attribution, the patch executor (package-qualified targets,
+    -- ambiguity diagnostics) and the package-scoped processor write scope below.
+    local fn2pkg = buildFileToPackage(packages, tsv_files)
+
     -- Record the (already-applied, pre-parse) column overlays into the lineage
     -- first, so schema effects precede the row/cell events below.
     if lineage then
-        schema_overlay.recordLineage(joinMeta.schemaOverlays, lineage)
+        schema_overlay.recordLineage(joinMeta.schemaOverlays, lineage, fn2pkg)
     end
-
-    -- File ownership (tsv_files key -> package id), computed once and shared by
-    -- the patch executor (package-qualified targets, ambiguity diagnostics) and
-    -- the package-scoped processor write scope below.
-    local fn2pkg = buildFileToPackage(packages, tsv_files)
 
     local patchesOk, patchedTargets = patch_executor.applyPatches(
         tsv_files, joinMeta.patchPlan, loadEnv, badVal, lineage, fn2pkg)
@@ -1532,7 +1532,8 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
     -- Schema overlays: downgrade / remove parent validators a mod has declared a
     -- suppressValidator for, before the validators run against the (possibly
     -- patched) data. Mutates the per-file validator lists in joinMeta.
-    schema_overlay.applyValidatorOverrides(joinMeta.schemaOverlays, joinMeta, badVal, lineage)
+    schema_overlay.applyValidatorOverrides(joinMeta.schemaOverlays, joinMeta, badVal,
+        lineage, fn2pkg)
 
     -- Run all validators (row, file, package) after files are loaded
     local validatorsOk, validationWarnings = runAllValidators(

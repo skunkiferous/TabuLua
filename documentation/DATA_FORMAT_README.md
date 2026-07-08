@@ -2219,19 +2219,26 @@ directory list passed to the loader (CLI argument order), then alphabetical
 manager) therefore controls the relative order of independent mods simply by the order
 it passes their directories — no manifest edits needed. The order is stable across runs
 (it never depends on filesystem or hash-table iteration order), so conflict resolution —
-and every diagnostic derived from it (`--explain-patch`, `--export-merged`) — is
-reproducible.
+and every diagnostic derived from it (`--explain-patch`, `--check-conflicts`,
+`--export-merged`) — is reproducible.
 
 ### Inspecting Overrides
 
-Two reformatter flags make the override layer observable (see [REFORMATTER.md](REFORMATTER.md)):
+Three reformatter flags make the override layer observable (see [REFORMATTER.md](REFORMATTER.md)):
 
 - **`--export-merged[=<dir>]`** writes a snapshot of every file with all overrides applied
   (in each file's own format), so you can see — or diff — the final merged data.
 - **`--explain-patch[=<file>[:<pk>[:<column>]]]`** prints a **lineage report**: which
-  override (which patch/overlay file, or `package:<id>`) set each cell, row, or column,
-  including the full chain when several mods touch the same cell. Lineage tracking is off
+  override (which patch/overlay file, attributed as `package.id:File.tsv`, or
+  `package:<id>` for a processor) set each cell, row, or column, including the full
+  chain when several mods touch the same cell. Lineage tracking is off
   by default and adds no cost to a normal run.
+- **`--check-conflicts`** prints a **conflicts-only report**: just the cells, rows, and
+  column defaults that two or more sources overwrote (each as its apply-order chain,
+  last writer wins), plus rows one mod removed/replaced while another wrote to them.
+  Benign composition — list/map deltas, `widenTo` unions, patching a row another mod
+  added — is not flagged. Conflicts are legal by design, so the exit code stays 0;
+  change the winner by reordering input roots or with `load_after`.
 
 ---
 

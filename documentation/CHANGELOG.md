@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **The `--check-conflicts` report: "where do my mods fight?".** A new reformatter
+  flag prints a conflicts-only view of the patch lineage: just the slots where a later
+  override **discards** another source's work, each as its apply-order chain
+  (last-writer-last) — a cell whose whole value two sources rewrote (`= v` /
+  `replace_whole`), a row one mod removed/replaced while another wrote to it (in
+  either order), and a column default (`newDefault`) set by two or more overlays.
+  Benign composition is deliberately not flagged: list/map deltas, `widenTo` unions,
+  validator suppressions, and a mod patching cells of a row another mod *added*.
+  Conflicts are legal by design (load order decides), so this is a diagnostic, not a
+  gate — the exit code stays 0; mutually exclusive with `--cog-docs` like its
+  siblings. Phase 5 of `TODO/mod_ecosystem.md`; `Lineage:conflictReport()` in
+  `patch_lineage`; documented in `REFORMATTER.md` (*Check Conflicts*) and under
+  *Inspecting Overrides* in `DATA_FORMAT_README.md`; new
+  `spec/check_conflicts_spec.lua` (14 tests). Two supporting lineage changes, both
+  also visible in `--explain-patch`:
+  - **Lineage sources are now package-qualified** (`ModA:PricePatch.tsv` instead of
+    `PricePatch.tsv`) whenever file ownership is known, so two mods shipping
+    same-named override files — common, since patch files gravitate to conventional
+    names — stay distinguishable and are correctly counted as distinct writers.
+  - **`newDefault` now records its full per-source history** (winner last), not just
+    the merged winner, so an overwritten default is visible at all. Schema lineage
+    events are also recorded in sorted (deterministic) target/column order.
+
 - **Package-qualified override targets + ambiguity diagnostics.** With many
   independently-authored mods, two packages shipping the same file name is inevitable,
   and `patchOf` / `bulkPatchOf` / `schemaOverlayOf` resolve by basename. Three changes

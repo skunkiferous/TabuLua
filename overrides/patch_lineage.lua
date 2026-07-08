@@ -14,7 +14,8 @@ local readOnly = read_only.readOnly
 -- Patch lineage.
 --
 -- A record of which mod override touched which cell / row / column, so
--- `--explain-patch` can answer "why does sword.price equal 150?". The collector is
+-- `--explain-patch` can answer "why does sword.price equal 150?" and
+-- `--check-conflicts` can answer "where do my mods fight?". The collector is
 -- dumb: each override write path (schema overlays, row patches incl. list/map
 -- deltas, bulk patches, package-scoped pre-processors) calls one of `cell` / `row`
 -- / `schema` with a preformatted `action` string and the responsible `source`
@@ -24,7 +25,8 @@ local readOnly = read_only.readOnly
 --
 -- A lineage object is threaded through the override write paths only when there is
 -- override work (the after-patch `=expr` recompute reads its directly-set cells)
--- or when `--explain-patch` is requested; otherwise the write paths skip recording
+-- or when `--explain-patch` / `--check-conflicts` is requested; otherwise the
+-- write paths skip recording
 -- entirely, so a plain non-mod load pays nothing.
 -- ============================================================
 
@@ -174,6 +176,168 @@ function Lineage:report(filter)
         emit("(no overrides recorded" .. (what ~= "" and (" for " .. what) or "") .. ")")
     end
     return table.concat(out, "\n")
+end
+
+-- True iff `action` rewrites the whole slot: a later such write from a
+-- different source silently discards that source's work (last-writer-wins).
+-- Delta actions (append / prepend / remove / replace old -> new) compose in
+-- load order and are never flagged as conflicts.
+local function isWholeWrite(action)
+    return action:sub(1, 2) == "= " or action:sub(1, 14) == "replace_whole "
+end
+
+--- Scans the recorded events for override conflicts — slots where one mod's
+--- write discards another's — and renders them as apply-order chains (the same
+--- chain format as `report`, filtered to the fights). Flagged:
+---   * a cell whose whole value is rewritten (`= v` / `replace_whole`) after a
+---     DIFFERENT source already wrote that cell;
+---   * a row removed or replaced while another source also wrote to it (in
+---     either order — a later remove discards the writes, a later write
+---     resurrects/reshapes what the remover deleted);
+---   * a column default set by two or more overlay sources (`newDefault` is
+---     last-writer-wins).
+--- Deliberately NOT flagged (benign composition): list/map deltas from several
+--- mods, `widenTo` (order-independent union), validator suppressions
+--- (order-independent minimum), and a mod patching cells of a row another mod
+--- ADDED (that is mod-on-mod layering, not a fight). A row whose remove/replace
+--- tension is reported is not additionally reported cell-by-cell.
+--- Conflicts are legal by design — load order decides — so this is a
+--- diagnostic, not a gate.
+--- @return string The report text
+--- @return number The number of conflicting slots found
+function Lineage:conflictReport()
+    -- Group events by target -> (schema slots by column, pk groups with
+    -- per-column cell slots), preserving first-seen order throughout so the
+    -- output is deterministic and follows apply order.
+    local targets, tOrder = {}, {}
+    for _, e in ipairs(self.events) do
+        local t = targets[e.target]
+        if not t then
+            t = {schema = {}, schemaOrder = {}, pks = {}, pkOrder = {}}
+            targets[e.target] = t
+            tOrder[#tOrder + 1] = e.target
+        end
+        if e.kind == "schema" then
+            local s = t.schema[e.col]
+            if not s then s = {}; t.schema[e.col] = s; t.schemaOrder[#t.schemaOrder + 1] = e.col end
+            s[#s + 1] = e
+        else
+            local p = t.pks[e.pk]
+            if not p then
+                p = {events = {}, cells = {}, cellOrder = {}}
+                t.pks[e.pk] = p
+                t.pkOrder[#t.pkOrder + 1] = e.pk
+            end
+            p.events[#p.events + 1] = e
+            if e.kind == "cell" then
+                local c = p.cells[e.col]
+                if not c then c = {}; p.cells[e.col] = c; p.cellOrder[#p.cellOrder + 1] = e.col end
+                c[#c + 1] = e
+            end
+        end
+    end
+
+    -- A cell slot fights when a whole-value write lands after an event from a
+    -- different source (that source's work is silently discarded).
+    local function cellConflict(evs)
+        local seen, n = {}, 0
+        for _, e in ipairs(evs) do
+            if isWholeWrite(e.action) and (n > 1 or (n == 1 and not seen[e.source])) then
+                return true
+            end
+            if not seen[e.source] then seen[e.source] = true; n = n + 1 end
+        end
+        return false
+    end
+
+    -- A schema slot fights only on multi-source newDefault (last-writer-wins);
+    -- widenTo unions and suppressions compose. Returns the newDefault chain
+    -- when conflicting, nil otherwise.
+    local function schemaConflict(evs)
+        local chain, seen, n = {}, {}, 0
+        for _, e in ipairs(evs) do
+            if e.action:sub(1, 11) == "newDefault " then
+                chain[#chain + 1] = e
+                if not seen[e.source] then seen[e.source] = true; n = n + 1 end
+            end
+        end
+        if n >= 2 then return chain end
+        return nil
+    end
+
+    -- Row-level tension: the row was removed or replaced, and 2+ distinct
+    -- sources touched the row at all.
+    local function rowTension(p)
+        local kill = false
+        local seen, n = {}, 0
+        for _, e in ipairs(p.events) do
+            if e.kind == "row" and (e.action == "remove" or e.action == "replace") then
+                kill = true
+            end
+            if not seen[e.source] then seen[e.source] = true; n = n + 1 end
+        end
+        return kill and n >= 2
+    end
+
+    local out = {}
+    local function emit(s) out[#out + 1] = s end
+    emit("=== Override conflicts ===")
+    local count = 0
+    for _, target in ipairs(tOrder) do
+        local t = targets[target]
+        local lines = {}
+        for _, col in ipairs(t.schemaOrder) do
+            local chain = schemaConflict(t.schema[col])
+            if chain then
+                count = count + 1
+                lines[#lines + 1] = "  [schema] " .. col .. "  -- multiple defaults, last wins"
+                for _, e in ipairs(chain) do
+                    lines[#lines + 1] = string.format("    %s   <- %s", e.action, e.source)
+                end
+            end
+        end
+        for _, pk in ipairs(t.pkOrder) do
+            local p = t.pks[pk]
+            if rowTension(p) then
+                -- Print the row's full chain (row + cell events, apply order);
+                -- its cell slots are subsumed and not reported again below.
+                count = count + 1
+                lines[#lines + 1] = "  " .. pk .. "  -- row remove/replace vs. other writes"
+                for _, e in ipairs(p.events) do
+                    if e.kind == "row" then
+                        lines[#lines + 1] = string.format("    [%s]   <- %s", e.action, e.source)
+                    else
+                        lines[#lines + 1] = string.format("    %s %s   <- %s", e.col, e.action, e.source)
+                    end
+                end
+            else
+                for _, col in ipairs(p.cellOrder) do
+                    local evs = p.cells[col]
+                    if cellConflict(evs) then
+                        count = count + 1
+                        lines[#lines + 1] = "  " .. pk .. " : " .. col .. "  -- multiple writers, last wins"
+                        for _, e in ipairs(evs) do
+                            lines[#lines + 1] = string.format("    %s   <- %s", e.action, e.source)
+                        end
+                    end
+                end
+            end
+        end
+        if #lines > 0 then
+            emit("")
+            emit(target)
+            for _, l in ipairs(lines) do emit(l) end
+        end
+    end
+    if count == 0 then
+        emit("")
+        emit("(no conflicts detected)")
+    else
+        emit("")
+        emit(count .. " conflicting slot(s). Conflicts are legal; load order decides"
+            .. " the winner (input-root order, dependencies, load_after).")
+    end
+    return table.concat(out, "\n"), count
 end
 
 --- Creates a fresh, empty lineage collector.

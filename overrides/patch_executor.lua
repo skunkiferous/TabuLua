@@ -71,9 +71,13 @@ local function basename(key)
     return (key:match("[/\\]([^/\\]+)$") or key):lower()
 end
 
--- Case-preserving basename, for lineage display (e.g. "ItemPatch.tsv").
-local function dispName(key)
-    return key:match("[/\\]([^/\\]+)$") or key
+-- Lineage source display: the file's basename, prefixed with the owning
+-- package id when known ("ModA:PricePatch.tsv") — so two mods shipping
+-- same-named patch files stay distinguishable in lineage/conflict reports.
+local function srcName(fn, opt_fn2pkg)
+    local pkg = opt_fn2pkg and opt_fn2pkg[fn]
+    local base = fn:match("[/\\]([^/\\]+)$") or fn
+    return pkg and (pkg .. ":" .. base) or base
 end
 
 -- Reads a cell's parsed value (falling back to evaluated).
@@ -547,7 +551,7 @@ end
 -- Applies one patch file's rows to its target dataset (mutating the target's
 -- underlying array). Returns true if all error-level ops succeeded.
 local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
-    expr_eval, badVal, opt_lineage)
+    expr_eval, badVal, opt_lineage, opt_fn2pkg)
     local patchHeader = patchTsv[1]
     local targetHeader = targetTsv[1]
     badVal.source_name = patchFileName
@@ -555,9 +559,10 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
     badVal.col_idx = 0
     -- Lineage keys for `--explain-patch`: the target is keyed by lowercased
     -- basename (so patch + overlay events for one file group together); the
-    -- source keeps its original case for readability.
+    -- source keeps its original case for readability, qualified with the
+    -- owning package when known.
     local linTarget = basename(targetName)
-    local linSource = dispName(patchFileName)
+    local linSource = srcName(patchFileName, opt_fn2pkg)
 
     local patchOpCol = patchHeader["patchOp"]
     if not patchOpCol then
@@ -684,15 +689,16 @@ end
 -- against the matched target row; otherwise it is a literal parsed by the parent
 -- column. Returns true if all error-level rules/cells succeeded.
 local function applyOneBulkPatch(bulkFileName, bulkTsv, targetName, targetTsv,
-    loadEnv, badVal, opt_lineage)
+    loadEnv, badVal, opt_lineage, opt_fn2pkg)
     local bulkHeader = bulkTsv[1]
     local targetHeader = targetTsv[1]
     badVal.source_name = bulkFileName
     badVal.line_no = 0
     badVal.col_idx = 0
-    -- Lineage keys for `--explain-patch` (target lowercased, source case-preserved).
+    -- Lineage keys for `--explain-patch` (target lowercased, source
+    -- case-preserved and package-qualified when known).
     local linTarget = basename(targetName)
-    local linSource = dispName(bulkFileName)
+    local linSource = srcName(bulkFileName, opt_fn2pkg)
 
     local whereCol = bulkHeader["where"]
     if not whereCol then
@@ -1089,10 +1095,10 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage, 
                 local applied
                 if entry.kind == "bulk" then
                     applied = applyOneBulkPatch(entry.file, patchTsv, targetName,
-                        tsv_files[targetName], loadEnv, badVal, opt_lineage)
+                        tsv_files[targetName], loadEnv, badVal, opt_lineage, opt_fn2pkg)
                 else
                     applied = applyOnePatch(entry.file, patchTsv, targetName,
-                        tsv_files[targetName], expr_eval, badVal, opt_lineage)
+                        tsv_files[targetName], expr_eval, badVal, opt_lineage, opt_fn2pkg)
                 end
                 if not applied then
                     ok = false
