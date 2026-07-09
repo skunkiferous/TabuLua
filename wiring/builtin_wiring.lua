@@ -347,6 +347,8 @@ type_wiring.registerModule("schema_overlay", {
 -- by basename (same convention as joinInto / schemaOverlayOf). `patch_op` is the
 -- enum of operations carried by the patch file's `patchOp` column.
 parsers.registerEnumParser(nullBadVal, {"add", "remove", "update", "replace"}, "patch_op")
+-- `missing_policy` is the enum for the `ifMissing` column below.
+parsers.registerEnumParser(nullBadVal, {"error", "silent", "warn"}, "missing_policy")
 type_wiring.registerModule("row_patch", {
     descriptorColumns = {
         {name = "patchOf", type = "filepath|nil",
@@ -358,6 +360,15 @@ type_wiring.registerModule("row_patch", {
         {name = "bulkPatchOf", type = "filepath|nil",
          altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2BulkPatchOf", parse = lowerOrNil},
+        -- Missing-target tolerance for multi-version compat patches
+        -- (mod_ecosystem §6), per override FILE: what to do when a patched key
+        -- (update / replace_oldvalue_ / list-remove_ value) or the whole target
+        -- file is not there — error (the default, today's severities), warn
+        -- (logged no-op), or silent. `add` on an EXISTING key stays an error
+        -- always (that is a collision, not a version gap), and `replace` never
+        -- needed tolerance (a missing key appends — upsert).
+        {name = "ifMissing", type = "missing_policy|nil",
+         fieldOnMeta = "lcFn2IfMissing", parse = lowerOrNil},
     },
 })
 -- `patch` is a reserved typeName keyword, not a row record type: it marks a file

@@ -336,7 +336,7 @@ end
 -- Applies a list-merge op (append / prepend / remove / replace_whole) to a parent
 -- list column, in place. `items` is the companion cell's parsed value: a list of
 -- elements for append/prepend/remove, or the whole new list for replace_whole.
-local function applyListMerge(rawRow, m, items, badVal)
+local function applyListMerge(rawRow, m, items, badVal, opt_ifMissing)
     if type(items) ~= "table" then items = {items} end
     if m.verb == "replace_whole" then
         return setCellRaw(rawRow, m.targetCol, items, "parsed", badVal, "replace_")
@@ -351,8 +351,11 @@ local function applyListMerge(rawRow, m, items, badVal)
     elseif m.verb == "remove" then
         for _, v in ipairs(items) do
             if not removeOccurrence(current, v, m.last) then
-                logger:warn(badVal.source_name .. ": remove_" .. m.targetCol.name
-                    .. ": value '" .. tostring(v) .. "' not present (no-op)")
+                -- Always a no-op; ifMissing=silent just quiets the warning.
+                if opt_ifMissing ~= "silent" then
+                    logger:warn(badVal.source_name .. ": remove_" .. m.targetCol.name
+                        .. ": value '" .. tostring(v) .. "' not present (no-op)")
+                end
             end
         end
     end
@@ -383,14 +386,25 @@ end
 
 -- Replaces, in place and by value, the first (or last) occurrence of `oldVal` with
 -- `newVal` in a parent list column, preserving its position (op 8). `oldVal` not
--- found is an error; multiple matches warn; old == new is a no-op warning.
-local function applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal)
+-- found is an error — or, under ifMissing=warn/silent, a tolerated no-op; multiple
+-- matches warn; old == new is a no-op warning. Returns (ok, changed): `changed`
+-- is false only for the tolerated not-found no-op, so the caller can skip
+-- recording a lineage event for a write that never happened.
+local function applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal, opt_ifMissing)
     local current = currentCollection(rawRow, pair.targetCol) or {}
     local positions = {}
     for i = 1, #current do
         if current[i] == oldVal then positions[#positions + 1] = i end
     end
     if #positions == 0 then
+        if opt_ifMissing == "warn" or opt_ifMissing == "silent" then
+            if opt_ifMissing == "warn" then
+                logger:warn(badVal.source_name .. ": replace_oldvalue_"
+                    .. pair.targetCol.name .. ": value '" .. tostring(oldVal)
+                    .. "' not found (no-op, ifMissing=warn)")
+            end
+            return true, false
+        end
         badVal(pair.targetCol.name, "replace_oldvalue_" .. pair.targetCol.name
             .. ": value '" .. tostring(oldVal) .. "' not found in the list")
         return false
@@ -398,7 +412,7 @@ local function applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal)
     if oldVal == newVal then
         logger:warn(badVal.source_name .. ": replace on '" .. pair.targetCol.name
             .. "': old value equals new value (no-op)")
-        return true
+        return true, true
     end
     if #positions > 1 then
         logger:warn(badVal.source_name .. ": replace on '" .. pair.targetCol.name
@@ -408,7 +422,7 @@ local function applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal)
     local pos = pair.last and positions[#positions] or positions[1]
     current[pos] = newVal
     return setCellRaw(rawRow, pair.targetCol, current, "parsed", badVal,
-        "replace_" .. pair.targetCol.name)
+        "replace_" .. pair.targetCol.name), true
 end
 
 -- Analyses a patch file's header ONCE: classifies each non-key/op column as a
@@ -481,7 +495,7 @@ end
 -- Applies an `update` patch row to an existing parent row, in place, using a
 -- precomputed plan: direct cell sets (empty = leave unchanged, `=nil` = clear) plus
 -- list/map delta companion columns.
-local function applyUpdate(rowProxy, patchRow, plan, badVal, linCtx)
+local function applyUpdate(rowProxy, patchRow, plan, badVal, linCtx, opt_ifMissing)
     local rawRow = unwrap(rowProxy)
     local ok = true
     -- Records one cell change to the lineage (no-op when tracking is off).
@@ -511,7 +525,7 @@ local function applyUpdate(rowProxy, patchRow, plan, badVal, linCtx)
             local items = parsedOf(patchCell)
             local applied
             if m.kind == "list" then
-                applied = applyListMerge(rawRow, m, items, badVal)
+                applied = applyListMerge(rawRow, m, items, badVal, opt_ifMissing)
             else
                 applied = applyMapMerge(rawRow, m, items, badVal)
             end
@@ -536,9 +550,11 @@ local function applyUpdate(rowProxy, patchRow, plan, badVal, linCtx)
                 ok = false
             else
                 local oldVal, newVal = parsedOf(oldCell), parsedOf(newCell)
-                if not applyInplaceReplace(rawRow, pair, oldVal, newVal, badVal) then
+                local applied, changed = applyInplaceReplace(rawRow, pair, oldVal,
+                    newVal, badVal, opt_ifMissing)
+                if not applied then
                     ok = false
-                else
+                elseif changed then
                     rec(pair.targetCol.name, "replace " .. lineageValueStr(oldVal)
                         .. " -> " .. lineageValueStr(newVal))
                 end
@@ -551,7 +567,7 @@ end
 -- Applies one patch file's rows to its target dataset (mutating the target's
 -- underlying array). Returns true if all error-level ops succeeded.
 local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
-    expr_eval, badVal, opt_lineage, opt_fn2pkg)
+    expr_eval, badVal, opt_lineage, opt_fn2pkg, opt_ifMissing)
     local patchHeader = patchTsv[1]
     local targetHeader = targetTsv[1]
     badVal.source_name = patchFileName
@@ -625,8 +641,12 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                 end
             elseif op == "remove" then
                 if not byPk[pkStr] then
-                    logger:warn(patchFileName .. " line " .. i .. ": patchOp=remove"
-                        .. " key '" .. pkStr .. "' not found in target (no-op)")
+                    -- Always a no-op (idempotent delete); ifMissing=silent just
+                    -- quiets the warning.
+                    if opt_ifMissing ~= "silent" then
+                        logger:warn(patchFileName .. " line " .. i .. ": patchOp=remove"
+                            .. " key '" .. pkStr .. "' not found in target (no-op)")
+                    end
                 else
                     -- Tombstone the slot; compaction drops it after the loop.
                     removedIdx[idxByPk[pkStr]] = true
@@ -640,13 +660,23 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
             elseif op == "update" then
                 local existing = byPk[pkStr]
                 if not existing then
-                    badVal(pkStr, "patchOp=update: key '" .. pkStr
-                        .. "' not found in target '" .. basename(targetName) .. "'")
-                    ok = false
+                    -- ifMissing tolerance (mod_ecosystem §6): a compat patch
+                    -- spanning several target versions may update a key that
+                    -- only some versions have.
+                    if opt_ifMissing == "warn" then
+                        logger:warn(patchFileName .. " line " .. i .. ": patchOp=update"
+                            .. " key '" .. pkStr
+                            .. "' not found in target (no-op, ifMissing=warn)")
+                    elseif opt_ifMissing ~= "silent" then
+                        badVal(pkStr, "patchOp=update: key '" .. pkStr
+                            .. "' not found in target '" .. basename(targetName) .. "'")
+                        ok = false
+                    end
                 else
                     local linCtx = opt_lineage and
                         {lineage = opt_lineage, target = linTarget, pk = pkStr, source = linSource}
-                    if not applyUpdate(existing, patchRow, updatePlan, badVal, linCtx) then
+                    if not applyUpdate(existing, patchRow, updatePlan, badVal, linCtx,
+                        opt_ifMissing) then
                         ok = false
                     end
                 end
@@ -1044,7 +1074,8 @@ end
 -- Applies every declared row patch to its target dataset, in package load order.
 --
 -- `patchPlan` is an array of {file=<full patch file name>, target=<lowercased
--- basename of the parent file, optionally 'package.id:'-qualified>} in load
+-- basename of the parent file, optionally 'package.id:'-qualified>,
+-- kind="patch"|"bulk", ifMissing=<missing_policy or nil>} in load
 -- order, prepared by the loader (so last-writer-wins is deterministic).
 -- `opt_fn2pkg` (tsv_files key -> owning package id) enables the qualified form
 -- and the ambiguity diagnostics; an unqualified target matching several loaded
@@ -1066,6 +1097,20 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage, 
             local targetName, info = resolve(entry.target)
             if not targetName then
                 local reason = info and info.reason
+                -- ifMissing tolerance (mod_ecosystem §6): under warn/silent a
+                -- missing target file makes this patch file a logged no-op
+                -- instead of a load error (multi-version compat patches).
+                -- missing_fn2pkg stays a hard error — that is caller misuse,
+                -- not a version gap.
+                local policy = entry.ifMissing
+                if (policy == "warn" or policy == "silent")
+                    and reason ~= "missing_fn2pkg" then
+                    local msg = entry.file .. ": patch target '" .. entry.target
+                        .. "' not found; skipping this patch file (ifMissing="
+                        .. policy .. ")"
+                    if policy == "warn" then logger:warn(msg) else logger:info(msg) end
+                    goto continue
+                end
                 badVal.source_name = entry.file
                 badVal.line_no = 0
                 if reason == "not_in_package" then
@@ -1098,7 +1143,8 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage, 
                         tsv_files[targetName], loadEnv, badVal, opt_lineage, opt_fn2pkg)
                 else
                     applied = applyOnePatch(entry.file, patchTsv, targetName,
-                        tsv_files[targetName], expr_eval, badVal, opt_lineage, opt_fn2pkg)
+                        tsv_files[targetName], expr_eval, badVal, opt_lineage, opt_fn2pkg,
+                        entry.ifMissing)
                 end
                 if not applied then
                     ok = false
@@ -1106,6 +1152,7 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage, 
                 patchedTargets[targetName] = true
             end
         end
+        ::continue::
     end
     return ok, patchedTargets
 end

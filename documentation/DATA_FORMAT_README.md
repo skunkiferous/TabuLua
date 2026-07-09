@@ -1101,6 +1101,7 @@ The system expects a specific set of columns. The first seven columns (`fileName
 | `schemaOverlayOf` | `filepath\|nil` (or `override_target\|nil`) | Marks this file as a schema overlay on the named parent file (see [Mod Overrides](#mod-overrides); the `override_target` spelling allows a `package.id:` qualifier — see *Targeting a Parent File*) |
 | `patchOf` | `filepath\|nil` (or `override_target\|nil`) | Marks this file as a row patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
 | `bulkPatchOf` | `filepath\|nil` (or `override_target\|nil`) | Marks this file as a filter/transform (bulk) patch on the named parent file (see [Mod Overrides](#mod-overrides)) |
+| `ifMissing` | `missing_policy\|nil` | Per override file: tolerance (`error` \| `warn` \| `silent`, default `error`) for a patched key or the whole target file being absent (see [Tolerating Missing Targets](#tolerating-missing-targets-ifmissing)) |
 
 ### Publishing Data
 
@@ -2111,8 +2112,10 @@ legal `filepath` character, the qualified form needs the column declared with th
 the plain `filepath|nil` spelling remains valid for unqualified targets, and both
 header spellings are recognised. A qualifier naming an unloaded package, or a package
 that owns no such file, is a load error; a target basename no loaded file has is a load
-error too (gate the row with `onlyIfPackages` when the target belongs to an optional
-package — see *Conditional Files*).
+error too — unless the file opts into tolerance. Gate the row with `onlyIfPackages`
+when the target belongs to an optional **package** (see *Conditional Files*), or set
+`ifMissing` to `warn`/`silent` when the target file only exists in some **versions** of
+a present package (see *Tolerating Missing Targets*).
 
 (`joinInto` is different: it targets the **full path as listed in `fileName`**, not a
 basename, so it does not take a package qualifier.)
@@ -2197,6 +2200,11 @@ not-installed `tutorial.seasons` package.
 One sharp edge: a **misspelled package id** is indistinguishable from an absent
 package — the file is silently (info-log only) skipped forever. Check the log line if
 a compat file unexpectedly fails to apply.
+
+`onlyIfPackages` gates on **presence**; for a compat file whose target rows or files
+exist only in some **versions** of a present package, add
+[`ifMissing`](#tolerating-missing-targets-ifmissing) — together they complete the
+compat-patch toolkit.
 
 ### Conflict Resolution
 
@@ -2292,8 +2300,8 @@ sword       update                                  =self.weight*2     =nil
 |----|---------|
 | `add` | Insert a new row; the key must not already exist. Empty cells use the parent column's default. |
 | `remove` | Delete the row with the matching key; other cells ignored. A missing key warns (no-op). |
-| `update` | Edit named cells of an existing row. **An empty cell means "leave unchanged"** (not "use default"). A missing key is an error. |
-| `replace` | Wholesale `remove` + `add`. |
+| `update` | Edit named cells of an existing row. **An empty cell means "leave unchanged"** (not "use default"). A missing key is an error — unless the file opts into tolerance, see [`ifMissing`](#tolerating-missing-targets-ifmissing). |
+| `replace` | Wholesale `remove` + `add`. A missing key simply appends (upsert). |
 
 Key rules:
 
@@ -2324,6 +2332,31 @@ column is *literally* named like a companion (e.g. a real `append_tags` column),
 match wins and a warning fires so you can disambiguate. Sub-record fields are patched by
 their dotted path (`stats.attack`) with no special syntax — they are ordinary exploded
 columns.
+
+#### Tolerating Missing Targets (`ifMissing`)
+
+A compat patch that supports several versions of its target — where a row exists in one
+version only — cannot be written under the default severities (a missing `update` key is an
+error). The optional `Files.tsv` column `ifMissing:missing_policy|nil` sets a per-file
+tolerance, on the same row as `patchOf` / `bulkPatchOf` / `schemaOverlayOf`:
+
+| Policy | Effect when a target is missing |
+|--------|--------------------------------|
+| `error` (default, same as leaving the column empty) | The standard severities: `update` on a missing key and a `replace_oldvalue_` value not found are load **errors**; `remove` of a missing key warns (no-op); a whole target *file* that matches no loaded file is a load **error**. |
+| `warn` | Every such miss becomes a **logged no-op**: the row (or the whole patch/overlay file, when the target file itself is absent) is skipped with a warning. |
+| `silent` | Same no-ops, without the log noise (including the `remove`-missing and list-`remove_` warnings). |
+
+Notes:
+
+- The policy is **per override file**, not per row — a compat file is tolerant as a unit.
+- `add` on an **existing** key stays an error under every policy: that is a collision,
+  not a version gap. `replace` never needed tolerance — a missing key simply appends
+  (upsert).
+- Whole-file tolerance applies to row patches, bulk patches, **and schema overlays**
+  alike; it covers the "target mod is present, but this file only exists in its newer
+  versions" case that [`onlyIfPackages`](#conditional-files-onlyifpackages) (package
+  granularity) cannot express. Gate on **presence** with `onlyIfPackages`, tolerate
+  **version drift within presence** with `ifMissing`.
 
 ### Bulk Patches
 

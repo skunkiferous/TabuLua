@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Missing-target tolerance for multi-version compat patches: the `ifMissing`
+  Files.tsv column.** A compat patch supporting several versions of its target — where
+  a row (or a whole file) exists in one version only — could not be written: `update`
+  on a missing key, a `replace_oldvalue_` value not found, and a target file matching
+  no loaded file are load errors. The new optional
+  `ifMissing:missing_policy|nil` column (enum `error | warn | silent`, default
+  `error` = the unchanged standard severities) sets a **per-override-file** tolerance:
+  under `warn` every such miss becomes a logged no-op (a missing target *file* skips
+  the whole patch/bulk/overlay file); `silent` additionally quiets the `remove`-missing
+  and list-`remove_` not-present warnings. `add` on an **existing** key stays an error
+  under every policy (a collision, not a version gap), and `replace` needs no
+  tolerance — a missing key appends (upsert). Together with `onlyIfPackages` this
+  completes the compat-patch toolkit: gate on *presence*, tolerate *version drift*
+  within presence. Phase 6 of `TODO/mod_ecosystem.md` (mod_overrides.md §5.2's
+  deferred configurable severity); registered through the type-wiring registry
+  (module `row_patch`); documented under *Tolerating Missing Targets* in
+  `DATA_FORMAT_README.md`; new `spec/if_missing_spec.lua` (7 integration tests).
+
 - **The `--check-conflicts` report: "where do my mods fight?".** A new reformatter
   flag prints a conflicts-only view of the patch lineage: just the slots where a later
   override **discards** another source's work, each as its apply-order chain

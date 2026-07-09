@@ -40,13 +40,15 @@ compose.
 | 4 | Separate "A+B compatibility patch" mini-mod | The workaround every ecosystem uses where #3 is missing | ✅ a third package hard-depending on both |
 | 5 | Declared incompatibility ("this overhaul breaks with X") | Factorio `!mod`, Forge `breaks` | ✅ `conflicts` manifest field (§3 / Phase 3, landed 2026-07-06) |
 | 6 | Player-visible conflict report ("which of my 40 mods touch the same thing?") | LOOT, Wrye Bash — entire third-party tools | ✅ `--check-conflicts` (§5 / Phase 5, landed 2026-07-08): conflicts-only apply-order chains, benign composition filtered out, package-qualified sources |
-| 7 | Compatibility patch spanning several base-game versions (rows come and go) | Common on slow-updating mods | ⚠️ `update`/`replace_oldvalue_` on a missing key is a hard error; tolerance was designed (mod_overrides.md §5.2) but deliberately left out of v1 (§6) |
+| 7 | Compatibility patch spanning several base-game versions (rows come and go) | Common on slow-updating mods | ✅ `ifMissing:missing_policy\|nil` (§6 / Phase 6, landed 2026-07-08): per-file `error`/`warn`/`silent` tolerance for missing keys, values, and whole target files |
 | 8 | Many mods naming files freely → name collisions | Namespacing by mod id (Minecraft `modid:item`, Factorio prototype names) | ✅ landed 2026-07-07 (§4 / Phase 4): deterministic pick + warning on ambiguity, `package.id:Name.tsv` qualified form via the `override_target` column type; `joinInto` was never basename-based (full-path targeting, see Phase 4 notes) |
 | 9 | Mod adds a **column** to a parent file, visible to other mods | RimWorld defModExtensions, Bethesda new records | ⚠️ `joinInto` exists but joins apply at **export** only (`exporter.lua` skips secondary files); load-time expressions/validators never see the joined columns (§7; mod_overrides.md §8.5 NOTE still open) |
 | 10 | User-controlled load order between unrelated mods | loadorder.txt, launcher lists | ✅ input-root argument order ([package_order_determinism.md](package_order_determinism.md) Phase 2, landed 2026-07-06) |
 
-Scenarios 3, 5, 6, 7, 8 are the actionable gaps; 9 and 10 are tracked here as
-design notes / deferred phases.
+Scenarios 3, 5, 6, 7, 8 were the actionable gaps — all landed (Phases 1–6);
+9 remains a design note (§7), and 10 landed via
+[package_order_determinism.md](package_order_determinism.md). Phase 7
+(hardening + the modding guide) is what remains of the plan.
 
 ## 2. Gap: optional compatibility is not expressible
 
@@ -411,11 +413,36 @@ end-to-end multi-package fixtures, exactly the four designed scenarios plus
 row-tension subsumption). Documented in `REFORMATTER.md` (*Check Conflicts*)
 and `DATA_FORMAT_README.md` (*Inspecting Overrides*).
 
-**Phase 6 — `ifMissing` tolerance policy (§6).** New `missing_policy` enum +
-descriptor column; thread into `applyOnePatch` / delta appliers / target
-resolution. Tests: missing-key update under `warn`/`silent`; missing *target
-file* under `warn` (logged no-op load succeeds); default stays error
-(regression on existing bad_input fixtures).
+**Phase 6 — `ifMissing` tolerance policy (§6). ✅ LANDED (2026-07-08).** As
+designed — `missing_policy` enum (`error | silent | warn`) + `ifMissing`
+descriptor column (type-wiring module `row_patch`,
+`fieldOnMeta=lcFn2IfMissing`), threaded through the patch plan into
+`applyOnePatch` / `applyListMerge` / `applyInplaceReplace` and into the
+whole-target-file checks — with three as-implemented notes:
+
+1. **`replace` was mis-scoped in §6 and needs no tolerance**: a `replace` on a
+   missing key has always *appended* (upsert), never errored — only `update`,
+   `replace_oldvalue_`, and list-`remove_` had missing-target severities to
+   configure. (`remove`-missing was already a warn no-op; `silent` quiets it,
+   and quiets the list-`remove_` not-present warning likewise.)
+2. **Whole-file tolerance covers schema overlays too**, not just
+   patches/bulks: the overlay-target resolver in
+   `manifest_loader.processOrderedFiles` consults the same column, so an
+   overlay whose target file is absent under `warn`/`silent` skips that
+   overlay file as a logged no-op. Same rationale (a file existing only in
+   newer versions of a present package — the case `onlyIfPackages` cannot
+   express).
+3. `add` on an existing key stays an error under every policy, as designed;
+   a package-qualified target with no ownership map (`missing_fn2pkg`, caller
+   misuse) also stays a hard error.
+
+Tests: `spec/if_missing_spec.lua` (7 integration tests: default + explicit
+`error` regressions, missing-key update under `warn` and `silent` with the
+present key still patched, tolerated `replace_oldvalue_`, absent target file
+for a patch (`warn`) and an overlay (`silent`), add-collision under `silent`).
+Documented under *Tolerating Missing Targets* in `DATA_FORMAT_README.md`, with
+cross-links from the `patch_op` table, *Conditional Files*, and *Targeting a
+Parent File*.
 
 **Phase 7 — hardening + modding guide.** A dedicated spec for scenario 2
 (mod C patches a row mod B added — works today by construction, but nothing

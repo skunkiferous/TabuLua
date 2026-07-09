@@ -610,6 +610,9 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     local lcFn2PreProcessors = metaMaps.lcFn2PreProcessors
     local lcFn2Transcoder = metaMaps.lcFn2Transcoder
     local lcFn2SchemaOverlayOf = metaMaps.lcFn2SchemaOverlayOf or {}
+    -- Per-file missing-target policy (mod_ecosystem §6): consumed by the patch
+    -- plan below and by the overlay-target resolver (a whole-target-file miss).
+    local lcFn2IfMissing = metaMaps.lcFn2IfMissing or {}
     -- Note: the type-wiring registry replaces the former typesSet / enumsSet /
     -- customTypesSet precomputation. Each wired onLoad fires from the per-file
     -- load loop via type_wiring.applyWiring, walking the file's extends chain.
@@ -702,6 +705,17 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             local resolved, info = resolve(target)
             if not resolved then
                 local reason = info and info.reason
+                -- ifMissing tolerance (mod_ecosystem §6): under warn/silent a
+                -- missing target makes this overlay file a logged no-op
+                -- instead of a load error (multi-version compat overlays).
+                local policy = lcFn2IfMissing[computeFilenameKey(sourceFile, file2dir)]
+                if policy == "warn" or policy == "silent" then
+                    local msg = sourceFile .. ": schema overlay target '" .. target
+                        .. "' not found; skipping this overlay file (ifMissing="
+                        .. policy .. ")"
+                    if policy == "warn" then logger:warn(msg) else logger:info(msg) end
+                    return nil
+                end
                 badVal.source_name = sourceFile
                 badVal.line_no = 0
                 if reason == "not_in_package" then
@@ -757,7 +771,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             if qual then
                 targetBase = qual:lower() .. ":" .. targetBase
             end
-            patchPlan[#patchPlan + 1] = {file = fn, target = targetBase, kind = kind}
+            patchPlan[#patchPlan + 1] = {file = fn, target = targetBase, kind = kind,
+                ifMissing = lcFn2IfMissing[key]}
         end
     end
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
