@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.30.0] - 2026-07-10
+
+### Added
+
 - **Modding guide + mod-ecosystem hardening.** Closes out `TODO/mod_ecosystem.md`
   (Phase 7, its last phase):
   - New **`documentation/MODDING.md`**: the task-oriented modding guide — how a mod
@@ -182,10 +192,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   `manifest_loader` derives from the `directories` argument via the collector's
   `file2dir` map. Completes `TODO/package_order_determinism.md` (Phase 2); documented
   under Conflict Resolution in `DATA_FORMAT_README.md`.
-
-### Changed
-
-### Removed
 
 ### Fixed
 

@@ -5,7 +5,7 @@ local NAME = "sparse_sequence"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 29, 0)
+local VERSION = semver(0, 30, 0)
 
 -- Dependencies
 local read_only = require("util.read_only")
