@@ -16,6 +16,7 @@ local after_each = busted.after_each
 
 local file_util = require("infra.file_util")
 local manifest_loader = require("loader.manifest_loader")
+local manifest_info = require("loader.manifest_info")
 local error_reporting = require("infra.error_reporting")
 
 -- Simple path join function
@@ -192,5 +193,60 @@ describe("onlyIfPackages", function()
     assert.is_nil(findFile(result, "ItemBulk%.tsv"))
     assert.is_nil(findFile(result, "Extra%.tsv"))
     assert.is_nil(findFile(result, "Both%.tsv"))
+  end)
+
+  it("collects skipped gate ids and flags the unknown ones (typo heuristic)", function()
+    -- Ghost.tsv is gated on "NotInstalled" and Both.tsv (partly) on
+    -- "OtherMod"; neither id is a loaded package or named by any manifest,
+    -- so both are heuristic suspects (the --check-conflicts gate check).
+    local result = manifest_loader.processFiles({core_dir, mod_dir}, badVal)
+    assert.is_not_nil(result)
+    local skipped = result.joinMeta.skippedGates
+    assert.is_not_nil(skipped, "skippedGates should ride joinMeta")
+    assert.is_not_nil(skipped["NotInstalled"])
+    assert.is_not_nil(skipped["OtherMod"])
+
+    local suspects = manifest_info.unknownGateIds(result.packages, skipped)
+    assert.equals(2, #suspects)
+    assert.equals("NotInstalled", suspects[1].id)
+    assert.is_truthy(suspects[1].files[1]:match("Ghost%.tsv$"))
+    assert.equals("OtherMod", suspects[2].id)
+    assert.is_truthy(suspects[2].files[1]:match("Both%.tsv$"))
+  end)
+end)
+
+describe("manifest_info.unknownGateIds", function()
+  it("excludes ids any manifest names, and suggests near-misses", function()
+    -- "Known" = loaded ids + everything mentioned in dependencies /
+    -- load_after / conflicts: an id someone references is a real (merely
+    -- absent) mod, not a typo.
+    local packages = {
+      ["Core"] = {load_after = {"OptionalMod"}},
+      ["Mod"] = {
+        dependencies = {{package_id = "Core", req_op = ">=", req_version = "1.0.0"}},
+        conflicts = {"BadMod"},
+      },
+    }
+    local skipped = {
+      ["OptionalMod"] = {"a.tsv"},       -- known via load_after: not flagged
+      ["BadMod"] = {"b.tsv"},            -- known via conflicts: not flagged
+      ["core"] = {"c.tsv"},              -- case slip of a loaded id
+      ["Croe"] = {"e.tsv"},              -- transposition typo of a loaded id
+      ["totally.wrong"] = {"d.tsv", "a.tsv"},
+    }
+    local suspects = manifest_info.unknownGateIds(packages, skipped)
+    assert.equals(3, #suspects)
+    assert.equals("Croe", suspects[1].id)
+    assert.equals("Core", suspects[1].suggest)
+    assert.equals("core", suspects[2].id)
+    assert.equals("Core", suspects[2].suggest)
+    assert.equals("totally.wrong", suspects[3].id)
+    assert.is_nil(suspects[3].suggest)
+    assert.same({"a.tsv", "d.tsv"}, suspects[3].files)
+  end)
+
+  it("returns an empty list when nothing was skipped", function()
+    assert.same({}, manifest_info.unknownGateIds({["Core"] = {}}, nil))
+    assert.same({}, manifest_info.unknownGateIds({["Core"] = {}}, {}))
   end)
 end)

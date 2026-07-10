@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Modding guide + mod-ecosystem hardening.** Closes out `TODO/mod_ecosystem.md`
+  (Phase 7, its last phase):
+  - New **`documentation/MODDING.md`**: the task-oriented modding guide — how a mod
+    (an ordinary child package) overrides another package's data, a use-case →
+    feature map (patch / bulk patch / overlay / `onlyIfPackages` + `packages` /
+    `ifMissing` / `conflicts` / diagnostics), the **side-table idiom** as the
+    supported pattern for mod-added columns, mods building on mods, and an author
+    checklist. Linked from the README doc index and the *Mod Overrides* chapter.
+  - **`--check-conflicts` now includes an `onlyIfPackages` typo check.** A
+    misspelled gate id silently deactivates its file forever (indistinguishable from
+    "mod absent"); the report flags gate ids from skipped rows that matched **no
+    known id** — not a loaded package, and not named by any manifest's
+    `dependencies` / `load_after` / `conflicts` — with an edit-distance did-you-mean
+    covering case slips, transpositions, and near-miss spellings. Skipped-row gate
+    ids are collected during descriptor gating (`joinMeta.skippedGates`; the ids
+    live nowhere else, since a skipped row exits before descriptor-column storage)
+    and analysed by the new `manifest_info.unknownGateIds`. The matching lives in
+    two new general-purpose `string_utils` functions: `editDistance` (a
+    Damerau-Levenshtein counting an adjacent transposition as one edit) and
+    `closestMatch` (nearest candidate under a length-scaled distance limit).
+  - New `spec/mod_on_mod_spec.lua` pins **mod-on-mod composition** (survey
+    scenario 2): a later mod updating cells / merging lists on a row an earlier
+    mod's patch **added** (and `--check-conflicts` classifying that as benign
+    layering), and a later mod removing an earlier mod's added row (classified as
+    row tension). Worked by construction since the mod-overrides work; now a
+    regression cannot slip in unnoticed.
+
 - **Missing-target tolerance for multi-version compat patches: the `ifMissing`
   Files.tsv column.** A compat patch supporting several versions of its target — where
   a row (or a whole file) exists in one version only — could not be written: `update`

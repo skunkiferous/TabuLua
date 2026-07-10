@@ -2,6 +2,13 @@
 
 ## Status
 
+**✅ COMPLETE (2026-07-09): all seven phases landed**, plus both phases of the
+companion [package_order_determinism.md](package_order_determinism.md). The
+user-facing summary of the whole layer is
+[documentation/MODDING.md](../documentation/MODDING.md). Only §7's deferred
+design notes (load-time joins, negative gating, version-ranged conflicts)
+remain open, each waiting on a concrete need.
+
 Research and plan (2026-07-03). Follow-up to the fully-landed
 [mod_overrides.md](mod_overrides.md): that work built the **data-operation
 layer** (what a mod can do to parent data); this document covers the
@@ -106,9 +113,11 @@ half; this is the presence half.
 
 **Typo hazard.** A misspelled package id silently deactivates the file forever
 (indistinguishable from "mod absent"). Mitigations: the info-level skip log
-names the id; and Phase 5's report can list all `onlyIfPackages` ids that never
-matched any known package id across the run (a likely-typo heuristic — known
-ids can be collected from `dependencies` / `load_after` of all loaded packages).
+names the id; and — ✅ landed with Phase 7 — `--check-conflicts` lists all
+`onlyIfPackages` ids that never matched any known package id across the run
+(known ids = loaded packages plus everything named in `dependencies` /
+`load_after` / `conflicts` of all loaded manifests), with an edit-distance
+did-you-mean (`manifest_info.unknownGateIds` + `string_utils.closestMatch`).
 
 **Negative gating** ("only if X is *absent*" — RimWorld supports this for
 vanilla-fallback patches) is deliberately deferred: it inverts load-order
@@ -253,17 +262,18 @@ ifMissing:missing_policy|nil      -- enum: error | warn | silent  (default error
   join file to mirror parent rows) is still open. Two options when this
   becomes pressing: (a) document the **side-table idiom** as the supported
   pattern — the extension file keyed by the parent's PK, consumers use
-  `rowByKey`/`lookup` (cheap: documentation only); (b) apply joins in the
+  the PK index / `lookup` (cheap: documentation only); (b) apply joins in the
   loaded model (a real feature: header extension, PK-matched cell attach,
-  reformatter no-bake, patch interaction). Do (a) now as part of the
-  "modding guide" below; (b) waits for a concrete need.
+  reformatter no-bake, patch interaction). (a) ✅ done in
+  `documentation/MODDING.md` (Phase 7); (b) waits for a concrete need.
 - **A modding-guide doc page.** mod_overrides.md §8.5 already wished for a
   page mapping mod use-cases to TabuLua features. With this plan the mapping
   is: change cells/rows → patch; bulk → bulk_patch; loosen schema → overlay;
   add columns → join/side-table; conditional content → `onlyIfPackages` +
   `packages` context; ordering → `dependencies`/`load_after`; diagnostics →
-  `--explain-patch`/`--check-conflicts`/`--export-merged`. Write it as
-  `documentation/MODDING.md` in the phase that lands last.
+  `--explain-patch`/`--check-conflicts`/`--export-merged`.
+  ✅ Written as [documentation/MODDING.md](../documentation/MODDING.md)
+  (Phase 7).
 - **Patch-the-patch.** No ecosystem lets a mod edit another mod's *patch
   document*; they patch the merged result, which TabuLua's load-ordered apply
   already gives. Explicitly out of scope (a patch file is not a patchable
@@ -444,11 +454,34 @@ Documented under *Tolerating Missing Targets* in `DATA_FORMAT_README.md`, with
 cross-links from the `patch_op` table, *Conditional Files*, and *Targeting a
 Parent File*.
 
-**Phase 7 — hardening + modding guide.** A dedicated spec for scenario 2
-(mod C patches a row mod B added — works today by construction, but nothing
-pins it); typo-heuristic listing for `onlyIfPackages` ids (§2.1) folded into
-`--check-conflicts`; write `documentation/MODDING.md` (§7) mapping use-cases
-to features, including the side-table idiom for mod-added columns.
+**Phase 7 — hardening + modding guide. ✅ LANDED (2026-07-09) — the plan is
+complete.** As designed:
+
+1. **Scenario-2 spec**: new `spec/mod_on_mod_spec.lua` (2 integration tests)
+   pins that a later mod can update cells / merge lists on a row an earlier
+   mod's patch **added** — and that `--check-conflicts` classifies that as
+   benign layering (count 0) while remove-of-an-added-row is row tension
+   (count 1).
+2. **Typo heuristic in `--check-conflicts`**: `files_desc` gating collects the
+   not-loaded gate ids of skipped rows into `joinMeta.skippedGates` (as
+   predicted in Phase 2's scope note, the ids live nowhere else — a skipped
+   row exits before descriptor-column storage; the collection loop now
+   records **every** missing id of the row, not just the first). The new
+   `manifest_info.unknownGateIds(packages, skippedGates)` flags ids matching
+   no known id — not loaded, and not named by any manifest's `dependencies` /
+   `load_after` / `conflicts` (per §2.1: an id someone references is a real,
+   merely-absent mod) — with an edit-distance did-you-mean covering case
+   slips, transpositions, and near-miss spellings alike
+   (`string_utils.closestMatch`, applied case-insensitively); the reformatter
+   prints the section (only when non-empty) after the conflict report.
+   Tests in `only_if_packages_spec` (integration + unit).
+3. **`documentation/MODDING.md`**: the task-oriented guide — use-case →
+   feature map, recipes (patch/bulk/overlay, optional compatibility,
+   `ifMissing`, `conflicts`, processors), the **side-table idiom** documented
+   as the supported pattern for mod-added columns (§7 option (a); option (b),
+   load-time joins, still waits for a concrete need), mods-building-on-mods
+   incl. the patch-a-patch exclusion, diagnostics, and an author checklist.
+   Linked from the README doc index and the *Mod Overrides* chapter.
 
 ## 9. What already works (verified, no change needed)
 

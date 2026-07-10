@@ -109,7 +109,7 @@ The engine's library modules live in topical sub-directories and are required by
 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
-| [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model |
+| [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, string_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, patch_executor, patch_lineage, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
 
@@ -328,7 +328,7 @@ File system operations including path manipulation, file reading/writing, and di
 ### files_desc
 **File:** [files_desc.lua](../loader/files_desc.lua)
 
-Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically. Two row-level gates run in `processFilesDesc` before a row takes effect: the `variant` filter and `onlyIfPackages` package gating (a row listing package ids is active only when every one is loaded — the declarative half of optional mod compatibility); a gated-off row's file is skipped like a variant-filtered one (not parsed, not exported, exempt from the existence check).
+Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically. Two row-level gates run in `processFilesDesc` before a row takes effect: the `variant` filter and `onlyIfPackages` package gating (a row listing package ids is active only when every one is loaded — the declarative half of optional mod compatibility); a gated-off row's file is skipped like a variant-filtered one (not parsed, not exported, exempt from the existence check), and its not-loaded gate ids are collected into `joinMeta.skippedGates` (id → gated file names) for the `--check-conflicts` typo heuristic — a skipped row exits before descriptor-column storage, so this collector is the only record of them.
 
 **Dependencies:** builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring
 
@@ -401,9 +401,9 @@ Content-pipeline `transcode` stage that reads TabuLua's `--file=lua` export — 
 ### manifest_info
 **File:** [manifest_info.lua](../loader/manifest_info.lua)
 
-Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations (`dependencies` with version constraints, `load_after` soft ordering, and `conflicts` — declared incompatibilities that fail the load when both packages are present). `resolveDependencies` computes the package load order with a greedy ranked topological sort (Kahn): `dependencies` / `load_after` edges always dominate, then a caller-supplied per-manifest rank (`opt_manifestRank` — [manifest_loader](#manifest_loader) passes each manifest's input-root position, giving a host application user-controlled load order by argument order), then alphabetical `package_id`. Fully deterministic; see `TODO/package_order_determinism.md`.
+Handles `Manifest.transposed.tsv` files for package metadata, versioning, type aliases, and dependency declarations (`dependencies` with version constraints, `load_after` soft ordering, and `conflicts` — declared incompatibilities that fail the load when both packages are present). `resolveDependencies` computes the package load order with a greedy ranked topological sort (Kahn): `dependencies` / `load_after` edges always dominate, then a caller-supplied per-manifest rank (`opt_manifestRank` — [manifest_loader](#manifest_loader) passes each manifest's input-root position, giving a host application user-controlled load order by argument order), then alphabetical `package_id`. Fully deterministic; see `TODO/package_order_determinism.md`. `unknownGateIds(packages, skippedGates)` is the `--check-conflicts` typo heuristic for `onlyIfPackages`: it returns the skipped gate ids that matched no known id — not a loaded package, and not named by any manifest's `dependencies` / `load_after` / `conflicts` — each with its gated files and a did-you-mean suggestion (the closest known id by case-insensitive edit distance; [string_utils](#string_utils) `closestMatch`).
 
-**Dependencies:** error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, tsv_model
+**Dependencies:** error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, string_utils, tsv_model
 
 ---
 
@@ -717,7 +717,7 @@ Sparse array implementation for efficient storage of arrays with gaps. Provides 
 ### string_utils
 **File:** [string_utils.lua](../util/string_utils.lua)
 
-String manipulation utilities: split, trim, escape/unescape, and common text processing operations.
+String manipulation utilities: split, trim, escape/unescape, and common text processing operations. Also `editDistance` (Damerau-Levenshtein, counting an adjacent transposition as one edit) and `closestMatch(value, candidates, opt_maxDistance)` — the generic "did you mean ...?" helper (default distance limit scales with the value's length; first of equally-close candidates wins, so pass sorted candidates for deterministic output). Used by [manifest_info](#manifest_info)'s `unknownGateIds` suggestions.
 
 **Dependencies:** read_only
 

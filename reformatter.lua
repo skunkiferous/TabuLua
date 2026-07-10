@@ -60,6 +60,7 @@ local mkdir = file_util.mkdir
 local hasExtension = file_util.hasExtension
 
 local manifest_loader = require("loader.manifest_loader")
+local manifest_info = require("loader.manifest_info")
 
 -- Reversible decode round-trip (§3.6): lets reformat rewrite a compressed data
 -- source (data.tsv.gz) by reformatting its decoded TSV and re-compressing it.
@@ -305,6 +306,8 @@ local function generateUsage()
         "                        discards the earlier (last-writer-wins), as apply-order",
         "                        chains. Benign composition (list/map deltas, widenTo",
         "                        unions, patching a row another mod added) is not flagged.",
+        "                        Also flags likely-typo onlyIfPackages gate ids (matched",
+        "                        no loaded package, named by no manifest).",
         "                        Diagnostic only: conflicts never fail the run.",
         "",
         "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
@@ -797,6 +800,26 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         -- apply-order chains. Diagnostic only — never affects the exit code.
         if checkConflicts and result.lineage then
             print((result.lineage:conflictReport()))
+            -- onlyIfPackages typo heuristic (mod_ecosystem §2.1): a misspelled
+            -- gate id silently deactivates its file forever, indistinguishable
+            -- from "mod absent" — except that a typo matches no known id
+            -- anywhere. Printed only when there is something to flag.
+            local suspects = manifest_info.unknownGateIds(result.packages,
+                result.joinMeta and result.joinMeta.skippedGates)
+            if #suspects > 0 then
+                local lines = {"", "=== onlyIfPackages check ===", "",
+                    "Gate ids matching no loaded package and named by no manifest"
+                    .. " (possible typos):"}
+                for _, s in ipairs(suspects) do
+                    local line = "  '" .. s.id .. "'   gates: "
+                        .. table.concat(s.files, ", ")
+                    if s.suggest then
+                        line = line .. "   (did you mean '" .. s.suggest .. "'?)"
+                    end
+                    lines[#lines + 1] = line
+                end
+                print(table.concat(lines, "\n"))
+            end
         end
         local errors = badVal.errors
         if errors > 0 then

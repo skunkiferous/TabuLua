@@ -324,6 +324,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local variants = opts.variants
     local lcSkippedFiles = opts.lcSkippedFiles
     local loadedPackages = opts.loadedPackages or {}
+    local skippedGates = opts.skippedGates
 
     local indicesByName = parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = indicesByName
@@ -390,13 +391,27 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                         local missing = nil
                         for _, package_id in ipairs(required) do
                             if not loadedPackages[package_id] then
-                                missing = package_id
-                                break
+                                if not missing then missing = {} end
+                                missing[#missing + 1] = package_id
                             end
                         end
                         if missing then
                             log:info("Skipping '" .. fn .. "' (onlyIfPackages): package '"
-                                .. missing .. "' is not loaded")
+                                .. missing[1] .. "' is not loaded")
+                            -- Record every not-loaded gate id for the
+                            -- --check-conflicts typo heuristic. A skipped row
+                            -- exits before descriptor-column storage, so this
+                            -- collector is the only record of its gate ids.
+                            if skippedGates then
+                                for _, id in ipairs(missing) do
+                                    local gatedFiles = skippedGates[id]
+                                    if not gatedFiles then
+                                        gatedFiles = {}
+                                        skippedGates[id] = gatedFiles
+                                    end
+                                    gatedFiles[#gatedFiles + 1] = fn
+                                end
+                            end
                             if lcSkippedFiles then
                                 lcSkippedFiles[lcfn] = true
                             end
@@ -667,7 +682,13 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         -- A caller whose loadEnv has no `packages` gates everything off
         -- (no packages known = every gated row skips).
         loadedPackages = loadEnv and loadEnv.packages or nil,
+        -- Gate ids from SKIPPED onlyIfPackages rows (id -> {gated file
+        -- names}), for the --check-conflicts typo heuristic
+        -- (manifest_info.unknownGateIds). Stored on metaMaps so it rides
+        -- joinMeta out to the reformatter.
+        skippedGates = {},
     }
+    metaMaps.skippedGates = opts.skippedGates
     for field, map in pairs(metaMaps) do
         opts[field] = map
     end

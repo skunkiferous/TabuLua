@@ -80,6 +80,7 @@ Most documentation lives in the [documentation/](documentation/) directory.
 |----------|-------------|
 | [DATA_FORMAT_README.md](documentation/DATA_FORMAT_README.md) | Complete data format and type system specification |
 | [tutorial/README.md](tutorial/README.md) | Hands-on tutorial with RPG-themed example packages |
+| [MODDING.md](documentation/MODDING.md) | Modding guide: overriding another package's data, and running many mods together |
 | [REFORMATTER.md](documentation/REFORMATTER.md) | CLI tool and export format reference |
 | [MIGRATION.md](documentation/MIGRATION.md) | Data migration tool and DataSet API reference |
 | [CHANGELOG.md](documentation/CHANGELOG.md) | List of changes in each version |

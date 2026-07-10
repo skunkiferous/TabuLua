@@ -206,6 +206,87 @@ describe("string_utils", function()
     end)
   end)
 
+  describe("editDistance", function()
+    local editDistance = string_utils.editDistance
+
+    it("returns 0 for equal strings", function()
+      assert.equals(0, editDistance("", ""))
+      assert.equals(0, editDistance("core", "core"))
+    end)
+
+    it("handles empty strings", function()
+      assert.equals(3, editDistance("", "abc"))
+      assert.equals(3, editDistance("abc", ""))
+    end)
+
+    it("counts insertions, deletions and substitutions", function()
+      assert.equals(1, editDistance("core", "cores"))   -- insertion
+      assert.equals(1, editDistance("cores", "core"))   -- deletion
+      assert.equals(1, editDistance("core", "care"))    -- substitution
+      assert.equals(3, editDistance("kitten", "sitting"))
+    end)
+
+    it("counts an adjacent transposition as ONE edit", function()
+      -- Plain Levenshtein would say 2; the whole point of the Damerau
+      -- variant is that swapped neighbours - the most common typo - cost 1.
+      assert.equals(1, editDistance("core", "croe"))
+      assert.equals(1, editDistance("mod.magic", "mod.magci"))
+    end)
+
+    it("is case-sensitive", function()
+      assert.equals(1, editDistance("Core", "core"))
+    end)
+
+    it("errors on non-string input", function()
+      assert.has_error(function() editDistance(nil, "a") end)
+      assert.has_error(function() editDistance("a", 123) end)
+    end)
+  end)
+
+  describe("closestMatch", function()
+    local closestMatch = string_utils.closestMatch
+
+    it("returns the nearest candidate and its distance", function()
+      local match, dist = closestMatch("croe", {"badmod", "core", "mod"})
+      assert.equals("core", match)
+      assert.equals(1, dist)
+    end)
+
+    it("returns distance 0 for an exact match", function()
+      local match, dist = closestMatch("core", {"badmod", "core"})
+      assert.equals("core", match)
+      assert.equals(0, dist)
+    end)
+
+    it("keeps the FIRST of equally-close candidates", function()
+      local match, dist = closestMatch("cere", {"care", "core"})
+      assert.equals("care", match)
+      assert.equals(1, dist)
+    end)
+
+    it("returns nil when nothing is close enough", function()
+      assert.is_nil(closestMatch("zzzzzz", {"core", "badmod"}))
+    end)
+
+    it("is stricter for short strings by default", function()
+      -- #value 3 => default limit min(3, floor(3/4)+1) = 1, so a
+      -- two-edit match on a short name is rejected...
+      assert.is_nil(closestMatch("mud", {"maid"}))
+      -- ...unless the caller widens the limit explicitly.
+      assert.equals("maid", closestMatch("mud", {"maid"}, 2))
+    end)
+
+    it("honors opt_maxDistance", function()
+      assert.is_nil(closestMatch("care", {"core"}, 0))
+      assert.equals("core", closestMatch("care", {"core"}, 1))
+    end)
+
+    it("errors on bad input", function()
+      assert.has_error(function() closestMatch(nil, {}) end)
+      assert.has_error(function() closestMatch("a", "not a table") end)
+    end)
+  end)
+
   describe("module API", function()
     describe("getVersion", function()
       it("should return a version string", function()

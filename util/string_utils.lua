@@ -136,6 +136,93 @@ local function parseVersion(version)
     return semver(tonumber(major), tonumber(minor), tonumber(patch))
 end
 
+--- Computes the edit distance between two strings: the minimum number of
+--- single-character insertions, deletions, substitutions, or transpositions
+--- of two ADJACENT characters (Damerau-Levenshtein, optimal string alignment
+--- variant) needed to turn `a` into `b`. Case-sensitive and byte-based (each
+--- byte of a multi-byte UTF-8 character counts separately); intended for
+--- identifiers and file names, not prose.
+--- @param a string First string
+--- @param b string Second string
+--- @return number The edit distance (0 means equal)
+--- @error Throws if a or b is not a string
+local function editDistance(a, b)
+    assert(type(a) == "string", "a must be a string, got " .. type(a))
+    assert(type(b) == "string", "b must be a string, got " .. type(b))
+    if a == b then
+        return 0
+    end
+    local la, lb = #a, #b
+    if la == 0 then
+        return lb
+    end
+    if lb == 0 then
+        return la
+    end
+    -- Rolling rows of the distance matrix; prev2 lags two rows behind so an
+    -- adjacent transposition can be scored as a single edit.
+    local prev2 = nil
+    local prev = {}
+    for j = 0, lb do
+        prev[j] = j
+    end
+    for i = 1, la do
+        local cur = {[0] = i}
+        local ca = a:byte(i)
+        for j = 1, lb do
+            local cb = b:byte(j)
+            local best = prev[j - 1] + (ca == cb and 0 or 1)
+            local del = prev[j] + 1
+            if del < best then best = del end
+            local ins = cur[j - 1] + 1
+            if ins < best then best = ins end
+            if i > 1 and j > 1 and ca == b:byte(j - 1) and a:byte(i - 1) == cb then
+                local swap = prev2[j - 2] + 1
+                if swap < best then best = swap end
+            end
+            cur[j] = best
+        end
+        prev2 = prev
+        prev = cur
+    end
+    return prev[lb]
+end
+
+--- Finds the candidate string closest to `value` by editDistance(), for
+--- "did you mean ...?" suggestions. Candidates are scanned in order and the
+--- FIRST one with the smallest distance wins, so pass a sorted list when
+--- deterministic output matters. Case-sensitive — lowercase both sides first
+--- for a case-insensitive match.
+--- @param value string The string to find a near match for
+--- @param candidates table Sequence of candidate strings
+--- @param opt_maxDistance number|nil Reject candidates farther than this;
+---   defaults to min(3, floor(#value / 4) + 1), i.e. stricter for short
+---   strings so unrelated short names are not offered as suggestions
+--- @return string|nil The closest candidate within the limit, or nil
+--- @return number|nil Its edit distance, when a candidate was returned
+--- @error Throws if value is not a string or candidates is not a table
+local function closestMatch(value, candidates, opt_maxDistance)
+    assert(type(value) == "string", "value must be a string, got " .. type(value))
+    assert(type(candidates) == "table", "candidates must be a table, got " .. type(candidates))
+    local maxDistance = opt_maxDistance or math.min(3, math.floor(#value / 4) + 1)
+    local best = nil
+    local bestDist = maxDistance + 1
+    for _, candidate in ipairs(candidates) do
+        local d = editDistance(value, candidate)
+        if d < bestDist then
+            best = candidate
+            bestDist = d
+            if d == 0 then
+                break
+            end
+        end
+    end
+    if best then
+        return best, bestDist
+    end
+    return nil
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -143,6 +230,8 @@ end
 
 -- The public, versioned, API of this module
 local API = {
+    closestMatch=closestMatch,
+    editDistance=editDistance,
     escapeText=escapeText,
     getVersion=getVersion,
     parseVersion=parseVersion,

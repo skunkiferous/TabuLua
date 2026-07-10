@@ -511,6 +511,23 @@ item.tsv
   several overlays (order-independent union), validator suppressions
   (order-independent minimum), and a mod patching cells of a row another mod
   *added* — that is intentional mod-on-mod layering.
+- **`onlyIfPackages` typo check.** The report also flags **gate ids** — the package
+  ids a `Files.tsv` row lists in its `onlyIfPackages` column — that matched **no
+  known package id** anywhere in the run: not a loaded package, and not named by any
+  manifest's `dependencies` / `load_after` / `conflicts` (an id someone references is
+  a real mod that is merely absent). A misspelled gate id otherwise deactivates its
+  file silently, forever. When a known id is a close spelling match (case slip,
+  swapped or dropped characters — edit distance, scaled to the id's length), the
+  report suggests it:
+
+  ```text
+  === onlyIfPackages check ===
+
+  Gate ids matching no loaded package and named by no manifest (possible typos):
+    'CORE'   gates: CompatB.tsv   (did you mean 'Core'?)
+  ```
+
+  The section is printed only when there is something to flag.
 - **Diagnostic, not a gate.** Conflicts are legal by design — load order decides —
   so the exit code stays 0. To change a winner, reorder the input-root arguments or
   add `load_after` / `dependencies` (see *Conflict Resolution* in the data-format

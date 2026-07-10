@@ -32,6 +32,8 @@ local sandbox_env = require("infra.sandbox_env")
 
 local raw_tsv = require("tsv.raw_tsv")
 
+local string_utils = require("util.string_utils")
+
 local tsv_model = require("tsv.tsv_model")
 
 local file_util = require("infra.file_util")
@@ -832,6 +834,61 @@ local function validateVariantGroups(manifest, variants, badVal)
     return ok, defaults
 end
 
+--- The `onlyIfPackages` typo heuristic behind `--check-conflicts`
+--- (mod_ecosystem §2.1). A misspelled gate id silently deactivates its file
+--- forever — indistinguishable at load time from "that mod is not installed".
+--- The distinguishing signal: an id that matched NO known id anywhere in the
+--- run. Known = every loaded package_id, plus every id any loaded manifest
+--- names in `dependencies` / `load_after` / `conflicts` (an id someone else
+--- references is a real mod that is merely absent, not a typo).
+--- @param packages table package_id -> manifest, the loaded set
+--- @param skippedGates table|nil gate id -> {gated file names}, collected by
+---   files_desc from SKIPPED onlyIfPackages rows (joinMeta.skippedGates)
+--- @return table Sorted list of {id=string, files={string, sorted},
+---   suggest=string|nil} — `suggest` is the closest known id by
+---   case-insensitive edit distance (string_utils.closestMatch), so it covers
+---   case slips, transposed characters, and near-miss spellings alike
+local function unknownGateIds(packages, skippedGates)
+    if not skippedGates or next(skippedGates) == nil then return {} end
+    local known, knownLc = {}, {}
+    local function addKnown(id)
+        if id and not known[id] then
+            known[id] = true
+            knownLc[id:lower()] = id
+        end
+    end
+    for pid, manifest in pairs(packages or {}) do
+        addKnown(pid)
+        for _, dep in ipairs(manifest.dependencies or {}) do
+            addKnown(dep.package_id)
+        end
+        for _, id in ipairs(manifest.load_after or {}) do addKnown(id) end
+        for _, id in ipairs(manifest.conflicts or {}) do addKnown(id) end
+    end
+    -- Sorted lowercase candidate list, so the did-you-mean pick is
+    -- deterministic (closestMatch keeps the first of equally-close ties).
+    local knownLcList = {}
+    for lc in pairs(knownLc) do knownLcList[#knownLcList + 1] = lc end
+    table.sort(knownLcList)
+    local out = {}
+    for id, files in pairs(skippedGates) do
+        if not known[id] then
+            local sortedFiles = {}
+            for _, f in ipairs(files) do sortedFiles[#sortedFiles + 1] = f end
+            table.sort(sortedFiles)
+            local lc = id:lower()
+            local suggest = knownLc[lc]
+            if not suggest then
+                local near = string_utils.closestMatch(lc, knownLcList)
+                suggest = near and knownLc[near] or nil
+            end
+            out[#out + 1] = {id = id, files = sortedFiles, suggest = suggest}
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -844,6 +901,7 @@ local API = {
     loadManifestFile = loadManifestFile,
     resolveDependencies = resolveDependencies,
     runPackageBootstraps = runPackageBootstraps,
+    unknownGateIds = unknownGateIds,
     validateVariantGroups = validateVariantGroups,
     versionSatisfies = versionSatisfies,
     FILENAME = MANIFEST_FILENAME,

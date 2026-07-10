@@ -2057,7 +2057,9 @@ package without forking the parent's files**. The motivating cases are mod-on-ga
 regional config over base config, or a customer tenant on top of product defaults: the
 parent ships authoritative data, and a child amends it non-invasively. Every override is
 expressed as ordinary TSV the parent never sees, so the parent package stays untouched and
-upgradable.
+upgradable. (This chapter is the mechanism reference; for the task-oriented view — which
+feature fits which modding use-case, and how many mods coexist — see the
+[Modding Guide](MODDING.md).)
 
 There are four mechanisms; a child package can use any combination:
 
@@ -2181,6 +2183,10 @@ fileName:filepath	typeName:type_spec	patchOf:filepath|nil	onlyIfPackages:{packag
 SeasonalPatch.tsv	patch	Item.tsv	"some.seasons.mod"
 ```
 
+Terminology: such a row is **gated** — the `onlyIfPackages` condition is its
+**gate**, and each listed package id is a **gate id**. Log messages and the
+`--check-conflicts` report use these terms.
+
 The row is active only when **every** listed package is loaded (a list is an AND; for
 OR, use two rows). When any listed package is absent, the row is skipped exactly like
 a variant-filtered row: the file is **not parsed, not exported, and exempt from the
@@ -2199,7 +2205,10 @@ not-installed `tutorial.seasons` package.
 
 One sharp edge: a **misspelled package id** is indistinguishable from an absent
 package — the file is silently (info-log only) skipped forever. Check the log line if
-a compat file unexpectedly fails to apply.
+a compat file unexpectedly fails to apply, or run `--check-conflicts`: it flags gate
+ids that match no loaded package and are named by no manifest (likely typos), with a
+did-you-mean when a known id is a close spelling match (case slips, swapped or
+dropped characters).
 
 `onlyIfPackages` gates on **presence**; for a compat file whose target rows or files
 exist only in some **versions** of a present package, add
@@ -2245,8 +2254,9 @@ Three reformatter flags make the override layer observable (see [REFORMATTER.md]
   column defaults that two or more sources overwrote (each as its apply-order chain,
   last writer wins), plus rows one mod removed/replaced while another wrote to them.
   Benign composition — list/map deltas, `widenTo` unions, patching a row another mod
-  added — is not flagged. Conflicts are legal by design, so the exit code stays 0;
-  change the winner by reordering input roots or with `load_after`.
+  added — is not flagged. It also runs the `onlyIfPackages` typo check (gate ids
+  matching no known package id). Conflicts are legal by design, so the exit code
+  stays 0; change the winner by reordering input roots or with `load_after`.
 
 ---
 
