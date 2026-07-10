@@ -21,6 +21,7 @@ local sandbox_env = require("infra.sandbox_env")
 
 local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 
 local table_utils = require("util.table_utils")
 local deepCopyUnwrapped = table_utils.deepCopyUnwrapped
@@ -234,7 +235,13 @@ local function setCellImpl(wrappedRow, column, value, opt_linCtx)
     -- transparently accepts either form.
     local col = header[column]
     if not col then
-        error("setCell: column '" .. tostring(column) .. "' does not exist in header", 2)
+        -- Header is keyed by both idx and name; suggest from the name keys.
+        local names = {}
+        for k in pairs(header) do
+            if type(k) == "string" then names[#names + 1] = k end
+        end
+        error("setCell: column '" .. tostring(column)
+            .. "' does not exist in header" .. didYouMean(column, names), 2)
     end
 
     local rawRow = ctx.rawRow

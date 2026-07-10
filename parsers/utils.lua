@@ -11,8 +11,39 @@ local table_parsing = require("util.table_parsing")
 local parseTableStr = table_parsing.parseTableStr
 
 local error_reporting = require("infra.error_reporting")
+local didYouMean = error_reporting.didYouMean
 
 local M = {}
+
+-- Sorted list of the simple, user-typeable type NAMES currently registered
+-- (built-ins, custom types, aliases). Generated registry keys — composite
+-- specs like {T} or {{K,V}}, unions (T|nil), and restriction parsers
+-- (integer._R_GE_0) — are excluded by keeping only bare identifiers, so an
+-- unknown-type diagnostic can suggest a real name a user could have meant
+-- rather than internal machinery. NOT a complete list of valid type specs.
+function M.namedTypeCandidates()
+    local seen = {}
+    local function collect(tbl)
+        for name in pairs(tbl) do
+            if type(name) == "string" and name:match("^[%a_][%w_]*$") then
+                seen[name] = true
+            end
+        end
+    end
+    collect(state.PARSERS)
+    collect(state.ALIASES)
+    local result = {}
+    for name in pairs(seen) do result[#result + 1] = name end
+    table.sort(result)
+    return result
+end
+
+-- Returns " (did you mean 'X'?)" for an unknown type NAME, matched against the
+-- registered simple type names, or "" when nothing is close. Error path only
+-- (it enumerates the parser registry).
+function M.unknownTypeSuffix(typeName)
+    return didYouMean(typeName, M.namedTypeCandidates())
+end
 
 -- Returns the module version
 function M.getVersion()

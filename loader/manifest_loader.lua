@@ -21,6 +21,7 @@ local keys = table_utils.keys
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
@@ -721,11 +722,13 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
                 if reason == "not_in_package" then
                     badVal(target, "schema overlay target '" .. target
                         .. "': package '" .. info.pkg
-                        .. "' is not loaded or owns no such file")
+                        .. "' is not loaded or owns no such file"
+                        .. didYouMean(info.base, info.candidates))
                 else
                     badVal(target, "schema overlay target '" .. target
                         .. "' not found (must match a loaded file by basename,"
-                        .. " optionally qualified as 'package.id:Name.tsv')")
+                        .. " optionally qualified as 'package.id:Name.tsv')"
+                        .. didYouMean(info.base, info.candidates))
                 end
                 return nil
             end

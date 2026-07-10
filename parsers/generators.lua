@@ -21,6 +21,7 @@ local pairsCount = table_utils.pairsCount
 
 local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 
 local read_only = require("util.read_only")
 local readOnlyTuple = read_only.readOnlyTuple
@@ -477,7 +478,8 @@ function M.get_record_parser(fields_types, fields_parsers, type_spec, self_refs)
                             end
                         end
                     else
-                        utils.log(badVal, 'record', value, "Unknown field: "..k)
+                        utils.log(badVal, 'record', value,
+                            "Unknown field: "..k..didYouMean(k, fields_types))
                         fail = true
                     end
                 end

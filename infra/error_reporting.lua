@@ -15,6 +15,7 @@ local VERSION = semver(0, 30, 0)
 local serialization = require("serde.serialization")
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
+local string_utils = require("util.string_utils")
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
@@ -238,6 +239,64 @@ local function dumpStack(out_fn)
     end
 end
 
+--- Builds a " (did you mean 'X'?)" suffix for the candidate closest to a
+--- user-typed identifier that was not found, or "" when nothing is close
+--- enough. Intended to be appended to a "not found"/"unknown" diagnostic:
+--- `msg .. didYouMean(bad, known)`.
+---
+--- Matching is case-INSENSITIVE (candidates are compared lowercased but the
+--- suggestion is reported in its original casing), which covers case slips,
+--- adjacent transpositions, and near-miss spellings alike. Only compute this
+--- on an error path — never on the happy path (see string_utils.closestMatch
+--- for the cost).
+---
+--- @param value string|nil The user-typed identifier that was not found
+---   (a non-string yields "", so callers need not pre-check)
+--- @param candidates table|nil Either a sequence of candidate names
+---   ({"a", "b"}) or a set keyed by name ({[name]=...}); both forms accepted
+---   so call sites can pass whichever they have at hand. nil yields ""
+--- @param opt_maxDistance number|nil Forwarded to string_utils.closestMatch
+---   (defaults there to a length-scaled limit)
+--- @return string " (did you mean 'X'?)" or "" if no close candidate
+local function didYouMean(value, candidates, opt_maxDistance)
+    if type(value) ~= "string" or type(candidates) ~= "table" then
+        return ""
+    end
+    -- Collect the original candidate names, from a sequence (values) or a
+    -- set/map keyed by name (keys). candidates[1] ~= nil marks a sequence.
+    local names = {}
+    if candidates[1] ~= nil then
+        for _, name in ipairs(candidates) do
+            names[#names + 1] = name
+        end
+    else
+        for name in pairs(candidates) do
+            names[#names + 1] = name
+        end
+    end
+    if #names == 0 then
+        return ""
+    end
+    -- Sort for determinism (closestMatch keeps the first of equal-distance
+    -- ties) — the helper owns this so no call site can forget.
+    table.sort(names)
+    -- Lowercased candidate list plus a map back to the original casing.
+    -- First original wins on a lowercase collision, matching the sort order.
+    local lcList, lcToOrig = {}, {}
+    for _, name in ipairs(names) do
+        local lc = name:lower()
+        if lcToOrig[lc] == nil then
+            lcToOrig[lc] = name
+            lcList[#lcList + 1] = lc
+        end
+    end
+    local near = string_utils.closestMatch(value:lower(), lcList, opt_maxDistance)
+    if near then
+        return " (did you mean '" .. lcToOrig[near] .. "'?)"
+    end
+    return ""
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -246,6 +305,7 @@ end
 -- The public, versioned, API of this module
 local API = {
     badValGen=badValGen,
+    didYouMean=didYouMean,
     dumpStack=dumpStack,
     getVersion=getVersion,
     nullBadVal=nullBadVal,

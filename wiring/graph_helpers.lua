@@ -10,6 +10,8 @@ local VERSION = semver(0, 30, 0)
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
+local didYouMean = require("infra.error_reporting").didYouMean
+
 --- Returns the module version as a string.
 --- @return string
 local function getVersion()
@@ -428,9 +430,16 @@ local function graphRefsExist(rows, family)
             if links then
                 for _, refName in ipairs(links) do
                     if idx[refName] == nil then
+                        -- nameIndex may return the rows table itself (mixed
+                        -- numeric + name keys), so gather names from rows.
+                        local names = {}
+                        for _, rr in ipairs(rows) do
+                            if rr.name ~= nil then names[#names + 1] = tostring(rr.name) end
+                        end
                         return string.format(
-                            "%s: row '%s' %s references unknown node '%s'",
-                            family, rName, fld, tostring(refName))
+                            "%s: row '%s' %s references unknown node '%s'%s",
+                            family, rName, fld, tostring(refName),
+                            didYouMean(tostring(refName), names))
                     end
                 end
             end

@@ -19,6 +19,7 @@ local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 local unwrap = read_only.unwrap
 local error_reporting = require("infra.error_reporting")
+local didYouMean = error_reporting.didYouMean
 
 local parsers = require("parsers")
 
@@ -299,7 +300,8 @@ local function loadManifestFile(badVal, raw_files, cog_env, manifest_file)
                 found[col] = true
             else
                 -- Unexpected / user-defined field
-                log:warn("Unknown column '" .. col .. "' in manifest file: " .. manifest_file)
+                log:warn("Unknown column '" .. col .. "' in manifest file: "
+                    .. manifest_file .. didYouMean(col, fields))
             end
         end
     end
@@ -468,14 +470,20 @@ local function runPackageBootstraps(badVal, packages, package_order, loadEnv, ap
                 else
                     local exports = loadEnv[library]
                     if exports == nil then
+                        -- Suggest one of this package's declared library names.
+                        local libNames = {}
+                        for _, cl in ipairs(manifest.code_libraries or {}) do
+                            libNames[#libNames + 1] = cl.name or cl[1]
+                        end
                         badVal(library, "bootstrap: library '" .. library
                             .. "' not loaded (must match one of this package's"
-                            .. " code_libraries entries)")
+                            .. " code_libraries entries)" .. didYouMean(library, libNames))
                     else
                         local fn = exports[fn_name]
                         if type(fn) ~= "function" then
                             badVal(fn_name, "bootstrap: function '" .. fn_name
-                                .. "' not exported by library '" .. library .. "'")
+                                .. "' not exported by library '" .. library .. "'"
+                                .. didYouMean(fn_name, exports))
                         else
                             local ok, err = pcall(fn, api)
                             if not ok then
@@ -539,7 +547,8 @@ local function buildDependencyGraph(badVal, raw_files, manifest_tsv_files, cog_e
         local manifest = packages[package_id]
         for _, dep in ipairs(manifest.dependencies or {}) do
             if not packages[dep.package_id] then
-                logger:error("Missing dependency: " .. dep.package_id .. " for package " .. package_id)
+                logger:error("Missing dependency: " .. dep.package_id .. " for package "
+                    .. package_id .. didYouMean(dep.package_id, packages))
                 fail = true
             else
                 local mv = packages[dep.package_id].version

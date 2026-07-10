@@ -38,6 +38,55 @@ describe("error_reporting", function()
     end)
   end)
 
+  describe("didYouMean", function()
+    local didYouMean = error_reporting.didYouMean
+
+    it("suggests the closest candidate from a sequence", function()
+      assert.equals(" (did you mean 'core'?)",
+        didYouMean("croe", {"badmod", "core", "mod"}))
+    end)
+
+    it("suggests the closest candidate from a set keyed by name", function()
+      assert.equals(" (did you mean 'core'?)",
+        didYouMean("cxre", {core = true, mod = true}))
+    end)
+
+    it("matches case-insensitively but reports original casing", function()
+      assert.equals(" (did you mean 'CoreMod'?)",
+        didYouMean("coremod", {"CoreMod", "OtherMod"}))
+    end)
+
+    it("returns empty string when nothing is close enough", function()
+      assert.equals("", didYouMean("zzzzzzzz", {"core", "mod"}))
+    end)
+
+    it("returns empty string for empty candidates", function()
+      assert.equals("", didYouMean("core", {}))
+    end)
+
+    it("is deterministic for equally-close candidates (sorted)", function()
+      -- "care" and "core" are both distance 1 from "cyre"; the
+      -- alphabetically first, "care", wins regardless of table order.
+      assert.equals(" (did you mean 'care'?)",
+        didYouMean("cyre", {"core", "care"}))
+      assert.equals(" (did you mean 'care'?)",
+        didYouMean("cyre", {"care", "core"}))
+    end)
+
+    it("returns empty string for non-string value or non-table candidates", function()
+      assert.equals("", didYouMean(nil, {"core"}))
+      assert.equals("", didYouMean(123, {"core"}))
+      assert.equals("", didYouMean("core", nil))
+    end)
+
+    it("honours an explicit opt_maxDistance", function()
+      -- "core" -> "care" is distance 1; a max of 0 rejects it.
+      assert.equals("", didYouMean("care", {"core"}, 0))
+      assert.equals(" (did you mean 'core'?)",
+        didYouMean("care", {"core"}, 1))
+    end)
+  end)
+
   describe("withColType", function()
     it("should push and pop col_type around function execution", function()
       local badVal = error_reporting.badValGen(function() end)

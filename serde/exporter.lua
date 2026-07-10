@@ -53,6 +53,7 @@ local unionTypes = parsers.unionTypes
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 
 -- Sink (export) direction of the content pipeline. Used for the opt-in
 -- exportParams.stripCog, which drops COG scaffolding from exported text.
@@ -399,7 +400,13 @@ local function exportTSV(process_files, exportParams, serializer)
                                 sourceName = secPath,
                             }
                         else
-                            logger:warn("Secondary file not found: " .. secLcfn)
+                            local knownFiles = {}
+                            for path in pairs(tsv_files) do
+                                local lp = path:lower()
+                                knownFiles[#knownFiles + 1] = lp:match("[^/\\]+$") or lp
+                            end
+                            logger:warn("Secondary file not found: " .. secLcfn
+                                .. didYouMean(secLcfn, knownFiles))
                         end
                     end
                     if #secondaryTsvList > 0 then

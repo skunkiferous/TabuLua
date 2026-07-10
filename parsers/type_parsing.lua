@@ -22,6 +22,7 @@ local isTupleFieldName = predicates.isTupleFieldName
 
 local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 
 local serialization = require("serde.serialization")
 local serialize = serialization.serialize
@@ -86,7 +87,8 @@ local function parse_type_tuple(badVal, xparsed, type_spec)
             local ancestor_parser = state.refs.parseType(badVal, ancestor_spec)
             if not ancestor_parser then
                 utils.log(badVal, 'extends', type_spec,
-                    "ancestor type does not exist: " .. ancestor_spec)
+                    "ancestor type does not exist: " .. ancestor_spec
+                    .. utils.unknownTypeSuffix(ancestor_spec))
                 return nil
             end
             result = function(badVal2, value, context)
@@ -729,7 +731,8 @@ local function parse_type_record(badVal, xparsed, type_spec)
             if not copy[ref_field_name] then
                 utils.log(badVal, 'record', type_spec,
                     "self." .. ref_field_name .. ": referenced field '"
-                    .. ref_field_name .. "' does not exist")
+                    .. ref_field_name .. "' does not exist"
+                    .. didYouMean(ref_field_name, copy))
                 fail = true
             elseif self_refs[ref_field_name] then
                 utils.log(badVal, 'record', type_spec,
@@ -910,7 +913,8 @@ parse_type = function(badVal, parsed, log_unknown)
         else
             if tag == "name" then
                 if log_unknown then
-                    utils.log(badVal, 'type', orig_type_spec, "unknown/bad type")
+                    utils.log(badVal, 'type', orig_type_spec,
+                        "unknown/bad type" .. utils.unknownTypeSuffix(orig_type_spec))
                 end
             elseif before == badVal.errors then
                 utils.log(badVal, 'type', orig_type_spec, "unknown problem")

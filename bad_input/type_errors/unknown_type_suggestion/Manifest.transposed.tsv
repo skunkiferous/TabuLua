@@ -1,0 +1,4 @@
+package_id:package_id	test.type.unknowntypesuggestion
+name:string	Test Unknown Type Suggestion
+version:version	1.0.0
+description:markdown	Column header type 'integr' should suggest 'integer'

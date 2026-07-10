@@ -1,6 +1,7 @@
 # Did-You-Mean Audit: Suggestions for Identifier-Not-Found Diagnostics
 
-**Status: 📋 Ready — surveyed 2026-07-10; implementation not started.**
+**Status: 🚧 In progress — surveyed 2026-07-10. Phase 1 landed (helper +
+all high-value data-error sites), pending user commit. Phases 2–3 not started.**
 
 ## Summary
 
@@ -173,3 +174,31 @@ identifier-shaped) failures.
 
 Each phase per the standing workflow: code + spec + CHANGELOG + MODULES.md,
 verified with `.\pre_commit_check.cmd`, user commit between phases.
+
+## Progress
+
+- **Phase 1 — DONE (pending user commit).** Added
+  `error_reporting.didYouMean(value, candidates, opt_maxDistance)` (+ spec, 8
+  cases) and adopted every high-value site:
+  - patch/overlay target resolution: `patch_executor.newTargetResolver` now
+    returns `info.base` + `info.candidates` (all basenames for `not_found`, the
+    package's basenames for `not_in_package`); `patch_executor` (target +
+    `patchOp=update` key under the `error` policy only) and `manifest_loader`
+    (overlay target) append the suffix from that.
+  - `manifest_info`: missing dependency, bootstrap library / exported fn,
+    unknown manifest column.
+  - `processor_executor` setCell column; `generators` record unknown field;
+    `type_parsing` record self-ref field; unknown/ancestor type names in
+    `type_parsing` + `registration` via new **`parsers.utils.namedTypeCandidates`**
+    (+ `unknownTypeSuffix`) which filters generated registry keys
+    (`integer._R_GE_0`, composites, unions).
+  - `graph_helpers` unknown node; `builtin_wiring` `edgesFor` target;
+    `file_joining` join columns (×2); `exporter` secondary-file lookup.
+  - New `bad_input` fixture `type_errors/unknown_type_suggestion` pins the
+    end-to-end suggestion. `pre_commit_check.cmd` green (all unit + export +
+    bad_input). CHANGELOG + MODULES.md updated (error_reporting gains
+    `string_utils`; patch_executor / graph_helpers / file_joining gain
+    error_reporting).
+  - **Gotcha:** `didYouMean` distinguishes sequence vs. name-keyed set by
+    `candidates[1] ~= nil`, so never pass a header table keyed by BOTH index and
+    name — extract the string keys first (done in `processor_executor`).

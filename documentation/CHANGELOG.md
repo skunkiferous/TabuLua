@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **"Did you mean …?" suggestions on identifier-not-found diagnostics**
+  (`TODO/did_you_mean.md`, Phase 1). New **`error_reporting.didYouMean(value,
+  candidates, opt_maxDistance)`** returns a `" (did you mean 'X'?)"` suffix (note
+  the leading space) for the candidate closest to a mistyped identifier, or `""`
+  when nothing is close.
+  It builds on the `string_utils` edit-distance functions added with the
+  mod-ecosystem follow-up: matching is case-insensitive (candidates compared
+  lowercased, reported in original casing) and deterministic (a copy of the
+  candidates is sorted, so the first of equally-close ties always wins). It
+  accepts either a sequence (`{"a", "b"}`) or a set keyed by name
+  (`{[name]=...}`), and tolerates `nil`/non-string inputs so call sites need no
+  pre-checks. Intended for error paths only.
+  - Adopted at the high-value data-error sites: patch/overlay targets not found
+    by basename or not owned by the named package (`patch_executor`,
+    `manifest_loader` — the shared `newTargetResolver` now returns the candidate
+    basenames in its failure `info`); `patchOp=update` keys missing under the
+    `error` policy (not warn/silent, which are expected version drift); a
+    package's missing dependency, bootstrap library / exported function, and
+    unknown manifest column (`manifest_info`); `setCell` unknown column
+    (`processor_executor`); record parser unknown field and self-ref field
+    (`generators`, `type_parsing`); unknown / ancestor type names
+    (`type_parsing`, `registration`, via the new `parsers.utils.namedTypeCandidates`
+    which filters generated registry keys like `integer._R_GE_0` and composites);
+    graph row references to unknown nodes (`graph_helpers`); `edgesFor` targets
+    (`builtin_wiring`); join columns (`file_joining`); and the exporter's
+    secondary-file lookup (`exporter`).
+  - New `bad_input` regression fixture `type_errors/unknown_type_suggestion`
+    pins the end-to-end suggestion (`'integr' … (did you mean 'integer'?)`).
+
 ### Changed
 
 ### Removed

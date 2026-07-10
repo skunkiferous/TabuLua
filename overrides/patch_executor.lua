@@ -18,6 +18,8 @@ local lineageValueStr = patch_lineage.valueStr
 
 local logger = require("infra.named_logger").getLogger(NAME)
 
+local didYouMean = require("infra.error_reporting").didYouMean
+
 local parsers = require("parsers")
 local isNullable = parsers.isNullable
 local unionTypes = parsers.unionTypes
@@ -668,8 +670,11 @@ local function applyOnePatch(patchFileName, patchTsv, targetName, targetTsv,
                             .. " key '" .. pkStr
                             .. "' not found in target (no-op, ifMissing=warn)")
                     elseif opt_ifMissing ~= "silent" then
+                        -- Error policy only (warn/silent above are expected
+                        -- version drift, not typos) — suggest a real PK.
                         badVal(pkStr, "patchOp=update: key '" .. pkStr
-                            .. "' not found in target '" .. basename(targetName) .. "'")
+                            .. "' not found in target '" .. basename(targetName) .. "'"
+                            .. didYouMean(pkStr, byPk))
                         ok = false
                     end
                 else
@@ -982,7 +987,11 @@ end
 --   * nil fullName: info.reason is "not_found" (no loaded file has that
 --     basename), "not_in_package" (qualified, but the named package owns no
 --     such file; info.pkg names it), or "missing_fn2pkg" (qualified target but
---     the caller supplied no ownership map).
+--     the caller supplied no ownership map). On "not_found"/"not_in_package"
+--     info also carries `base` (the basename the caller typed) and
+--     `candidates` (the sorted basenames worth suggesting: all known ones for
+--     "not_found", the named package's for "not_in_package") so callers can
+--     append a did-you-mean via error_reporting.didYouMean.
 -- `opt_fn2pkg` maps each tsv_files key to its owning package id (see
 -- manifest_loader.buildFileToPackage); package ids match case-insensitively.
 local function newTargetResolver(tsv_files, opt_fn2pkg)
@@ -999,11 +1008,34 @@ local function newTargetResolver(tsv_files, opt_fn2pkg)
     for _, list in pairs(candidates) do
         table.sort(list)
     end
+    -- Sorted list of every known basename (did-you-mean fodder, error path).
+    local function allBases()
+        local bases = {}
+        for base in pairs(candidates) do bases[#bases + 1] = base end
+        table.sort(bases)
+        return bases
+    end
+    -- Sorted basenames owned by a given (lowercased) package id.
+    local function basesInPackage(pkg)
+        local bases = {}
+        for base, list in pairs(candidates) do
+            for _, fn in ipairs(list) do
+                local pid = opt_fn2pkg and opt_fn2pkg[fn]
+                if pid and pid:lower() == pkg then
+                    bases[#bases + 1] = base
+                    break
+                end
+            end
+        end
+        table.sort(bases)
+        return bases
+    end
     return function(target)
         local wantPkg, wantBase = splitQualifiedTarget(target)
         local list = candidates[wantBase]
         if not list then
-            return nil, {reason = "not_found"}
+            return nil, {reason = "not_found", base = wantBase,
+                candidates = allBases()}
         end
         if wantPkg then
             if not opt_fn2pkg then
@@ -1017,7 +1049,8 @@ local function newTargetResolver(tsv_files, opt_fn2pkg)
                 end
             end
             if #filtered == 0 then
-                return nil, {reason = "not_in_package", pkg = wantPkg}
+                return nil, {reason = "not_in_package", pkg = wantPkg,
+                    base = wantBase, candidates = basesInPackage(wantPkg)}
             end
             list = filtered
         end
@@ -1114,17 +1147,24 @@ local function applyPatches(tsv_files, patchPlan, loadEnv, badVal, opt_lineage, 
                 badVal.source_name = entry.file
                 badVal.line_no = 0
                 if reason == "not_in_package" then
+                    -- info.candidates is the basenames that package owns (empty
+                    -- when it is not loaded at all — then no suggestion).
                     badVal(entry.target, "patch target '" .. entry.target
                         .. "': package '" .. info.pkg
-                        .. "' is not loaded or owns no such file")
+                        .. "' is not loaded or owns no such file"
+                        .. didYouMean(info.base, info.candidates))
                 elseif reason == "missing_fn2pkg" then
                     badVal(entry.target, "patch target '" .. entry.target
                         .. "' is package-qualified, but no file-ownership map"
                         .. " was provided to applyPatches")
                 else
+                    local knownBases = {}
+                    for fn in pairs(tsv_files) do knownBases[basename(fn)] = true end
+                    local _, wantBase = splitQualifiedTarget(entry.target)
                     badVal(entry.target, "patch target '" .. entry.target
                         .. "' not found (must match a loaded file by basename,"
-                        .. " optionally qualified as 'package.id:Name.tsv')")
+                        .. " optionally qualified as 'package.id:Name.tsv')"
+                        .. didYouMean(wantBase, knownBases))
                 end
                 ok = false
             else

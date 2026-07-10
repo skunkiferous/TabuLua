@@ -19,6 +19,15 @@ local readOnly = read_only.readOnly
 local table_utils = require("util.table_utils")
 local shallowCopy = table_utils.tableShallowCopy
 
+local didYouMean = require("infra.error_reporting").didYouMean
+
+-- Collects the column names of a TSV header sequence (for did-you-mean).
+local function headerColumnNames(header)
+    local names = {}
+    for _, col in ipairs(header) do names[#names + 1] = col.name end
+    return names
+end
+
 --- Builds an index of rows by a specified join column.
 --- @param tsv table The parsed TSV data (array of rows, first row is header)
 --- @param joinColumn string The column name to index by
@@ -38,6 +47,7 @@ local function buildJoinIndex(tsv, joinColumn)
 
     if joinColIdx == -1 then
         return nil, "Join column '" .. joinColumn .. "' not found"
+            .. didYouMean(joinColumn, headerColumnNames(header))
     end
 
     local index = {}
@@ -168,7 +178,8 @@ local function joinFiles(primaryTsv, secondaryTsvList, badVal)
     if primaryJoinColIdx == -1 then
         badVal.source_name = primaryTsv[1].__source
         badVal.line_no = 0
-        badVal(joinColumn, "Join column not found in primary file")
+        badVal(joinColumn, "Join column not found in primary file"
+            .. didYouMean(joinColumn, headerColumnNames(primaryHeader)))
         return nil, nil
     end
 

@@ -774,7 +774,8 @@ local function registerTypeTag(badVal, name, parent, members)
     -- Validate ancestor is a registered type
     if not parseType(nullBadVal, ancestor, false) then
         utils.log(badVal, 'type', ancestor,
-            "type tag '" .. name .. "': ancestor type '" .. ancestor .. "' is not registered")
+            "type tag '" .. name .. "': ancestor type '" .. ancestor .. "' is not registered"
+            .. utils.unknownTypeSuffix(ancestor))
         return false
     end
 

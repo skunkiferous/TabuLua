@@ -42,7 +42,7 @@ The engine's library modules live in topical sub-directories and are required by
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
-| [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization |
+| [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization, string_utils |
 | [file_util](#file_util) | File system operations and path manipulation; resolves virtual archive-member paths so reads see inside containers | archive_formats, global_reset, named_logger, read_only, table_utils |
 | [sandbox_env](#sandbox_env) | Single owner of the sandbox "safe API surface" | comparators, predicates, read_only, string_utils, table_utils |
 
@@ -54,7 +54,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [raw_eav](#raw_eav) | Low-level reader/writer for the Entity–Attribute–Value (EAV / "long") 3-column table layout | raw_tsv, read_only |
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
 | [exploded_columns](#exploded_columns) | Handles exploded/collapsed column structures | read_only, table_utils |
-| [file_joining](#file_joining) | Joins related TSV files by key columns | read_only, table_utils |
+| [file_joining](#file_joining) | Joins related TSV files by key columns | error_reporting, read_only, table_utils |
 | [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
 
 **`serde/`**
@@ -91,7 +91,7 @@ The engine's library modules live in topical sub-directories and are required by
 |--------|-------------|--------------|
 | [type_wiring](#type_wiring) | Registry that attaches behaviour to files by walking the `extends` chain; Phase 1 supports the `onLoad` slot | named_logger, read_only |
 | [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
-| [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | read_only |
+| [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | error_reporting, read_only |
 | [graph_wiring](#graph_wiring) | Family detection helpers for graph-shaped record types (`detectFamily`, `detectRole`, `detectEdgeFamily`). After Phase 2b the dispatch / validation entry points moved into the type-wiring registry | read_only |
 | [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, type_wiring, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
@@ -101,7 +101,7 @@ The engine's library modules live in topical sub-directories and are required by
 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
-| [patch_executor](#patch_executor) | Mod row patches: applies key-addressed `add`/`remove`/`update`/`replace` (`patch`, incl. list/map delta companion columns) and `where`-selected filter/transform (`bulk_patch`) ops to target parent datasets in load order, mutating in place without baking into parent source | named_logger, parsers, patch_lineage, read_only, table_utils, tsv_model, validator_executor |
+| [patch_executor](#patch_executor) | Mod row patches: applies key-addressed `add`/`remove`/`update`/`replace` (`patch`, incl. list/map delta companion columns) and `where`-selected filter/transform (`bulk_patch`) ops to target parent datasets in load order, mutating in place without baking into parent source | error_reporting, named_logger, parsers, patch_lineage, read_only, table_utils, tsv_model, validator_executor |
 | [patch_lineage](#patch_lineage) | Optional, off-by-default record of which mod override (file or `package:<id>`) set each cell / row / column, for `--explain-patch`; threaded through every override write path and rendered as a filterable report | read_only |
 | [schema_overlay](#schema_overlay) | Mod schema overlays: collects `SchemaOverlay` files and applies their column `widenTo` / `newDefault` (pre-parse) and validator `suppress`/downgrade (pre-validation) to a parent file, without baking into the source | content_pipeline, named_logger, parsers, patch_lineage, raw_tsv, read_only, tsv_model, validator_executor |
 
@@ -255,9 +255,9 @@ Content-pipeline transcoder for the EAV (long-format) layout. Registered by [bui
 ### error_reporting
 **File:** [error_reporting.lua](../infra/error_reporting.lua)
 
-Error collection and reporting system using `badVal` handlers instead of exceptions. Provides structured error messages.
+Error collection and reporting system using `badVal` handlers instead of exceptions. Provides structured error messages. Also hosts `didYouMean(value, candidates, opt_maxDistance)`, the shared "did you mean 'X'?" suffix builder used across identifier-not-found diagnostics (case-insensitive, deterministic; accepts a sequence or a name-keyed set; built on `string_utils.closestMatch`).
 
-**Dependencies:** named_logger, read_only, serialization
+**Dependencies:** named_logger, read_only, serialization, string_utils
 
 ---
 
@@ -312,7 +312,7 @@ Standalone CLI script for the test runner ([run_tests.sh](../run_tests.sh)). Par
 
 Joins related TSV files by key columns, enabling localization and data extension patterns. Secondary files (e.g., `Item.de.tsv`) are joined to primary files (e.g., `Item.tsv`) by matching rows on a join column (typically the first column/ID). Supports language-specific overrides and modular data organization.
 
-**Dependencies:** read_only, table_utils
+**Dependencies:** error_reporting, read_only, table_utils
 
 ---
 
@@ -345,7 +345,7 @@ Graph-data primitives shared by validator expressions, processor expressions, an
 
 `graphRefsExist`, `graphAcyclic`, and `graphTreeShape` are injected into the validator sandbox env by [validator_executor](#validator_executor) so the auto-wired validator expressions can call them.
 
-**Dependencies:** read_only
+**Dependencies:** error_reporting, read_only
 
 ---
 
@@ -662,7 +662,7 @@ The single owner of the sandbox "safe API surface" — the curated set of Lua bu
 
 Mod-style row patches. Applies a patch file (`typeName=patch`, `patchOf=Target.tsv`) to its parent dataset: `add` / `remove` / `update` / `replace` ops keyed by the parent primary key, carried by the patch file's `patchOp` column. `applyPatches` runs after own-package pre-processors and before validators, in package load order (last writer wins). Each patch value is parsed against the patch file's own column type then re-validated against the parent column's parser (so a schema-overlay `widenTo` lets a patch set a value the parent type would reject). The parent dataset is mutated in place via `read_only.unwrap` (append / deferred-tombstone removal + one compaction pass / cell write); added rows are built with `tsv_model.newDataCell` / `newDataRow`. An `update` row may also carry **list/map delta companion columns** (`append_`/`prepend_`/`remove_`(`_last_`)/`replace_`<col>, the paired `replace_oldvalue_`/`replace_newvalue_`<col> for in-place by-value replacement, and `append_`/`remove_`/`replace_` for maps); the header is classified once into a plan (`analyzePatchPlan`) with literal-column-name precedence over the merge-prefix reading. `bulk_patch` files (`bulkPatchOf=Target.tsv`) instead select rows with a `where` expression and `update` (transform cells) or `remove` the matches; `where` and transform `=expr` cells are evaluated against the matched target row in the validator sandbox (`validator_executor.evaluateInValidatorEnv` over `wrapRowsForValidation`). Returns the set of patched targets so the reformatter can skip them — patches are never baked into parent source. Targets resolve by basename via `newTargetResolver` (also exported, with `splitQualifiedTarget`): deterministic alphabetically-first pick with a warning when an unqualified basename is ambiguous, and support for the `package.id:Name.tsv` qualified form (opt-in via the `override_target` column type; ownership map supplied by manifest_loader's `buildFileToPackage`). A per-file `ifMissing` policy (`error` default / `warn` / `silent`, threaded on each patch-plan entry) tolerates version drift: under `warn`/`silent` a missing `update` key, a `replace_oldvalue_` value not found, or the whole target file being absent becomes a (possibly logged) no-op instead of an error, and `silent` also quiets the `remove`-missing and list-`remove_` warnings; `add` on an existing key stays an error under every policy. When an optional [patch_lineage](#patch_lineage) object is threaded in, each row/cell/delta write is recorded against the target file and the patch file responsible, package-qualified via the ownership map when supplied (used by `--explain-patch` / `--check-conflicts` and by the recompute below). `recomputeAfterPatches` re-evaluates downstream same-row `=expr` cells whose inputs an override changed — explicit `=expr` cells and default-`=expr` columns, in dependency order (reusing `tsv_model.internal.canProcessCell`) — using the lineage's directly-set cells to find the changed rows and to avoid clobbering a cell an override set explicitly. Cross-row / published-constant dependencies are out of scope.
 
-**Dependencies:** named_logger, parsers, patch_lineage, read_only, table_utils, tsv_model, validator_executor
+**Dependencies:** error_reporting, named_logger, parsers, patch_lineage, read_only, table_utils, tsv_model, validator_executor
 
 ---
 

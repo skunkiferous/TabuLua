@@ -14,6 +14,7 @@ local logger = require("infra.named_logger").getLogger(NAME)
 
 local error_reporting = require("infra.error_reporting")
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 
 local parsers = require("parsers")
 
@@ -481,8 +482,11 @@ local function validateEdgeFilesPass(tsv_files, joinMeta, badVal)
             ok = false
         elseif not nodeFileName then
             badVal.source_name = edgeFileName
+            local knownFiles = {}
+            for _, fn in pairs(lcfnToFileName) do knownFiles[#knownFiles + 1] = fn end
             badVal(edgeLcfn, "edgesFor target '" .. nodeLcfn
-                .. "' does not exist (must match an entry in fileName)")
+                .. "' does not exist (must match an entry in fileName)"
+                .. didYouMean(nodeLcfn, knownFiles))
             ok = false
         else
             local edgeRole = detectEdgeFamily(lcFn2Type[edgeLcfn], extendsMap)
