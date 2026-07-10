@@ -47,6 +47,14 @@ local trim = string_utils.trim
 local normalizePath = file_util.normalizePath
 local readFile = file_util.readFile
 local writeFile = file_util.writeFile
+local didYouMean = require("infra.error_reporting").didYouMean
+
+-- Every recognised CLI option (bare flag names), for the Unknown option
+-- did-you-mean. Kept next to the arg parser (an if/elseif chain).
+local KNOWN_OPTIONS = {
+    "--batch-size", "--dry-run", "--log-level", "--model", "--resume",
+    "--status", "--timeout", "--verbose",
+}
 local pathJoin = file_util.pathJoin
 
 local http = require("socket.http")
@@ -973,7 +981,8 @@ if isMainScript then
         elseif arg_i:match("^%-%-log%-level=") then
             local levelName = arg_i:match("^%-%-log%-level=(.+)$")
             if not LOG_LEVELS[levelName:lower()] then
-                cliLogger:error("Unknown log level: " .. levelName)
+                cliLogger:error("Unknown log level: " .. levelName
+                    .. didYouMean(levelName:lower(), LOG_LEVELS))
                 cliLogger:error("Valid levels: debug, info, warn, error, fatal")
                 hasError = true
             end
@@ -996,7 +1005,9 @@ if isMainScript then
                 hasError = true
             end
         elseif arg_i:match("^%-%-") then
-            cliLogger:error("Unknown option: " .. arg_i)
+            local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
+            cliLogger:error("Unknown option: " .. arg_i
+                .. didYouMean(flag, KNOWN_OPTIONS))
             hasError = true
         elseif not configFile then
             configFile = normalizePath(arg_i)

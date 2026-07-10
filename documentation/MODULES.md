@@ -43,7 +43,7 @@ The engine's library modules live in topical sub-directories and are required by
 |--------|-------------|--------------|
 | [named_logger](#named_logger) | Logging system with named loggers and levels | global_reset |
 | [error_reporting](#error_reporting) | Error collection and reporting system | named_logger, read_only, serialization, string_utils |
-| [file_util](#file_util) | File system operations and path manipulation; resolves virtual archive-member paths so reads see inside containers | archive_formats, global_reset, named_logger, read_only, table_utils |
+| [file_util](#file_util) | File system operations and path manipulation; resolves virtual archive-member paths so reads see inside containers | archive_formats, error_reporting, global_reset, named_logger, read_only, table_utils |
 | [sandbox_env](#sandbox_env) | Single owner of the sandbox "safe API surface" | comparators, predicates, read_only, string_utils, table_utils |
 
 **`tsv/`**
@@ -55,7 +55,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [tsv_model](#tsv_model) | TSV loading with type validation and expressions | error_reporting, exploded_columns, named_logger, parsers, predicates, raw_tsv, read_only, string_utils, table_utils |
 | [exploded_columns](#exploded_columns) | Handles exploded/collapsed column structures | read_only, table_utils |
 | [file_joining](#file_joining) | Joins related TSV files by key columns | error_reporting, read_only, table_utils |
-| [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
+| [data_set](#data_set) | Mutable in-memory representation of multiple TSV files | error_reporting, raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger |
 
 **`serde/`**
 
@@ -75,7 +75,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [content_pipeline](#content_pipeline) | Content-stage registry: dispatches decode/transcode/normalize/macro/asset stages by file name/extension/magic before parsing | file_util, named_logger, read_only |
 | [builtin_content_stages](#builtin_content_stages) | Seeds the content-pipeline registry with the built-in stages (EOL-normalise, COG macro, gzip decode, JSON + EAV + XML + TSV-cell + Lua-file transcoders) | compression, content_pipeline, eav_transcoder, file_util, global_reset, json_transcoders, lua_cog, lua_transcoder, read_only, tsv_transcoders, xml_transcoder |
 | [compression](#compression) | Lazy compression-codec registry (gzip via libdeflate); registers per-`(format, direction)` loaders pulled in only on first use | named_logger, read_only |
-| [archive_formats](#archive_formats) | Lazy archive-format registry (zip via libdeflate); enumerates and extracts the member files inside a container archive, mirroring `compression`'s lazy-provider pattern | compression, global_reset, named_logger, read_only |
+| [archive_formats](#archive_formats) | Lazy archive-format registry (zip via libdeflate); enumerates and extracts the member files inside a container archive, mirroring `compression`'s lazy-provider pattern | compression, error_reporting, global_reset, named_logger, read_only |
 | [lua_cog](#lua_cog) | Code generation and templating system | file_util, named_logger, read_only, string_utils |
 | [cog_discovery](#cog_discovery) | Auto-scans package roots for COG-eligible doc/template files (extension + `needsCog`-gated), with `.cogignore` opt-out | content_pipeline, file_util, lua_cog, read_only |
 | [doc_generator](#doc_generator) | Export-time data-driven doc generation: expands COG doc templates against the loaded dataset and writes them to the export dir (never TSV-parsed) | builtin_content_stages, content_pipeline, file_util, named_logger, read_only |
@@ -132,12 +132,12 @@ The engine's library modules live in topical sub-directories and are required by
 
 | Module | Description | Dependencies |
 |--------|-------------|--------------|
-| [migration](#migration) | Migration script executor for batch TSV modifications | named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
-| [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | named_logger, raw_tsv, string_utils, read_only, file_util |
-| [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | named_logger, raw_tsv, read_only, string_utils, file_util |
+| [migration](#migration) | Migration script executor for batch TSV modifications | error_reporting, named_logger, raw_tsv, data_set, string_utils, read_only, file_util |
+| [ollama_batch](#ollama_batch) | Batch-processes TSV rows through a local Ollama LLM | error_reporting, named_logger, raw_tsv, string_utils, read_only, file_util |
+| [tsv_diff](#tsv_diff) | TSV file comparison tool with order-based and primary-key modes | error_reporting, named_logger, raw_tsv, read_only, string_utils, file_util |
 | [reformatter](#reformatter) | TSV file reformatting and multi-format export | error_reporting, exporter, file_util, manifest_info, manifest_loader, named_logger, read_only, serialization |
 | [export_tester](#export_tester) | Tests exported files via re-import comparison | error_reporting, file_util, importer, manifest_loader, named_logger, read_only, round_trip |
-| [extract_test_errors](#extract_test_errors) | Standalone CLI script: extracts failed-test info from TAP test output | file_util, named_logger, read_only *(standalone CLI script)* |
+| [extract_test_errors](#extract_test_errors) | Standalone CLI script: extracts failed-test info from TAP test output | error_reporting, file_util, named_logger, read_only *(standalone CLI script)* |
 | [normalize_output](#normalize_output) | Normalizes reformatter output for bad input test comparison | *(none — standalone CLI script)* |
 
 ---
@@ -149,7 +149,7 @@ The engine's library modules live in topical sub-directories and are required by
 
 Archive / data-set format registry (TODO/archive_files.md §1). An *archive* is one on-disk file that is a **container for a set of member files** with an internal directory tree (a zip) — the load-bearing distinction from [compression](#compression), which wraps a single byte stream: an archive fans out to N members, so it cannot be a content-pipeline stage. The registry mirrors `compression`'s lazy-provider shape: a provider registers a **loader** keyed by extension (`zip`), run lazily the first time an archive of that format is opened, pulling in whatever rock it needs (or returning `nil` + reason). Registering the zip format does not require `libdeflate`; only opening a real zip does, so a project that never touches an archive runs without it, and one that does without it gets a clear "zip archives are not supported" error (logged once) instead of a crash. `list(format, bytes)` parses the central directory to enumerate members (metadata only); `read(format, bytes, member, maxBytes)` extracts one member, inflating method-8 entries via the same `libdeflate` raw-DEFLATE path the gzip provider uses and verifying each against its central-directory CRC-32 (reusing `compression.crc32`). The pure-Lua zip provider targets the common case (single-disk, non-encrypted, non-Zip64, method 0/8); Zip64, encryption, split archives, zip-slip paths, and member/size bomb caps are explicit clear errors. `formatForName` / `isArchive` classify a path by extension. Snapshots the provider registry and restores it via `global_reset`. (Not yet wired into the loader — that is archive_files.md Phase 2+.)
 
-**Dependencies:** compression, global_reset, named_logger, read_only
+**Dependencies:** compression, error_reporting, global_reset, named_logger, read_only
 
 ---
 
@@ -221,7 +221,7 @@ The content-stage registry — the sibling of the [type_wiring](#type_wiring) re
 
 Mutable in-memory representation of multiple TSV files for the migration tool. Supports loading, saving, creating, deleting, renaming, and copying files. Provides column operations (add, remove, rename, move, set type/default), row operations (add, remove, copy), cell operations (get, set, conditional set, sandboxed transform), and comment/blank line management. Includes `filesHelper()` for `Files.tsv` manipulation and `manifestHelper()` for `Manifest.transposed.tsv` access.
 
-**Dependencies:** raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger
+**Dependencies:** error_reporting, raw_tsv, file_util, string_utils, read_only, sandbox, sandbox_env, predicates, named_logger
 
 ---
 
@@ -303,7 +303,7 @@ Tests exported files by re-importing them and comparing against original source 
 
 Standalone CLI script for the test runner ([run_tests.sh](../run_tests.sh)). Parses TAP-format test output and extracts the failed-test information into a summary file, exiting non-zero when any test failed. Applies a `--log-level` argument early (before other modules load) so their loggers start at the requested level. Invoked as `lua54 extract_test_errors.lua <test_results.txt> <test_errors.txt>`; not part of the engine's `require` graph.
 
-**Dependencies:** file_util, named_logger, read_only *(standalone CLI script)*
+**Dependencies:** error_reporting, file_util, named_logger, read_only *(standalone CLI script)*
 
 ---
 
@@ -321,7 +321,7 @@ Joins related TSV files by key columns, enabling localization and data extension
 
 File system operations including path manipulation, file reading/writing, and directory management. Also the **archive integration surface** (TODO/archive_files.md §3): `resolveArchivePath(path)` splits a path like `mods/utilmod.zip/data/Item.tsv` into the container and member when the `.zip` segment is a real file on disk, and `readFileBinary` / `getFileSize` are archive-aware — a member reads (extracts) and sizes (central-directory metadata, no extraction) exactly as if it were a loose file. Because the whole loader funnels through those two functions, this lights up the entire load path with no change to `content_pipeline`, `files_desc`, or `storeRawFile`. A small per-process archive cache (keyed by container path + mtime/size, holding the parsed central directory and — within a budget — the raw bytes) avoids re-parsing the zip per member access. It is cleared by `global_reset`, and also exposed as `clearArchiveCache()` — the cache only earns its keep within a single load, so `manifest_loader.processFiles` brackets each run with a clear, bounding retained archive bytes to one run. A loose-file path takes a few cheap string checks and is otherwise untouched. `expandArchives(files, extensions, file2dir)` is the collection-side companion: after `collectFiles`, it appends each archive's collectable members as virtual paths (metadata only, no extraction) so they participate in the load like loose files.
 
-**Dependencies:** archive_formats, global_reset, named_logger, read_only, table_utils
+**Dependencies:** archive_formats, error_reporting, global_reset, named_logger, read_only, table_utils
 
 ---
 
@@ -423,7 +423,7 @@ Orchestrates package loading: discovers packages, resolves dependencies, dispatc
 
 Migration script executor for batch modifications to TSV data files at the raw level (no type parsing). Reads a TSV script file where each row is a command with positional parameters, and executes them sequentially against a DataSet. Supports `--dry-run` (validate without writing), `--verbose` (log each step), and `--log-level=LEVEL` options. CLI entry point: `lua54 migration.lua <script.tsv> <rootDir> [options]`. See [MIGRATION.md](MIGRATION.md) for full documentation.
 
-**Dependencies:** named_logger, raw_tsv, data_set, string_utils, read_only, file_util
+**Dependencies:** error_reporting, named_logger, raw_tsv, data_set, string_utils, read_only, file_util
 
 ---
 
@@ -441,7 +441,7 @@ Logging system with named loggers, multiple log levels (DEBUG, INFO, WARN, ERROR
 
 Batch-processes TSV rows through a local Ollama LLM. Reads a config TSV file specifying input/output files, columns, prompt, model settings, and optional reference data and Lua transformation code. Sends rows to Ollama in batches as JSON arrays, parses JSON array responses, and merges generated columns back into the output. Progress is tracked in a TSV file for checkpoint/resume support. Supports `--resume`, `--status`, `--dry-run`, `--verbose`, `--log-level=LEVEL`, `--model=MODEL`, `--batch-size=N`, and `--timeout=N` options. Optional `prepare_input` and `process_output` Lua files provide input/output transformation hooks. Prompt templates support `{REFERENCE:filename}` placeholders for injecting reference data. CLI entry point: `lua54 ollama_batch.lua <config.tsv> <baseDir> [options]`.
 
-**Dependencies:** named_logger, raw_tsv, string_utils, read_only, file_util *(also uses external `dkjson` and `socket.http` libraries)*
+**Dependencies:** error_reporting, named_logger, raw_tsv, string_utils, read_only, file_util *(also uses external `dkjson` and `socket.http` libraries)*
 
 ---
 
@@ -747,7 +747,7 @@ Table manipulation utilities: copy, filter, keys, values, merge, and array opera
 
 TSV file comparison tool that compares two TSV files at the data level, understanding columnar structure. Supports order-based (positional) and primary-key-based comparison modes. Features include column mapping for renamed columns, whitespace trimming, case-insensitive comparison, numeric tolerance (epsilon), column filtering (`--only`/`--exclude`), context lines, and configurable output. Works at the raw level (no type parsing). CLI entry point: `lua54 tsv_diff.lua <file1.tsv> <file2.tsv> [options]`. See [TSV_DIFF.md](TSV_DIFF.md) for full documentation.
 
-**Dependencies:** named_logger, raw_tsv, read_only, string_utils, file_util
+**Dependencies:** error_reporting, named_logger, raw_tsv, read_only, string_utils, file_util
 
 ---
 

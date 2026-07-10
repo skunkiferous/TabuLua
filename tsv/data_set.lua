@@ -29,6 +29,8 @@ local writeFile = file_util.writeFile
 local mkdir = file_util.mkdir
 local getParentPath = file_util.getParentPath
 
+local didYouMean = require("infra.error_reporting").didYouMean
+
 -- Module logger
 local logger = require("infra.named_logger").getLogger(NAME)
 
@@ -179,6 +181,22 @@ local function findDataRowByKey(fileEntry, key)
     return nil, nil
 end
 
+--- Collect the primary keys (column-1 values) of every data row, for a
+--- "did you mean 'X'?" suggestion on a row-not-found error. Error path only.
+--- @param fileEntry table The file entry
+--- @return table Sequence of primary-key strings
+local function dataRowKeys(fileEntry)
+    local keys = {}
+    local rawTSV = fileEntry.rawTSV
+    local headerIdx = fileEntry.headerRowIndex
+    for i, line in ipairs(rawTSV) do
+        if i ~= headerIdx and type(line) == "table" then
+            keys[#keys + 1] = tostring(line[1])
+        end
+    end
+    return keys
+end
+
 --- Iterator over data rows (skipping header, comments, blanks).
 --- Yields rawIndex, row for each data row.
 --- @param fileEntry table The file entry
@@ -217,6 +235,7 @@ local function resolveColumnPosition(columns, columnIndex, position)
         local ref = columnIndex[position.after]
         if not ref then
             return nil, "column not found for position.after: " .. tostring(position.after)
+                .. didYouMean(position.after, columnIndex)
         end
         return ref.index + 1, nil
     end
@@ -224,6 +243,7 @@ local function resolveColumnPosition(columns, columnIndex, position)
         local ref = columnIndex[position.before]
         if not ref then
             return nil, "column not found for position.before: " .. tostring(position.before)
+                .. didYouMean(position.before, columnIndex)
         end
         return ref.index, nil
     end
@@ -253,6 +273,7 @@ local function resolveLinePosition(fileEntry, position)
         local idx = findDataRowByKey(fileEntry, position.afterRow)
         if not idx then
             return nil, "row not found for position.afterRow: " .. tostring(position.afterRow)
+                .. didYouMean(tostring(position.afterRow), dataRowKeys(fileEntry))
         end
         return idx + 1, nil
     end
@@ -260,6 +281,7 @@ local function resolveLinePosition(fileEntry, position)
         local idx = findDataRowByKey(fileEntry, position.beforeRow)
         if not idx then
             return nil, "row not found for position.beforeRow: " .. tostring(position.beforeRow)
+                .. didYouMean(tostring(position.beforeRow), dataRowKeys(fileEntry))
         end
         return idx, nil
     end
@@ -358,6 +380,7 @@ local function assertFileLoaded(self, fileName)
     local entry = self.files[fileName]
     if not entry then
         return nil, "file not loaded: " .. tostring(fileName)
+            .. didYouMean(fileName, self.files)
     end
     return entry, nil
 end
@@ -371,6 +394,7 @@ local function assertColumnExists(fileEntry, columnName)
     local col = fileEntry.columnIndex[columnName]
     if not col then
         return nil, "column not found: " .. tostring(columnName)
+            .. didYouMean(columnName, fileEntry.columnIndex)
     end
     return col, nil
 end
@@ -674,6 +698,7 @@ function DataSet:splitFile(sourceName, targetName, keepColumns, targetColumns)
         for _, name in ipairs(split(keepColumns, "|")) do
             if not allColNames[name] then
                 return nil, "column not found in source: " .. name
+                    .. didYouMean(name, allColNames)
             end
             keepSet[name] = true
         end
@@ -689,6 +714,7 @@ function DataSet:splitFile(sourceName, targetName, keepColumns, targetColumns)
         for _, name in ipairs(split(targetColumns, "|")) do
             if not allColNames[name] then
                 return nil, "column not found in source: " .. name
+                    .. didYouMean(name, allColNames)
             end
             targetSet[name] = true
         end
@@ -1077,6 +1103,7 @@ function DataSet:getRow(fileName, key)
     local _, row = findDataRowByKey(entry, key)
     if not row then
         return nil, "row not found: " .. tostring(key)
+            .. didYouMean(tostring(key), dataRowKeys(entry))
     end
     local result = {}
     for _, col in ipairs(entry.columns) do
@@ -1150,6 +1177,7 @@ function DataSet:removeRow(fileName, key)
     local idx = findDataRowByKey(entry, key)
     if not idx then
         return nil, "row not found: " .. tostring(key)
+            .. didYouMean(tostring(key), dataRowKeys(entry))
     end
     -- Safety guard: findDataRowByKey already skips the header, but be defensive
     if idx == entry.headerRowIndex then
@@ -1175,6 +1203,7 @@ function DataSet:copyRow(fileName, sourceKey, newKey)
     local _, srcRow = findDataRowByKey(entry, sourceKey)
     if not srcRow then
         return nil, "row not found: " .. tostring(sourceKey)
+            .. didYouMean(tostring(sourceKey), dataRowKeys(entry))
     end
     -- Check for duplicate primary key
     local existing = findDataRowByKey(entry, newKey)
@@ -1211,6 +1240,7 @@ function DataSet:getCell(fileName, key, columnName)
     local _, row = findDataRowByKey(entry, key)
     if not row then
         return nil, "row not found: " .. tostring(key)
+            .. didYouMean(tostring(key), dataRowKeys(entry))
     end
     return row[col.index] or ""
 end
@@ -1231,6 +1261,7 @@ function DataSet:setCell(fileName, key, columnName, value)
     local _, row = findDataRowByKey(entry, key)
     if not row then
         return nil, "row not found: " .. tostring(key)
+            .. didYouMean(tostring(key), dataRowKeys(entry))
     end
     -- Note: findDataRowByKey skips the header row, so this can only modify data cells.
     -- Setting column 1 (primary key) changes the row's lookup key — this is intentional

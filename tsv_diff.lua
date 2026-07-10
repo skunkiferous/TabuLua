@@ -49,6 +49,14 @@ local normalizePath = file_util.normalizePath
 local isDir = file_util.isDir
 local getFilesAndDirs = file_util.getFilesAndDirs
 local readFileBinary = file_util.readFileBinary
+local didYouMean = require("infra.error_reporting").didYouMean
+
+-- Every recognised CLI option (bare flag names), for the Unknown option
+-- did-you-mean. Kept next to the arg parser (an if/elseif chain).
+local KNOWN_OPTIONS = {
+    "--context", "--epsilon", "--exclude", "--ignore-case", "--log-level",
+    "--map", "--max-diffs", "--mode", "--only", "--quiet", "--summary", "--trim",
+}
 
 -- ============================================================================
 -- INPUT LOADING (compression-aware)
@@ -1098,12 +1106,15 @@ if isMainScript then
         elseif a:match("^%-%-log%-level=") then
             local levelName = a:match("^%-%-log%-level=(.+)$")
             if not LOG_LEVELS[levelName:lower()] then
-                cliLogger:error("Unknown log level: " .. levelName)
+                cliLogger:error("Unknown log level: " .. levelName
+                    .. didYouMean(levelName:lower(), LOG_LEVELS))
                 cliLogger:error("Valid levels: debug, info, warn, error, fatal")
                 hasError = true
             end
         elseif a:match("^%-%-") then
-            cliLogger:error("Unknown option: " .. a)
+            local flag = a:match("^(%-%-[%w%-]+)") or a
+            cliLogger:error("Unknown option: " .. a
+                .. didYouMean(flag, KNOWN_OPTIONS))
             hasError = true
         elseif not file1 then
             file1 = normalizePath(a)

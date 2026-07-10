@@ -44,6 +44,11 @@ local file_util = require("infra.file_util")
 local readOnly = read_only.readOnly
 local split = string_utils.split
 local normalizePath = file_util.normalizePath
+local didYouMean = require("infra.error_reporting").didYouMean
+
+-- Every recognised CLI option (bare flag names), for the Unknown option
+-- did-you-mean. Kept next to the arg parser (an if/elseif chain).
+local KNOWN_OPTIONS = {"--dry-run", "--log-level", "--verbose"}
 
 --- Returns the module version as a string.
 --- @return string
@@ -170,6 +175,7 @@ COMMANDS.addColumn = function(ds, row)
     local columns = ds:getColumnNames(fileName)
     if not columns then
         return nil, "file not loaded: " .. tostring(fileName)
+            .. didYouMean(tostring(fileName), ds:listFiles())
     end
     local position = resolveScriptColumnPosition(afterCol, columns)
     return ds:addColumn(fileName, columnSpec, position)
@@ -190,6 +196,7 @@ COMMANDS.moveColumn = function(ds, row)
     local columns = ds:getColumnNames(fileName)
     if not columns then
         return nil, "file not loaded: " .. tostring(fileName)
+            .. didYouMean(tostring(fileName), ds:listFiles())
     end
     local position = resolveScriptColumnPosition(afterCol, columns)
     return ds:moveColumn(fileName, columnName, position)
@@ -207,6 +214,7 @@ COMMANDS.copyColumn = function(ds, row)
     local columns = ds:getColumnNames(fileName)
     if not columns then
         return nil, "file not loaded: " .. tostring(fileName)
+            .. didYouMean(tostring(fileName), ds:listFiles())
     end
     local position = resolveScriptColumnPosition(afterCol, columns)
     return ds:copyColumn(fileName, sourceColumn, newColumnName, position)
@@ -313,14 +321,19 @@ end
 COMMANDS.assert = function(ds, row)
     if not ds:hasFile(row[2]) then
         return nil, "assertion failed: file not loaded: " .. tostring(row[2])
+            .. didYouMean(tostring(row[2]), ds:listFiles())
     end
     return true
 end
 
 COMMANDS.assertColumn = function(ds, row)
     if not ds:hasColumn(row[2], row[3]) then
+        -- getColumnNames is nil when the file itself is not loaded; then no
+        -- column suggestion (the file-not-loaded case is its own diagnostic).
+        local cols = ds:getColumnNames(row[2])
         return nil, "assertion failed: column " .. tostring(row[3]) ..
             " not found in " .. tostring(row[2])
+            .. didYouMean(tostring(row[3]), cols)
     end
     return true
 end
@@ -445,12 +458,15 @@ if isMainScript then
             -- Already handled early; validate here for error reporting
             local levelName = arg_i:match("^%-%-log%-level=(.+)$")
             if not LOG_LEVELS[levelName:lower()] then
-                cliLogger:error("Unknown log level: " .. levelName)
+                cliLogger:error("Unknown log level: " .. levelName
+                    .. didYouMean(levelName:lower(), LOG_LEVELS))
                 cliLogger:error("Valid levels: debug, info, warn, error, fatal")
                 hasError = true
             end
         elseif arg_i:match("^%-%-") then
-            cliLogger:error("Unknown option: " .. arg_i)
+            local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
+            cliLogger:error("Unknown option: " .. arg_i
+                .. didYouMean(flag, KNOWN_OPTIONS))
             hasError = true
         elseif not scriptFile then
             scriptFile = normalizePath(arg_i)

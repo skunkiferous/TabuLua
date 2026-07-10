@@ -24,6 +24,7 @@ local table_utils = require("util.table_utils")
 local setToSeq = table_utils.setToSeq
 local archive_formats = require("content.archive_formats")
 local global_reset = require("util.global_reset")
+local didYouMean = require("infra.error_reporting").didYouMean
 
 --- Checks if a path is a root directory (/, \, or drive letter like C:\).
 --- @param path any The value to check
@@ -468,6 +469,7 @@ local function readArchiveMember(containerPath, memberPath, maxBytes)
     local entry = findMember(rec, memberPath)
     if not entry then
         return nil, ("member not found in archive %s: %q"):format(containerPath, memberPath)
+            .. didYouMean(memberPath, rec.byPath)
     end
     local bytes = rec.bytes
     if not bytes then
@@ -545,6 +547,7 @@ local function getFileSize(file_path)
         local entry = findMember(rec, member)
         if not entry then
             return nil, ("member not found in archive %s: %q"):format(container, member)
+                .. didYouMean(member, rec.byPath)
         end
         return entry.size
     end

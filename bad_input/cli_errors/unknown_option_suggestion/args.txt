@@ -1,0 +1,1 @@
+--log-level=error --collapse-explode tutorial/core/

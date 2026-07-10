@@ -652,7 +652,10 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
                     "a file with that name exists at: " .. table.concat(candidates, ", ") ..
                     " -- check if it is in the wrong directory")
             else
-                badVal(lcfn, "file listed in Files.tsv does not exist on disk")
+                -- No same-basename match; offer the closest actual on-disk
+                -- path (filesOnDisk is already built — no extra listing).
+                badVal(lcfn, "file listed in Files.tsv does not exist on disk"
+                    .. didYouMean(lcfn, filesOnDisk))
             end
         end
     end

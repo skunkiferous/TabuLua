@@ -69,6 +69,7 @@ local content_pipeline = require("content.content_pipeline")
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
+local didYouMean = error_reporting.didYouMean
 
 local exporter = require("serde.exporter")
 
@@ -253,6 +254,18 @@ local function createExporter(fileFormat, dataFormat)
 
     return result
 end
+
+-- Every recognised long option, as bare flag names (no `=value`). Kept beside
+-- generateUsage (which documents them) so the two can't drift, and used for the
+-- "Unknown option" did-you-mean. The arg parser is an if/elseif chain with no
+-- other central table, so this list is maintained by hand — add new options to
+-- both places.
+local KNOWN_OPTIONS = {
+    "--check-conflicts", "--clean", "--cog-docs", "--collapse-exploded",
+    "--data", "--explain-patch", "--export-dir", "--export-merged",
+    "--file", "--log-level", "--no-number-warn", "--no-unquoted-warn",
+    "--strip-cog", "--variant",
+}
 
 --- Generates the usage help text dynamically from the format configuration.
 --- @return string The help text
@@ -1009,7 +1022,8 @@ if isMainScript then
                 finalizePending()
                 -- Validate file format
                 if not FILE_FORMATS[fileMatch] then
-                    logger:error("Unknown file format: " .. fileMatch)
+                    logger:error("Unknown file format: " .. fileMatch
+                        .. didYouMean(fileMatch, FILE_FORMATS))
                     logger:error("Valid formats: " .. table.concat((function()
                         local names = {}
                         for name in pairs(FILE_FORMATS) do table.insert(names, name) end
@@ -1023,7 +1037,8 @@ if isMainScript then
             elseif dataMatch then
                 -- Validate data format
                 if not DATA_FORMATS[dataMatch] then
-                    logger:error("Unknown data format: " .. dataMatch)
+                    logger:error("Unknown data format: " .. dataMatch
+                        .. didYouMean(dataMatch, DATA_FORMATS))
                     logger:error("Valid formats: " .. table.concat((function()
                         local names = {}
                         for name in pairs(DATA_FORMATS) do table.insert(names, name) end
@@ -1060,7 +1075,8 @@ if isMainScript then
                 if level then
                     named_logger.setGlobalLevel(level)
                 else
-                    logger:error("Unknown log level: " .. levelName)
+                    logger:error("Unknown log level: " .. levelName
+                        .. didYouMean(levelName:lower(), LOG_LEVELS))
                     logger:error("Valid levels: debug, info, warn, error, fatal")
                     hasError = true
                 end
@@ -1085,7 +1101,9 @@ if isMainScript then
                     hasError = true
                 end
             elseif arg_i:match("^%-%-") then
-                logger:error("Unknown option: " .. arg_i)
+                local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
+                logger:error("Unknown option: " .. arg_i
+                    .. didYouMean(flag, KNOWN_OPTIONS))
                 hasError = true
             else
                 -- Directory argument - finalize any pending export first

@@ -13,6 +13,7 @@ local readOnly = read_only.readOnly
 local compression = require("content.compression")
 
 local logger = require("infra.named_logger").getLogger(NAME)
+local didYouMean = require("infra.error_reporting").didYouMean
 
 -- Returns the module version as a string.
 local function getVersion()
@@ -337,7 +338,10 @@ local function makeZipOps(inflate)
             end
         end
         if not entry then
+            local members = {}
+            for _, e in ipairs(entries) do members[#members + 1] = e.path end
             return nil, ("member not found in zip: %q"):format(memberPath)
+                .. didYouMean(memberPath, members)
         end
         -- Cheap up-front bomb check on the declared uncompressed size, before
         -- inflating anything (then backstopped on the actual output below).

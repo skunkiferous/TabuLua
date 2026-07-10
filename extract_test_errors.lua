@@ -52,6 +52,11 @@ local readOnly = read_only.readOnly
 local file_util = require("infra.file_util")
 local normalizePath = file_util.normalizePath
 local readFile = file_util.readFile
+
+local didYouMean = require("infra.error_reporting").didYouMean
+
+-- The only recognised CLI option, for the Unknown option did-you-mean.
+local KNOWN_OPTIONS = {"--log-level"}
 local writeFile = file_util.writeFile
 
 ---------------------------------------------------------------------------
@@ -214,12 +219,15 @@ if isMainScript then
             -- Already handled early; validate here for error reporting
             local levelName = arg_i:match("^%-%-log%-level=(.+)$")
             if not LOG_LEVELS[levelName:lower()] then
-                cliLogger:error("Unknown log level: " .. levelName)
+                cliLogger:error("Unknown log level: " .. levelName
+                    .. didYouMean(levelName:lower(), LOG_LEVELS))
                 cliLogger:error("Valid levels: debug, info, warn, error, fatal")
                 hasError = true
             end
         elseif arg_i:match("^%-%-") then
-            cliLogger:error("Unknown option: " .. arg_i)
+            local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
+            cliLogger:error("Unknown option: " .. arg_i
+                .. didYouMean(flag, KNOWN_OPTIONS))
             hasError = true
         elseif not input_file then
             input_file = normalizePath(arg_i)

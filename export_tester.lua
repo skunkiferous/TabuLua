@@ -27,8 +27,13 @@ local manifest_loader = require("loader.manifest_loader")
 
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
+local didYouMean = error_reporting.didYouMean
 
 local logger = require("infra.named_logger").getLogger(NAME)
+
+-- Every recognised CLI option (bare flag names), for the Unknown option
+-- did-you-mean. Kept next to the arg parser (an if/elseif chain).
+local KNOWN_OPTIONS = {"--export-dir", "--format", "--verbose"}
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
@@ -468,7 +473,8 @@ local function runTests(sourceDirectories, exportDir, formats, verbose)
                 logger:warn("Format directory not found: " .. formatDir)
             end
         else
-            logger:warn("Unknown format: " .. formatName)
+            logger:warn("Unknown format: " .. formatName
+                .. didYouMean(formatName, FORMAT_CONFIGS))
         end
     end
 
@@ -524,13 +530,16 @@ if isMainScript then
                 if FORMAT_CONFIGS[formatMatch] then
                     formats[#formats + 1] = formatMatch
                 else
-                    logger:error("Unknown format: " .. formatMatch)
+                    logger:error("Unknown format: " .. formatMatch
+                        .. didYouMean(formatMatch, FORMAT_CONFIGS))
                     hasError = true
                 end
             elseif arg_i == "--verbose" or arg_i == "-v" then
                 verbose = true
             elseif arg_i:match("^%-%-") then
-                logger:error("Unknown option: " .. arg_i)
+                local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
+                logger:error("Unknown option: " .. arg_i
+                    .. didYouMean(flag, KNOWN_OPTIONS))
                 hasError = true
             else
                 arg_i = normalizePath(arg_i)

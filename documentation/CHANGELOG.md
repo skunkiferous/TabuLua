@@ -37,6 +37,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
     secondary-file lookup (`exporter`).
   - New `bad_input` regression fixture `type_errors/unknown_type_suggestion`
     pins the end-to-end suggestion (`'integr' … (did you mean 'integer'?)`).
+  - **Phase 2 — CLI + tooling.** Every command-line tool now suggests the
+    closest option / format / log level on a typo, and the `data_set` /
+    `migration` data-mutation errors suggest the closest file, column, or PK:
+    - `reformatter`: unknown `--option`, `--file=` format, `--data=` format, and
+      `--log-level=`. The recognised long options are now captured in one
+      `KNOWN_OPTIONS` table beside the usage text (the parser is an if/elseif
+      chain with no other central list) so the two can't drift.
+    - `migration`, `tsv_diff`, `export_tester`, `extract_test_errors`,
+      `ollama_batch`: unknown option / log level / format, each with its own
+      hand-maintained option list next to its arg parser.
+    - `data_set`: the shared `assertFileLoaded` / `assertColumnExists` guards
+      (used ~50×) plus the row-not-found paths now append a suggestion from the
+      loaded file names / header columns / primary keys (new `dataRowKeys`
+      helper), so every delegating `migration` command benefits; `migration`'s
+      own `addColumn` / `moveColumn` / `copyColumn` / `assert` / `assertColumn`
+      checks suggest too. These sites return `nil, err`, so the suffix goes into
+      the returned string.
+    - `file_util` / `archive_formats`: "member not found in archive/zip" suggests
+      the closest member from the already-parsed central directory; `manifest_loader`'s
+      "file listed in Files.tsv does not exist on disk" suggests the closest
+      actual on-disk path (no extra directory listing).
 
 ### Changed
 

@@ -1,7 +1,8 @@
 # Did-You-Mean Audit: Suggestions for Identifier-Not-Found Diagnostics
 
-**Status: 🚧 In progress — surveyed 2026-07-10. Phase 1 landed (helper +
-all high-value data-error sites), pending user commit. Phases 2–3 not started.**
+**Status: 🚧 In progress — surveyed 2026-07-10. Phase 1 committed (helper +
+all high-value data-error sites). Phase 2 landed (CLI + tooling + data_set /
+archive sites), pending user commit. Phase 3 not started.**
 
 ## Summary
 
@@ -202,3 +203,29 @@ verified with `.\pre_commit_check.cmd`, user commit between phases.
   - **Gotcha:** `didYouMean` distinguishes sequence vs. name-keyed set by
     `candidates[1] ~= nil`, so never pass a header table keyed by BOTH index and
     name — extract the string keys first (done in `processor_executor`).
+
+- **Phase 2 — DONE (pending user commit).** CLI + tooling + data-mutation
+  errors:
+  - Every CLI tool suggests the closest option / format / log level on a typo:
+    `reformatter` (unknown `--option` — now backed by a single `KNOWN_OPTIONS`
+    table beside the usage text — plus `--file=`/`--data=` format and
+    `--log-level=`), `migration`, `tsv_diff`, `export_tester`,
+    `extract_test_errors`, `ollama_batch` (each with its own hand-kept option
+    list next to its arg parser).
+  - `data_set`: suggestions centralised in the `assertFileLoaded` /
+    `assertColumnExists` guards (used ~50×) + row-not-found paths (new
+    `dataRowKeys` helper) → loaded file names / header columns / PK keys. Every
+    delegating `migration` command benefits; `migration`'s own file/column
+    checks (`addColumn`/`moveColumn`/`copyColumn`/`assert`/`assertColumn`) also
+    suggest. These return `nil, err`, so the suffix goes into the string.
+  - `file_util` / `archive_formats` member-not-found → closest archive member
+    (central directory already parsed); `manifest_loader` "does not exist on
+    disk" → closest actual on-disk path (`filesOnDisk` already built).
+  - New `bad_input/cli_errors/unknown_option_suggestion` fixture pins the CLI
+    suggestion end-to-end. Docs updated (error_reporting added as a dependency
+    to data_set, file_util, archive_formats, migration, tsv_diff, ollama_batch,
+    extract_test_errors).
+  - **Gotcha:** `pre_commit_check.cmd`'s unit-test step runs `run_tests.cmd`
+    with RELATIVE paths (no pushd) — run it from the project root or it
+    falsely reports unit-test failure (the PowerShell cwd can drift after a
+    Bash `cd`).
