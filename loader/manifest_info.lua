@@ -311,7 +311,16 @@ local function loadManifestFile(badVal, raw_files, cog_env, manifest_file)
     local cols = parsers.recordFieldNames(FORMATTED_MANIFEST_SPEC)
     for _,col in ipairs(cols) do
         if not found[col] then
-            badVal(manifest_file, "Missing column '" .. col .. "' in manifest file")
+            -- A required column is absent — often a header typo. Suggest the
+            -- closest actual header column (found is polluted with optional
+            -- spec names by now, so read the real columns off the header).
+            local present = {}
+            for i = 1, #header do
+                local hn = header[i].name
+                if hn:sub(1, 9) ~= '__comment' then present[#present + 1] = hn end
+            end
+            badVal(manifest_file, "Missing column '" .. col .. "' in manifest file"
+                .. didYouMean(col, present))
             return nil
         end
     end
@@ -898,6 +907,68 @@ local function unknownGateIds(packages, skippedGates)
     return out
 end
 
+--- The provided-variant typo heuristic behind `--check-conflicts`, the variant
+--- analogue of `unknownGateIds` (did_you_mean.md Phase 3). A `--variant=X` that
+--- names no known variant selects nothing and is silently ignored —
+--- `validateVariantGroups` only checks values that belong to a declared group.
+--- The distinguishing signal: a provided variant matching NO known variant
+--- anywhere. Known = every value any `variant_group` allows, PLUS every value
+--- any loaded Files.tsv `variant` column mentions — variants legitimately exist
+--- outside declared groups via file selection, so those uses count as known
+--- (mirroring how `unknownGateIds` counts manifest mentions as known).
+--- Matching is case-sensitive (file/group selection is, so a case slip is
+--- itself a typo); the suggestion is case-insensitive.
+--- @param packages table package_id -> manifest, the loaded set
+--- @param providedVariants table|nil Sequence or set of the user's --variant= values
+--- @param fileVariants table|nil Set of variant values mentioned in Files.tsv
+---   `variant` columns (joinMeta.knownVariants)
+--- @return table Sorted list of {name=string, suggest=string|nil} — `suggest`
+---   is the closest known variant by case-insensitive edit distance, or nil
+local function unknownVariants(packages, providedVariants, fileVariants)
+    if not providedVariants then return {} end
+    -- Normalise provided variants to a list of names (sequence or set).
+    local provided = {}
+    if providedVariants[1] ~= nil then
+        for _, v in ipairs(providedVariants) do provided[#provided + 1] = v end
+    else
+        for v in pairs(providedVariants) do provided[#provided + 1] = v end
+    end
+    if #provided == 0 then return {} end
+    -- Known set (exact) + lowercase -> original casing (for suggestions).
+    local known, knownLc = {}, {}
+    local function addKnown(v)
+        if type(v) == "string" and v ~= "" and not known[v] then
+            known[v] = true
+            knownLc[v:lower()] = v
+        end
+    end
+    for _, manifest in pairs(packages or {}) do
+        for _, group in ipairs(manifest.variant_groups or {}) do
+            for _, v in ipairs(group[2] or {}) do addKnown(v) end
+        end
+    end
+    for v in pairs(fileVariants or {}) do addKnown(v) end
+    -- Sorted lowercase candidate list, so the did-you-mean pick is deterministic
+    -- (closestMatch keeps the first of equally-close ties).
+    local knownLcList = {}
+    for lc in pairs(knownLc) do knownLcList[#knownLcList + 1] = lc end
+    table.sort(knownLcList)
+    table.sort(provided)
+    local out = {}
+    for _, name in ipairs(provided) do
+        if not known[name] then
+            local lc = name:lower()
+            local suggest = knownLc[lc]
+            if not suggest then
+                local near = string_utils.closestMatch(lc, knownLcList)
+                suggest = near and knownLc[near] or nil
+            end
+            out[#out + 1] = {name = name, suggest = suggest}
+        end
+    end
+    return out
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -911,6 +982,7 @@ local API = {
     resolveDependencies = resolveDependencies,
     runPackageBootstraps = runPackageBootstraps,
     unknownGateIds = unknownGateIds,
+    unknownVariants = unknownVariants,
     validateVariantGroups = validateVariantGroups,
     versionSatisfies = versionSatisfies,
     FILENAME = MANIFEST_FILENAME,

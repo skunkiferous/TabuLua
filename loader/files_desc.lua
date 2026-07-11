@@ -28,6 +28,8 @@ require("wiring.builtin_wiring")
 local hasOnLoad = type_wiring.hasOnLoad
 local descriptorColumnsByName = type_wiring.descriptorColumnsByName
 
+local didYouMean = require("infra.error_reporting").didYouMean
+
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 local table_utils = require("util.table_utils")
@@ -202,7 +204,13 @@ local function parseFilesDescHeader(file_name, file, log)
             if decl then
                 indicesByName[decl.name] = idx
             else
-                logger:warn("Column ignored: " .. colStr)
+                -- Unrecognised column — suggest the closest known column
+                -- ("name:type") when it looks like a typo of a real one.
+                local known = {}
+                for k in pairs(CORE_COLUMNS_BY_HEADER) do known[#known + 1] = k end
+                for k in pairs(optByHeader) do known[#known + 1] = k end
+                logger:warn("Column ignored: " .. colStr
+                    .. didYouMean(colStr, known))
             end
         end
     end
@@ -325,6 +333,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local lcSkippedFiles = opts.lcSkippedFiles
     local loadedPackages = opts.loadedPackages or {}
     local skippedGates = opts.skippedGates
+    local knownVariants = opts.knownVariants
 
     local indicesByName = parseFilesDescHeader(file_name, file, log)
     fn2Idx[file_name] = indicesByName
@@ -369,6 +378,12 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                 if variantIdx then
                     local variantVal = row[variantIdx] and row[variantIdx].parsed
                     if variantVal and variantVal ~= '' then
+                        -- Record every variant any row mentions (selected or
+                        -- not) as a KNOWN variant, for the --check-conflicts
+                        -- provided-variant typo heuristic
+                        -- (manifest_info.unknownVariants). Variants legitimately
+                        -- exist here outside declared variant_groups.
+                        if knownVariants then knownVariants[variantVal] = true end
                         if not variants or not variants[variantVal] then
                             if lcSkippedFiles then
                                 lcSkippedFiles[lcfn] = true
@@ -687,8 +702,13 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         -- (manifest_info.unknownGateIds). Stored on metaMaps so it rides
         -- joinMeta out to the reformatter.
         skippedGates = {},
+        -- Every variant value any Files.tsv `variant` column mentions
+        -- (selected or not), for the provided-variant typo heuristic
+        -- (manifest_info.unknownVariants). Rides joinMeta like skippedGates.
+        knownVariants = {},
     }
     metaMaps.skippedGates = opts.skippedGates
+    metaMaps.knownVariants = opts.knownVariants
     for field, map in pairs(metaMaps) do
         opts[field] = map
     end

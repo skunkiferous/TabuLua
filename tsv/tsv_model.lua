@@ -213,7 +213,8 @@ local function newHeaderColumn(params, col_idx, column)
                 .. "' is identical to the column type (no-op)")
         elseif not parsers.parseType(error_reporting.nullBadVal, widenTo, false) then
             badVal(widenTo, "schema overlay: widenTo '" .. widenTo
-                .. "' on column '" .. cn .. "' is not a valid type")
+                .. "' on column '" .. cn .. "' is not a valid type"
+                .. parsers.unknownTypeSuffix(widenTo))
         else
             local ok, wider = pcall(parsers.extendsOrRestrict, col_type_spec, widenTo)
             if ok and wider then

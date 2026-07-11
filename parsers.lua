@@ -126,6 +126,9 @@ local API = {
     getComparator = registration.getComparator,
     getVersion = utils.getVersion,
     readOnlyTuple = readOnlyTuple,
+    -- " (did you mean 'X'?)" for an unknown type NAME (filtered registry names),
+    -- or "" — for identifier-not-found diagnostics outside the parsers module.
+    unknownTypeSuffix = utils.unknownTypeSuffix,
 
     -- "Internal" API, only exported so it can be tested
     -- Do not use directly; might change in the future

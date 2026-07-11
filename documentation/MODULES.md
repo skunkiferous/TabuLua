@@ -111,7 +111,7 @@ The engine's library modules live in topical sub-directories and are required by
 |--------|-------------|--------------|
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, string_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, patch_executor, patch_lineage, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor |
-| [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
+| [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
 
 **`parsers/`**
 
@@ -330,7 +330,7 @@ File system operations including path manipulation, file reading/writing, and di
 
 Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically. Two row-level gates run in `processFilesDesc` before a row takes effect: the `variant` filter and `onlyIfPackages` package gating (a row listing package ids is active only when every one is loaded — the declarative half of optional mod compatibility); a gated-off row's file is skipped like a variant-filtered one (not parsed, not exported, exempt from the existence check), and its not-loaded gate ids are collected into `joinMeta.skippedGates` (id → gated file names) for the `--check-conflicts` typo heuristic — a skipped row exits before descriptor-column storage, so this collector is the only record of them.
 
-**Dependencies:** builtin_wiring, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring
+**Dependencies:** builtin_wiring, error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring
 
 ---
 

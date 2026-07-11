@@ -58,6 +58,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
       the closest member from the already-parsed central directory; `manifest_loader`'s
       "file listed in Files.tsv does not exist on disk" suggests the closest
       actual on-disk path (no extra directory listing).
+  - **Phase 3 — investigations + re-audit.**
+    - **Provided-variant typo check** (the variant analogue of the
+      `onlyIfPackages` gate-id heuristic). A `--variant=X` that names no known
+      variant selects nothing and is silently ignored — `validateVariantGroups`
+      only checks values belonging to a declared group. Resolving the survey's
+      open question: variants legitimately exist *outside* declared
+      `variant_groups` (the Files.tsv `variant` column selects files by variants
+      that need no group), so the "known" set is every `variant_group` value
+      **plus** every value any Files.tsv `variant` column mentions (collected as
+      `joinMeta.knownVariants`, riding out like `skippedGates`). New
+      `manifest_info.unknownVariants` reports the suspects (case-sensitive
+      membership — a case slip is itself a typo — with a case-insensitive
+      suggestion) in a `=== --variant check ===` section under `--check-conflicts`.
+    - **Re-audit hits.** `schema overlay: widenTo 'X' … is not a valid type`
+      (`tsv_model`) now suggests the closest real type name (via the newly
+      exported `parsers.unknownTypeSuffix`); a manifest `Missing column 'X'`
+      (`manifest_info`) and a Files.tsv `Column ignored: X` (`files_desc`) each
+      suggest the closest actual/known column. New `bad_input` fixture
+      `files_tsv_errors/column_typo_suggestion`.
 
 ### Changed
 

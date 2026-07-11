@@ -1,8 +1,9 @@
 # Did-You-Mean Audit: Suggestions for Identifier-Not-Found Diagnostics
 
-**Status: 🚧 In progress — surveyed 2026-07-10. Phase 1 committed (helper +
-all high-value data-error sites). Phase 2 landed (CLI + tooling + data_set /
-archive sites), pending user commit. Phase 3 not started.**
+**Status: ✅ Complete — surveyed 2026-07-10. Phase 1 committed (helper + all
+high-value data-error sites), Phase 2 committed (CLI + tooling + data_set /
+archive sites). Phase 3 landed (variant-typo check + re-audit hits), pending
+user commit.**
 
 ## Summary
 
@@ -229,3 +230,25 @@ verified with `.\pre_commit_check.cmd`, user commit between phases.
     with RELATIVE paths (no pushd) — run it from the project root or it
     falsely reports unit-test failure (the PowerShell cwd can drift after a
     Bash `cd`).
+
+- **Phase 3 — DONE (pending user commit).** Investigations + re-audit.
+  - **Resolved the open question:** provided variants DO legitimately exist
+    outside declared `variant_groups` — the Files.tsv `variant` column selects
+    files by variants that need no group ([files_desc.lua:369-378](../loader/files_desc.lua#L369-L378)).
+    So "known variants" = every `variant_group` value ∪ every Files.tsv
+    `variant` mention. The latter is collected into `joinMeta.knownVariants`
+    (rides out like `skippedGates`). New `manifest_info.unknownVariants`
+    (case-sensitive membership, case-insensitive suggestion) reports suspects in
+    a `=== --variant check ===` block under `--check-conflicts`, mirroring
+    `unknownGateIds`. Spec added to `only_if_packages_spec`.
+  - **Re-audit hits** (from the two survey greps): `schema overlay: widenTo
+    'X' … is not a valid type` ([tsv_model.lua:216](../tsv/tsv_model.lua#L216))
+    → suggests via the newly exported **`parsers.unknownTypeSuffix`**; manifest
+    `Missing column 'X'` ([manifest_info.lua:314](../loader/manifest_info.lua#L314))
+    → closest actual header column; Files.tsv `Column ignored: X`
+    ([files_desc.lua:205](../loader/files_desc.lua#L205)) → closest known
+    `name:type`. New `bad_input/files_tsv_errors/column_typo_suggestion` fixture.
+    files_desc gains an error_reporting dependency.
+  - Excluded (confirmed non-goals): the `is not a valid '<type>'` cell errors
+    (value-shaped, not identifier typos) and the ~30 `Unknown operation` apiCall
+    copies.

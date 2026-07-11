@@ -1,0 +1,4 @@
+package_id:package_id	test.files.columntypo
+name:string	Test Column Typo Suggestion
+version:version	1.0.0
+description:markdown	Files.tsv column 'joinColmn' should suggest 'joinColumn'

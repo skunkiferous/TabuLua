@@ -1,0 +1,3 @@
+fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	loadOrder:number	description:text	joinColmn:name|nil
+Data.tsv	Data		true	100	Data file
+Files.tsv	Files		true	0	This file

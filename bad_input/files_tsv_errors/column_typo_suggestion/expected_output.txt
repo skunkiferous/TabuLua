@@ -1,0 +1,2 @@
+TS	WARN	[files_desc]	Column ignored: joinColmn:name|nil (did you mean 'joinColumn:name|nil'?)
+TS	WARN	[reformatter]	Content of {DIR}/Files.tsv has changed

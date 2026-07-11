@@ -250,3 +250,40 @@ describe("manifest_info.unknownGateIds", function()
     assert.same({}, manifest_info.unknownGateIds({["Core"] = {}}, {}))
   end)
 end)
+
+describe("manifest_info.unknownVariants", function()
+  -- "Known" = variant_group values + every Files.tsv `variant` mention.
+  local packages = {
+    ["Core"] = {variant_groups = {{"lang", {"en", "fr"}, "en"}}},
+  }
+  local fileVariants = {ios = true, android = true}  -- used only by file selection
+
+  it("excludes group + file variants, and suggests near-misses", function()
+    local provided = {"en", "ios", "androd", "totally-wrong"}
+    local suspects = manifest_info.unknownVariants(packages, provided, fileVariants)
+    -- "en" (group) and "ios" (file) are known; the rest are flagged.
+    assert.equals(2, #suspects)
+    -- Sorted by name: androd, totally-wrong
+    assert.equals("androd", suspects[1].name)
+    assert.equals("android", suspects[1].suggest)  -- near a file variant
+    assert.equals("totally-wrong", suspects[2].name)
+    assert.is_nil(suspects[2].suggest)             -- nothing close enough
+  end)
+
+  it("flags a case slip (selection is case-sensitive) and suggests the real casing", function()
+    local suspects = manifest_info.unknownVariants(packages, {"EN"}, fileVariants)
+    assert.equals(1, #suspects)
+    assert.equals("EN", suspects[1].name)
+    assert.equals("en", suspects[1].suggest)
+  end)
+
+  it("accepts a set of provided variants as well as a sequence", function()
+    local suspects = manifest_info.unknownVariants(packages, {fr = true, ios = true}, fileVariants)
+    assert.same({}, suspects)
+  end)
+
+  it("returns an empty list when no variants were provided", function()
+    assert.same({}, manifest_info.unknownVariants(packages, nil, fileVariants))
+    assert.same({}, manifest_info.unknownVariants(packages, {}, fileVariants))
+  end)
+end)

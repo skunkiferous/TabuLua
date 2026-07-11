@@ -833,6 +833,24 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
                 end
                 print(table.concat(lines, "\n"))
             end
+            -- Provided-variant typo heuristic (did_you_mean.md §3): a --variant=X
+            -- naming no known variant selects nothing and is silently ignored.
+            -- Known = variant_group values + every Files.tsv `variant` mention.
+            local badVariants = manifest_info.unknownVariants(result.packages,
+                opt_variants, result.joinMeta and result.joinMeta.knownVariants)
+            if #badVariants > 0 then
+                local lines = {"", "=== --variant check ===", "",
+                    "Selected variants matching no variant group and no"
+                    .. " Files.tsv variant (selects nothing — possible typos):"}
+                for _, s in ipairs(badVariants) do
+                    local line = "  '" .. s.name .. "'"
+                    if s.suggest then
+                        line = line .. "   (did you mean '" .. s.suggest .. "'?)"
+                    end
+                    lines[#lines + 1] = line
+                end
+                print(table.concat(lines, "\n"))
+            end
         end
         local errors = badVal.errors
         if errors > 0 then
