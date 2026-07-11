@@ -13,7 +13,7 @@ The engine's library modules live in topical sub-directories and are required by
 | `tsv/` | Core TSV data model | raw_tsv, raw_eav, tsv_model, exploded_columns, file_joining, data_set |
 | `serde/` | Serialize ↔ deserialize / import / export | serialization, deserialization, importer, round_trip, schema_validator, exporter |
 | `content/` | Pre-parse content pipeline + transcoders | content_pipeline, builtin_content_stages, compression, archive_formats, lua_cog, cog_discovery, doc_generator, eav_transcoder, json_transcoders, xml_transcoder, tsv_transcoders, lua_transcoder |
-| `wiring/` | Type wiring, validation, processors | type_wiring, builtin_wiring, graph_helpers, graph_wiring, validator_executor, validator_helpers, processor_executor |
+| `wiring/` | Type wiring, validation, processors | type_wiring, builtin_wiring, graph_helpers, graph_wiring, graph_layout, validator_executor, validator_helpers, processor_executor |
 | `overrides/` | Mod-override engine | patch_executor, patch_lineage, schema_overlay |
 | `loader/` | Package loading orchestration | manifest_info, manifest_loader, files_desc |
 | `parsers/` | Type-parsing package (unchanged) | parsers.builtin, parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.registration, parsers.schema_export, parsers.state, parsers.type_parsing, parsers.utils |
@@ -93,6 +93,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [builtin_wiring](#builtin_wiring) | Registers the built-in `Type` / `enum` / `custom_type_def` `onLoad` handlers, the ten optional `Files.tsv` columns, the graph-family per-typeName cascade, and the edge-consistency engine post-pass with the type-wiring registry | error_reporting, global_reset, graph_helpers, graph_wiring, named_logger, parsers, read_only, type_wiring |
 | [graph_helpers](#graph_helpers) | Graph data primitives: accessors, edge-key codec, cycle detection, traversal, and validators | error_reporting, read_only |
 | [graph_wiring](#graph_wiring) | Family detection helpers for graph-shaped record types (`detectFamily`, `detectRole`, `detectEdgeFamily`). After Phase 2b the dispatch / validation entry points moved into the type-wiring registry | read_only |
+| [graph_layout](#graph_layout) | Pure, family-agnostic layered (Sugiyama) graph-layout engine: node names + directed adjacency → integer `{x,y,layer}` per node plus edge polylines and a crossing count | read_only |
 | [validator_executor](#validator_executor) | Sandboxed execution of row, file, and package validators | graph_helpers, named_logger, read_only, sandbox, sandbox_env, serialization, type_wiring, validator_helpers |
 | [validator_helpers](#validator_helpers) | Helper functions for validator expressions | read_only, serialization |
 | [processor_executor](#processor_executor) | Sandboxed execution of file pre-processors that mutate parsed rows | error_reporting, named_logger, parsers, patch_lineage, read_only, sandbox, sandbox_env, table_utils, type_wiring, validator_executor, validator_helpers |
@@ -359,6 +360,17 @@ Detects graph-family files in a manifest and auto-attaches their completion pre-
 `validateEdgeFiles(...)` is the post-load consistency check for `edgesFor`-attached edge files: target exists, family matches, ≤1 edge file per node file, every endpoint is a row in the node file, every edge corresponds to a declared link (checked after pre-processor completion). It runs after the validator phase in [manifest_loader](#manifest_loader).
 
 **Dependencies:** graph_helpers, named_logger, read_only
+
+---
+
+### graph_layout
+**File:** [graph_layout.lua](../wiring/graph_layout.lua)
+
+Pure, family-agnostic layered (Sugiyama-style) graph-layout engine, the geometry half of the `--file=svg` export (`TODO/graph_svg_export.md`). It knows nothing about graph families, TSV rows, SVG, or the engine runtime — the single entry point `layout(nodes, adjacency, opts)` takes a flat list of node names plus a directed adjacency (`name → array of names it points to`) and returns `{ nodes = {name → {x, y, layer}}, edges = { {from, to, points} }, width, height, crossings }`, so any directed graph (a graph-data file today, a package-dependency graph later) can be drawn through the same code.
+
+Four stages: **layer assignment** (longest-path from the roots, via Kahn relaxation whose result is pop-order-independent), **virtual nodes** (edges spanning more than one layer are split into dummy chains so every layered edge joins adjacent layers, and the dummies become polyline bend points), **crossing reduction** (the wmedian heuristic swept a configurable number of times with best-of retention, since the heuristic is not monotone), and **coordinate assignment** (`y = layer·spacing`; `x` from the within-layer order plus a light centre-under-the-widest-layer pass). Output is **integer coordinates only** and every ordering tie breaks on the node name, so identical input yields byte-identical output on every run and platform — the same determinism discipline as [package_order_determinism.md]. The reported `crossings` count is surfaced (not hidden inside the picture) so callers and tests can see the heuristic's result. Exact crossing minimization is NP-hard; this targets *low*, not provably minimal, crossings.
+
+**Dependencies:** read_only
 
 ---
 

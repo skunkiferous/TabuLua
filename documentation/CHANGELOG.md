@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Layered graph-layout engine** (`TODO/graph_svg_export.md`, Phase 1). New
+  **`wiring/graph_layout.lua`** with a single pure entry point
+  **`layout(nodes, adjacency, opts)`** that turns a flat list of node names plus
+  a directed adjacency (`name → array of names it points to`) into
+  `{ nodes = {name → {x, y, layer}}, edges = { {from, to, points} }, width,
+  height, crossings }`. It runs the classic four-stage Sugiyama pipeline —
+  longest-path layer assignment, dummy-node insertion for edges that span more
+  than one layer, wmedian crossing reduction (configurable sweeps, best-of
+  retention), and integer coordinate assignment with a light per-layer centering
+  pass. The engine is family-agnostic (knows nothing about graph families, TSV
+  rows, or SVG), so it can lay out any directed graph. Output is integer-only and
+  every ordering tie breaks on the node name, so identical input yields
+  byte-identical output on every run and platform; the reported `crossings` count
+  is surfaced for callers and tests. This is the geometry half of the coming
+  `--file=svg` export; the renderer and exporter wiring land in later phases.
+  Covered by `spec/graph_layout_spec.lua` (layering, coordinates, long-edge bend
+  points, the unavoidable K2,2 crossing, and determinism across runs and input
+  orderings).
+
 - **"Did you mean …?" suggestions on identifier-not-found diagnostics**
   (`TODO/did_you_mean.md`, Phase 1). New **`error_reporting.didYouMean(value,
   candidates, opt_maxDistance)`** returns a `" (did you mean 'X'?)"` suffix (note
