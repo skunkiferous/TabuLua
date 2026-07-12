@@ -396,6 +396,42 @@ parsers.registerAlias(nullBadVal, 'patch', '{}')
 -- against the matched TARGET row rather than at load against the rule row.
 parsers.registerAlias(nullBadVal, 'bulk_patch', '{}')
 
+-- ============================================================
+-- Engine ROLE typeNames (TODO/non_table_files.md Phase 3)
+--
+-- Every name below is a word a Files.tsv row uses to say what the engine should DO
+-- with a file — parse its rows as type definitions, apply it as a patch, copy it as
+-- an asset, ignore it — rather than the name of the record type the file's rows ARE.
+--
+-- Two checks in files_desc are about TABLE types, and are category errors when
+-- applied to a role:
+--
+--   * "typeName 'X' should match fileName 'Y' without extension" — a role is not
+--     named after its file. `ui/theme.json` declared `asset_file` is correct, and
+--     three files can all be `asset_file`.
+--   * "Multiple types with name 'X'" — several files legitimately share a role. A
+--     package with three patches is not declaring the type `patch` three times.
+--
+-- Both fired on every role typeName, which is why a clean tutorial run has been
+-- emitting eight warnings a user can do nothing about. Marking the role here fixes
+-- the whole class at once, and a user type joining a role tag (`tags=IgnoredFile`)
+-- keeps its own name and its own checks, as it should.
+-- ============================================================
+for _, roleName in ipairs({
+    "asset_file",       -- the file is an asset: not a table (AssetFile tag)
+    "MigrationScript",  -- the file is a migration script: not loaded (IgnoredFile tag)
+    "patch",            -- the file's rows patch another file's rows
+    "bulk_patch",       -- ...ditto, by filter/transform rule
+    "SchemaOverlay",    -- the file's rows loosen another file's column metadata
+    "custom_type_def",  -- the file's rows DEFINE types
+    "type_wiring_def",  -- ...and its rows wire behaviour onto them
+    "Type",             -- the file's rows define types (the original two)
+    "enum",
+    "files",            -- Files.tsv itself: the descriptor, not a table
+}) do
+    type_wiring.register(roleName, {role = true})
+end
+
 -- Content-pipeline transcoder selection (see TODO/content_pipeline.md Phase 3).
 -- A non-data text/binary file (e.g. a .json) is normally copied through as an
 -- asset; setting `transcoder` to a registered transcoder id (e.g. json:objects)

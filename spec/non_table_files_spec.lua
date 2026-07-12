@@ -31,6 +31,7 @@ local manifest_loader = require("loader.manifest_loader")
 local reformatter = require("reformatter")
 local exporter = require("serde.exporter")
 local error_reporting = require("infra.error_reporting")
+local named_logger = require("infra.named_logger")
 
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))
@@ -49,6 +50,13 @@ local MANIFEST = table.concat({
     "version:version\t0.1.0",
     "description:markdown\tPackage with declared assets",
 }, "\n") .. "\n"
+
+-- Same package, plus the manifest globs: the BULK form of the same two
+-- declarations. Every .json under ui/ is an asset; temp files and the scratch
+-- directory are not there at all.
+local MANIFEST_GLOBS = MANIFEST
+    .. "asset_files:{string}|nil\t\"ui/*.json\"\n"
+    .. "ignored_files:{string}|nil\t\"*.tmp.tsv\",\"scratch/**\"\n"
 
 -- The one declared TABLE every package here has. `007` is deliberate: it parses to
 -- 7 and REFORMATS to "7", so an in-place reformat of this file is guaranteed to
@@ -93,15 +101,26 @@ describe("non-table files (asset_file / ignored roles)", function()
     end)
 
     -- Builds a package whose Files.tsv is FILES_HEADER .. `rows`, plus Item.tsv and
-    -- whatever extra files `extras` names.
-    local function makePkg(rows, extras)
+    -- whatever extra files `extras` names (a name may include a subdirectory, which
+    -- is created). `opt_manifest` overrides the default manifest.
+    local function makePkg(rows, extras, opt_manifest)
         local pkg_dir = path_join(temp_dir, "Pkg")
         assert(lfs.mkdir(pkg_dir))
-        assert(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), MANIFEST))
+        assert(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME),
+            opt_manifest or MANIFEST))
         assert(file_util.writeFile(path_join(pkg_dir, "Files.tsv"),
             FILES_HEADER .. "Item.tsv\tItem\t\ttrue\t100\tItems\t\n" .. (rows or "")))
         assert(file_util.writeFileBinary(path_join(pkg_dir, "Item.tsv"), ITEM_TSV))
         for name, content in pairs(extras or {}) do
+            local subdir = name:match("^(.*)/[^/]+$")
+            if subdir then
+                -- One mkdir per level: "scratch/deep" needs both.
+                local sofar = pkg_dir
+                for segment in subdir:gmatch("[^/]+") do
+                    sofar = path_join(sofar, segment)
+                    lfs.mkdir(sofar)
+                end
+            end
             assert(file_util.writeFileBinary(path_join(pkg_dir, name), content))
         end
         return pkg_dir
@@ -116,6 +135,20 @@ describe("non-table files (asset_file / ignored roles)", function()
 
     local function messages()
         return table.concat(log_messages, " | ")
+    end
+
+    -- files_desc reports through badVal.logger, so a capturing logger there is how
+    -- a test sees its warnings (the default badVal.logger in this spec is the null
+    -- one). Returns the logger and the list it appends WARN messages to.
+    local function capturingLogger()
+        local warnings = {}
+        local logger = named_logger.new(function(_self, level, message)
+            if level == named_logger.WARN then
+                warnings[#warnings + 1] = tostring(message)
+            end
+            return true
+        end)
+        return logger, warnings
     end
 
     describe("a declared asset survives to the export, for every extension", function()
@@ -199,9 +232,12 @@ describe("non-table files (asset_file / ignored roles)", function()
         it("declares an asset without warning about it", function()
             -- The old route — invent a typeName, omit the transcoder — worked, but
             -- warned "Don't know how to process". Declaring the ROLE is silent.
+            -- stray.json is the control: an UNdeclared file of the same extension,
+            -- which must still warn — otherwise this test would pass just as well
+            -- with a capture that sees nothing at all.
             local warnings = {}
             local pkg_dir = makePkg("theme.json\tasset_file\t\tfalse\t200\tUI theme\t\n",
-                {["theme.json"] = THEME_JSON})
+                {["theme.json"] = THEME_JSON, ["stray.json"] = THEME_JSON})
             local logger = require("infra.named_logger").getLogger("manifest_loader")
             local realWarn = logger.warn
             logger.warn = function(self, msg) warnings[#warnings + 1] = msg; return realWarn(self, msg) end
@@ -209,10 +245,14 @@ describe("non-table files (asset_file / ignored roles)", function()
             logger.warn = realWarn
             assert.is_true(ok, tostring(err))
 
+            local sawStray = false
             for _, w in ipairs(warnings) do
                 assert.is_falsy(w:match("theme%.json"),
                     "a declared asset should not warn: " .. w)
+                if w:match("stray%.json") then sawStray = true end
             end
+            assert.is_true(sawStray,
+                "control: the UNdeclared .json must still warn (else nothing is being captured)")
         end)
     end)
 
@@ -275,6 +315,159 @@ describe("non-table files (asset_file / ignored roles)", function()
                 path_join(export_dir, "json-json", "migrate_v2.json")))
             -- The source file is of course still on disk, untouched.
             assert.is_not_nil(file_util.readFile(path_join(pkg_dir, "migrate_v2.tsv")))
+        end)
+    end)
+
+    describe("manifest globs (asset_files / ignored_files)", function()
+        -- The bulk form of the same two declarations, for packages where naming
+        -- every file in Files.tsv is not the point.
+        it("makes every glob-matched file an asset, with no Files.tsv row", function()
+            local pkg_dir = makePkg(nil,
+                {["ui/theme.json"] = THEME_JSON}, MANIFEST_GLOBS)
+            local export_dir = path_join(temp_dir, "out")
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors, messages())
+            -- No row declares it, and yet it is neither parsed nor dropped: the
+            -- manifest already said what it is.
+            assert.is_nil(findBySuffix(result.tsv_files, "ui/theme.json"))
+            assert.is_not_nil(findBySuffix(result.raw_files, "ui/theme.json"))
+
+            reformatter.processFiles({pkg_dir},
+                {{fn = exporter.exportJSON, subdir = "json-json"}},
+                {exportDir = export_dir})
+            assert.equals(THEME_JSON, file_util.readFileBinary(
+                path_join(export_dir, "json-json", "ui", "theme.json")))
+        end)
+
+        it("ignores glob-matched temp files SILENTLY — the annoyance that started this", function()
+            -- A temp .tsv used to be an error, then a warning. Now a package can say
+            -- "these are not mine" once, and the loader says nothing at all about
+            -- them: not loaded, not exported, not warned.
+            local warnings = {}
+            local logger = require("infra.named_logger").getLogger("manifest_loader")
+            local realWarn = logger.warn
+            logger.warn = function(self, msg) warnings[#warnings + 1] = msg; return realWarn(self, msg) end
+
+            local pkg_dir = makePkg(nil, {
+                ["Item.tmp.tsv"] = ITEM_TSV,
+                ["scratch/wip.tsv"] = ITEM_TSV,
+                ["scratch/deep/notes.json"] = THEME_JSON,
+                -- Control: undeclared and matched by NO glob, so it must still warn.
+                -- Without it, "no warning mentions the ignored files" would pass even
+                -- if the capture saw nothing at all.
+                ["Loose.tsv"] = ITEM_TSV,
+            }, MANIFEST_GLOBS)
+            -- pcall so the logger is always restored, even on a failure.
+            local ok, result = pcall(manifest_loader.processFiles, {pkg_dir}, badVal)
+            logger.warn = realWarn
+            assert.is_true(ok, tostring(result))
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors, messages())
+
+            for _, name in ipairs({"Item.tmp.tsv", "scratch/wip.tsv", "scratch/deep/notes.json"}) do
+                assert.is_nil(findBySuffix(result.tsv_files, name), name .. " was parsed")
+                assert.is_nil(findBySuffix(result.raw_files, name), name .. " was exported")
+            end
+            local sawControl = false
+            for _, w in ipairs(warnings) do
+                assert.is_falsy(w:match("tmp%.tsv") or w:match("scratch"),
+                    "an ignored_files glob must silence the file entirely, got: " .. w)
+                if w:match("Loose%.tsv") then sawControl = true end
+            end
+            assert.is_true(sawControl,
+                "control: the undeclared Loose.tsv must still warn (else nothing is captured)")
+            -- The real data is untouched by any of this.
+            assert.is_not_nil(findBySuffix(result.tsv_files, "/Item.tsv"))
+        end)
+
+        it("does not let a glob reach outside the package that declares it", function()
+            -- Ownership is by package (longest root prefix), and the glob is matched
+            -- against the path relative to ITS OWN package root — the same rule that
+            -- makes a Files.tsv relocatable. A sibling package's identically-named
+            -- file is none of this manifest's business.
+            local pkg_dir = makePkg(nil, {["Item.tmp.tsv"] = ITEM_TSV}, MANIFEST_GLOBS)
+
+            local other = path_join(temp_dir, "Other")
+            assert(lfs.mkdir(other))
+            assert(file_util.writeFile(path_join(other, MANIFEST_FILENAME), table.concat({
+                "package_id:package_id\tOther",
+                "name:string\tOther Package",
+                "version:version\t0.1.0",
+                "description:markdown\tNo globs here",
+            }, "\n") .. "\n"))
+            assert(file_util.writeFile(path_join(other, "Files.tsv"),
+                FILES_HEADER .. "Keep.tmp.tsv\tKeep\t\ttrue\t100\tDeclared, despite the name\t\n"))
+            assert(file_util.writeFileBinary(path_join(other, "Keep.tmp.tsv"), ITEM_TSV))
+
+            local result = manifest_loader.processFiles({pkg_dir, other}, badVal)
+            assert.is_not_nil(result)
+            assert.equals(0, badVal.errors, messages())
+            -- Pkg's ignored_files glob took out Pkg's temp file...
+            assert.is_nil(findBySuffix(result.raw_files, "Pkg/Item.tmp.tsv"))
+            -- ...and did NOT touch Other's file of the same shape, which Other
+            -- declares as a table.
+            assert.is_not_nil(findBySuffix(result.tsv_files, "Other/Keep.tmp.tsv"))
+        end)
+
+        it("lets a Files.tsv row and a glob agree, and the row still wins its role", function()
+            -- ignored beats asset (rule 1 before rule 2), so a file that is both
+            -- glob-asset and IgnoredFile-declared is ignored — the stronger "pretend
+            -- it isn't there" wins over "keep it".
+            local pkg_dir = makePkg(
+                "ui/theme.json\tMigrationScript\t\tfalse\t200\tNot really\t\n",
+                {["ui/theme.json"] = THEME_JSON}, MANIFEST_GLOBS)
+
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+            assert.is_nil(findBySuffix(result.raw_files, "ui/theme.json"))
+        end)
+    end)
+
+    describe("a role typeName is not checked as a table type", function()
+        -- Both checks below are about TABLE types, and are category errors on a
+        -- role: a role is not named after its file, and several files sharing one
+        -- is the normal case. They fired on every role typeName — asset_file would
+        -- have added three more warnings a user can do nothing about, on top of the
+        -- eight the tutorial already emitted for custom_type_def / patch /
+        -- bulk_patch / SchemaOverlay / type_wiring_def.
+        it("warns neither 'should match fileName' nor 'Multiple types with name'", function()
+            local logger, warnings = capturingLogger()
+            badVal.logger = logger
+
+            local pkg_dir = makePkg(
+                "theme.json\tasset_file\t\tfalse\t200\tTheme\t\n"
+                .. "layout.xml\tasset_file\t\tfalse\t300\tLayout\t\n"
+                .. "Lookup.tsv\tasset_file\t\tfalse\t400\tLookup\t\n",
+                {["theme.json"] = THEME_JSON, ["layout.xml"] = LAYOUT_XML,
+                 ["Lookup.tsv"] = LOOKUP_TSV})
+            local result = manifest_loader.processFiles({pkg_dir}, badVal)
+            assert.is_not_nil(result)
+
+            for _, w in ipairs(warnings) do
+                assert.is_falsy(w:match("should match fileName"),
+                    "a role typeName is not named after its file: " .. w)
+                assert.is_falsy(w:match("Multiple types with name"),
+                    "three files may share a role: " .. w)
+            end
+        end)
+
+        it("still warns for a real table type whose name does not match its file", function()
+            -- The check itself is not weakened: only ROLES are exempt. Without this,
+            -- the exemption above could be passing for the wrong reason.
+            local logger, warnings = capturingLogger()
+            badVal.logger = logger
+
+            local pkg_dir = makePkg("Weapon.tsv\tSword\t\ttrue\t200\tMismatched\t\n",
+                {["Weapon.tsv"] = ITEM_TSV})
+            assert.is_not_nil(manifest_loader.processFiles({pkg_dir}, badVal))
+
+            local found = false
+            for _, w in ipairs(warnings) do
+                if w:match("should match fileName") then found = true end
+            end
+            assert.is_true(found, "a real typeName/fileName mismatch must still warn")
         end)
     end)
 

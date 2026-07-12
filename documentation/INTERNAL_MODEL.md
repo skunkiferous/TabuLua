@@ -256,6 +256,8 @@ A manifest is a **read-only table** created from `Manifest.transposed.tsv`.
 | `package_validators` | `table\|nil` | Read-only array of validator specs |
 | `preProcessors` | `table\|nil` | Read-only array of **package-scoped** pre-processor specs (see [Pre-Processor Specs](#pre-processor-specs)). Run after all files are parsed and after patches are applied, but before validators; scoped to files this package owns or has patched |
 | `variant_groups` | `table\|nil` | Read-only array of `{group_name, {allowed_values}, default\|nil}` tuples. Each group requires exactly one of its values among the selected variants (a group with a default needs no explicit selection) |
+| `asset_files` | `table\|nil` | Read-only array of glob strings naming files that are **assets**, not tables: not parsed, copied byte-for-byte, never reformatted in place. The bulk form of a `typeName=asset_file` row |
+| `ignored_files` | `table\|nil` | Read-only array of glob strings naming files the loader ignores entirely: not loaded, not exported, not warned about. Matched (like `asset_files`) against each file's path relative to **this package's own root** |
 
 ### Dependency Records
 

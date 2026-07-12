@@ -41,6 +41,10 @@ local parsers = require("parsers")
 local parseType = parsers.parseType
 local listMembersOfTag = parsers.listMembersOfTag
 
+-- Path globs for the manifest's asset_files / ignored_files lists (see
+-- buildManifestGlobs).
+local glob = require("util.glob")
+
 --- True iff `typeName` is a member of the role tag `tagName` BY NAME — the tag's
 --- own member list (`IgnoredFile` -> MigrationScript; `AssetFile` -> asset_file),
 --- plus any user type that opted in through its `tags` field, which registers it
@@ -370,8 +374,10 @@ local function partitionFilesByRole(files, roleCtx, file2dir)
                     and not hasExtension(file, CSV)
                     and " (a .json/.xml row also needs a `transcoder`, e.g. json:objects)"
                     or "")
-                .. ".\n      If it is not data, add a row with typeName=asset_file to copy"
-                .. " it to the export unparsed, or remove the file.")
+                .. ".\n      If it is an asset, add a row with typeName=asset_file, or a"
+                .. " manifest `asset_files` glob, to copy it to the export unparsed."
+                .. "\n      If it is neither (a temp file, say), add a manifest"
+                .. " `ignored_files` glob, or remove the file.")
             excluded[file] = true
         elseif role == ROLE_IGNORED then
             logger:info("Ignored (not loaded, not exported): " .. file)
@@ -797,6 +803,69 @@ local function buildFileToPackage(packages, names)
     return fn2pkg
 end
 
+--- Resolves each package's manifest `asset_files` / `ignored_files` globs against
+--- the files that package OWNS, and returns the two resulting sets of full paths
+--- (or nil, nil when no manifest declares any glob — the common case, which then
+--- costs nothing).
+---
+--- The globs are the bulk form of the per-file declarations: `asset_files` says the
+--- same thing as a `typeName=asset_file` row, and `ignored_files` the same thing as
+--- an `IgnoredFile` typeName, for a whole class of files at once. `ignored_files` is
+--- the one that finally silences the temp files a working data tree accumulates
+--- (`*.tmp.tsv`, `scratch/**`): they are neither loaded, exported, nor WARNED about
+--- — an undeclared-file warning for a file you have already said to ignore is just
+--- noise.
+---
+--- A package's globs govern only its OWN files (ownership by longest root prefix, as
+--- everywhere else), and are matched against each file's path relative to THAT
+--- package's root — not to the input directory. That is what keeps a package
+--- relocatable, exactly as a Files.tsv's paths are resolved against its own
+--- directory (files_desc.resolveDescriptorPath): a utility mod dropped into
+--- `mods/utilmod/` keeps working, globs and all, unedited. A parent package cannot
+--- reach into a child package's files this way, which is the point — the child owns
+--- them, and says for itself what they are.
+local function buildManifestGlobs(packages, files)
+    if not packages then
+        return nil, nil
+    end
+    local assetMatchers, ignoredMatchers = {}, {}
+    local any = false
+    for pid, pkg in pairs(packages) do
+        local am = glob.matcher(pkg.asset_files)
+        local im = glob.matcher(pkg.ignored_files)
+        if am then assetMatchers[pid] = am; any = true end
+        if im then ignoredMatchers[pid] = im; any = true end
+    end
+    if not any then
+        return nil, nil
+    end
+    local nameSet = {}
+    for _, file_name in ipairs(files) do
+        nameSet[file_name] = true
+    end
+    local fn2pkg = buildFileToPackage(packages, nameSet)
+    local assetSet, ignoredSet = {}, {}
+    for _, file_name in ipairs(files) do
+        local pid = fn2pkg[file_name]
+        local pkg = pid and packages[pid]
+        if pkg and (assetMatchers[pid] or ignoredMatchers[pid]) then
+            local root = (file_util.getParentPath(pkg.path) or ""):lower()
+            local nfile = (normalizePath(file_name) or file_name):lower()
+            local rel = nfile
+            if root ~= "" and nfile:sub(1, #root + 1) == root .. "/" then
+                rel = nfile:sub(#root + 2)
+            end
+            if assetMatchers[pid] and assetMatchers[pid](rel) then
+                assetSet[file_name] = true
+            end
+            if ignoredMatchers[pid] and ignoredMatchers[pid](rel) then
+                ignoredSet[file_name] = true
+            end
+        end
+    end
+    return assetSet, ignoredSet
+end
+
 -- Process files once the order has been established.
 -- Returns the TSV files and join metadata.
 local function processOrderedFiles(badVal, files, file2dir, desc_files_order, desc_file2pkg_id,
@@ -918,10 +987,13 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     -- (table / asset / ignored, or the non-role: undeclared). The roleCtx is built
     -- ONCE here and handed to both callers — the declaration gate below and the
     -- parse gate in loadOtherFiles — so the two cannot answer differently.
+    local assetGlobs, ignoredGlobs = buildManifestGlobs(packages, files)
     local roleCtx = {
         lcFn2Type = lcFn2Type,
         lcFn2Transcoder = lcFn2Transcoder,
         undeclared = orderFilesByPriorities(files, priorities, file2dir),
+        assetGlobs = assetGlobs,
+        ignoredGlobs = ignoredGlobs,
     }
     -- Undeclared and ignored files are dropped from the load list here (reported,
     -- and neither parsed nor exported). The excluded set travels on joinMeta so the

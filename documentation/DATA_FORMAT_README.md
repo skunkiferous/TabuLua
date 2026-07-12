@@ -1626,6 +1626,41 @@ Since the file has only a single data row and multiple values can be quite long,
 | `package_validators` | `{validator_spec}\|nil` | Validators run after all files in the package are loaded |
 | `preProcessors` | `{processor_spec}\|nil` | Package-scoped pre-processors that mutate the merged-and-patched state of every file after patches and before validators (see [Mod Overrides](#mod-overrides)) |
 | `variant_groups` | `{{name,{name},name\|nil}}\|nil` | Declares groups of mutually exclusive variant names with optional default (see [Variant Group Validation](#variant-group-validation)) |
+| `asset_files` | `{string}\|nil` | Globs naming files that are **assets**, not tables — the bulk form of a `typeName=asset_file` row (see [Asset files](#asset-files-the-assetfile-tag--asset_file)) |
+| `ignored_files` | `{string}\|nil` | Globs naming files the loader must **pretend are not there**: not loaded, not exported, and not warned about (temp files, scratch directories) |
+
+### File-role globs (`asset_files` / `ignored_files`)
+
+These are the bulk form of the two per-file declarations. `asset_files` says what a
+`typeName=asset_file` row says, and `ignored_files` what an `IgnoredFile` `typeName`
+says — for a whole class of files at once:
+
+```tsv
+asset_files:{string}|nil       "ui/*.json","docs/**"
+ignored_files:{string}|nil     "*.tmp.tsv","scratch/**"
+```
+
+`ignored_files` is what finally silences the temporary files a working data tree
+accumulates: an ignored file is not loaded, not exported, and — unlike an undeclared
+one — **not warned about**. A warning about a file you have already said to ignore is
+just noise.
+
+**Glob syntax** (`util/glob.lua`):
+
+| | |
+| --- | --- |
+| `*` | any run of characters **within one path segment** (never crosses `/`) |
+| `**` | any run of path segments, including none — `scratch/**` matches `scratch/a.tsv` and `scratch/deep/b.tsv` |
+| `?` | exactly one character, within one segment |
+
+A glob with **no `/`** matches by **basename, at any depth** (the gitignore rule):
+`*.tmp.tsv` catches `x.tmp.tsv` and `sub/deep/x.tmp.tsv` alike — a temp file is a
+temp file wherever it sits. A glob **with** a `/` is anchored to the package root.
+
+Matching is case-insensitive. A package's globs govern only files **that package
+owns**, and are matched against each file's path relative to **that package's own
+root** — so a utility mod dropped into `mods/utilmod/` keeps working, globs and all,
+exactly as its `Files.tsv` does.
 
 ### Custom Manifest Fields
 

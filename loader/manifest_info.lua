@@ -109,7 +109,18 @@ local MANIFEST_SPEC = [[{
     # Each group is a tuple of (group_name, {allowed_values}).
     # When variants are passed to processFiles(), exactly one value from each
     # declared group must be present. Variant names must be unique across groups.
-    variant_groups:{{name,{name},name|nil}}|nil
+    variant_groups:{{name,{name},name|nil}}|nil,
+    # Globs naming files that are ASSETS: not tables. Matched against each file's
+    # path relative to THIS manifest's directory. The bulk form of a Files.tsv row
+    # with typeName=asset_file — same role, same result (not parsed, copied
+    # byte-for-byte, never reformatted in place), for a whole class of files at
+    # once. See util/glob.lua for the syntax (*, **, ?).
+    asset_files:{string}|nil,
+    # Globs naming files the loader must pretend are not there: not loaded, not
+    # exported, and — unlike an undeclared file — not warned about either. This is
+    # what silences the temporary files that a data tree accumulates
+    # ("*.tmp.tsv", "scratch/**") without having to declare each one.
+    ignored_files:{string}|nil
 }]]
 
 -- Our own badVal (uses module logger by default)
@@ -244,6 +255,16 @@ local function extractManifestFromTSV(badVal, cols, manifest_tsv)
         manifest.variant_groups = readOnly(manifest.variant_groups)
     else
         manifest.variant_groups = nil
+    end
+    if manifest.asset_files and #manifest.asset_files > 0 then
+        manifest.asset_files = readOnly(manifest.asset_files)
+    else
+        manifest.asset_files = nil
+    end
+    if manifest.ignored_files and #manifest.ignored_files > 0 then
+        manifest.ignored_files = readOnly(manifest.ignored_files)
+    else
+        manifest.ignored_files = nil
     end
     return readOnly(manifest)
 end

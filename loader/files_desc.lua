@@ -272,7 +272,13 @@ local function parseFilesDescHeader(file_name, file, log)
     return indicesByName
 end
 
--- Check the file name matches the type name
+-- Check the file name matches the type name.
+--
+-- A ROLE typeName (asset_file, patch, custom_type_def, MigrationScript, ...) is
+-- exempt: it says what the engine should DO with the file, not what record type its
+-- rows are, so it is not named after the file and never was meant to be —
+-- `ui/theme.json` declared `asset_file` is exactly right. The superType handling
+-- below still runs, because a role can still extend something.
 local function checkTypeName(extends, fileDesc, fileName, typeName, superType, log)
     if typeName then
         log = log or logger
@@ -290,7 +296,8 @@ local function checkTypeName(extends, fileDesc, fileName, typeName, superType, l
             idx = (fileNameWithoutPath:reverse()):find("%.")
             fileNameWithoutExt = fileNameWithoutPath:sub(1, -idx-1)
         end
-        if typeName:lower() ~= fileNameWithoutExt:lower() then
+        if not type_wiring.isRoleTypeName(typeName)
+            and typeName:lower() ~= fileNameWithoutExt:lower() then
             -- Retry after removing dots (e.g., Item.en -> ItemEn matches ItemEN)
             local dotless = fileNameWithoutExt:gsub("%.", "")
             if typeName:lower() ~= dotless:lower() then
@@ -693,8 +700,15 @@ local function validateFileJoins(lcFn2JoinInto, lcFileNames, badVal, lcFn2LineNo
     end
 end
 
--- Validates file and type names reuse
--- Files.tsv is exempt because every package is expected to have one
+-- Validates file and type names reuse.
+--
+-- Files.tsv is exempt because every package is expected to have one.
+--
+-- A ROLE typeName is exempt because it is not a type name at all: it says what the
+-- engine should do with the file (asset_file, patch, custom_type_def, ...), and
+-- several files sharing a role is the normal case, not a collision. A package with
+-- three patch files is not declaring the type `patch` three times. (This subsumes
+-- the old hard-coded `files` exemption — `files` is registered as a role.)
 local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
     log = log or logger
     for fn, fd in pairs(lcFileNames) do
@@ -704,7 +718,7 @@ local function validateFileAndTypeNames(lcFileNames, lcTypeNames, log)
         end
     end
     for tn, fd in pairs(lcTypeNames) do
-        if #fd > 1 and tn ~= "files" then
+        if #fd > 1 and not type_wiring.isRoleTypeName(tn) then
             log:warn("Multiple types with name '" .. tn
                 .. "' in " .. table.concat(fd, ", "))
         end

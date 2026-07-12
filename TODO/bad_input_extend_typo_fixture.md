@@ -1,5 +1,30 @@
 # `bad_input` fixture `extend_typo` can never pass (tabs vs. spaces)
 
+## Status
+
+**Fixed** (2026-07-12), by the recommended route:
+`run_bad_input_tests.sh --update type_errors extend_typo`. The separators are tabs
+now, and `pre_commit_check` is green end to end (37/37 bad-input fixtures).
+
+The regenerated file also **dropped one line** that had nothing to do with the
+whitespace bug:
+
+```text
+WARN  typeName 'custom_type_def' in {DIR}/Files.tsv should match fileName 'Types.tsv'
+```
+
+That warning no longer exists — `custom_type_def` is a *role* typeName, and
+`TODO/non_table_files.md` Phase 3 stopped checking roles as if they were table types
+(it is one of the eight stale warnings that phase removed). The three `ERROR` lines
+the fixture actually exists to pin down are byte-identical to before, so what it tests
+is unchanged.
+
+Worth noting for next time: because this fixture was known-red, its failure was easy
+to wave through — which is exactly the risk this doc predicted, and it very nearly
+hid a legitimate expected-output change. The optional hardening below (flagging a
+tab-less expected file as a *malformed fixture* rather than a content mismatch) is
+still worth doing for that reason.
+
 ## Summary
 
 `bad_input/type_errors/extend_typo/expected_output.txt` stores its field separators

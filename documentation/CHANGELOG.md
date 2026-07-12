@@ -43,6 +43,38 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   the extension is only ever a guess for an *undeclared* file. New spec
   `spec/non_table_files_spec.lua`.
 
+- **Tutorial: `theme.json`, a declared asset** (`TODO/non_table_files.md`, Phase 4).
+  `tutorial/core/theme.json` is nested JSON — no rows, no columns, nothing a schema
+  could describe — declared `typeName=asset_file` and therefore copied byte-for-byte
+  into every export instead of being parsed or dropped. It sits deliberately next to
+  `DraftItem.tsv`, the tutorial's *undeclared* file: the two are the same situation
+  with and without a declaration, which is the whole point of the feature. Both are
+  written up in `tutorial/README.md`.
+
+- **Manifest `asset_files` / `ignored_files` globs** (`TODO/non_table_files.md`,
+  Phase 2). Two new manifest fields (`{string}|nil`) declare file roles in bulk:
+  `asset_files` says what a `typeName=asset_file` row says, and `ignored_files` what
+  an `IgnoredFile` `typeName` says — for a whole class of files at once.
+
+  ```tsv
+  asset_files:{string}|nil       "ui/*.json","docs/**"
+  ignored_files:{string}|nil     "*.tmp.tsv","scratch/**"
+  ```
+
+  **`ignored_files` finally silences temporary files** — the annoyance that started
+  this whole thread. A temp `.tsv` in the data tree was first a hard error, then a
+  warning; now a package says once that those files are not its data, and the loader
+  says nothing at all about them: not loaded, not exported, **not warned**.
+
+  New **`util/glob.lua`**: `*` matches within one path segment (it never crosses
+  `/`), `**` matches any run of segments including none, `?` matches one character.
+  A glob with **no `/`** matches by **basename at any depth** (the gitignore rule), so
+  `*.tmp.tsv` catches `sub/deep/x.tmp.tsv` too; a glob with a `/` is anchored to the
+  package root. Matching is case-insensitive. A package's globs govern only the files
+  **it owns**, matched against paths relative to **its own root**, so a mod dropped
+  into `mods/utilmod/` keeps working unedited — the same relocatability rule its
+  `Files.tsv` follows. New spec `spec/glob_spec.lua`.
+
 - **Customizable SVG colour schemes** (`TODO/graph_svg_export.md`, follow-up).
   `--file=svg` colours are now fully configurable from the command line, one
   colour per drawable *type*. `--svg-color-scheme=<name>` picks a base palette
@@ -252,6 +284,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   (e.g. `json:objects`); if it is not data, give it a row with
   **`typeName=asset_file`** (see Added, above), which restores the verbatim copy and
   says so explicitly. The warning names both routes.
+
+- **A role typeName is no longer checked as if it were a table type**
+  (`TODO/non_table_files.md`, Phase 3). `asset_file`, `patch`, `bulk_patch`,
+  `custom_type_def`, `type_wiring_def`, `SchemaOverlay`, `MigrationScript`, `Type`,
+  `enum` and `files` are **roles**: words a `Files.tsv` row uses to say what the
+  engine should *do* with a file, not the name of the record type its rows are. Two
+  checks in `files_desc` are about table types and were category errors on a role,
+  and both fired: `typeName 'X' should match fileName 'Y'` (a role is not named after
+  its file — `ui/theme.json` declared `asset_file` is exactly right) and
+  `Multiple types with name 'X'` (several files legitimately share a role; a package
+  with three patches is not declaring the type `patch` three times). A clean tutorial
+  run emitted **eight** such warnings a user could do nothing about; it now emits
+  none, while a *real* `typeName`/`fileName` mismatch still warns as before. Roles are
+  declared once, in the wiring registry (`type_wiring.register(name, {role = true})`,
+  queried via `type_wiring.isRoleTypeName`), rather than as a list of exempt names
+  hard-coded in the checks — so the fix covers the whole class, including the
+  `files` exemption that used to be spelled out by hand.
 
 - **An `IgnoredFile`-tagged file is no longer exported.** A file the loader is told
   to ignore (`typeName=MigrationScript`, or any type tagged `IgnoredFile`) is now

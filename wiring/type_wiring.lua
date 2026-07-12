@@ -67,6 +67,11 @@ local PER_TYPE_KEYS = {
     preProcessors = true,
     rowValidators = true,
     fileValidators = true,
+    -- `role = true` marks a typeName as an ENGINE ROLE rather than a table type:
+    -- a word a Files.tsv row uses to say what the engine should DO with the file
+    -- (asset_file, patch, custom_type_def, MigrationScript, ...), not the name of
+    -- the record type its rows are. See isRoleTypeName.
+    role = true,
 }
 local MODULE_KEYS = {
     descriptorColumns = true,
@@ -196,6 +201,10 @@ local function register(typeName, contributions)
         REGISTRY[key] = entry
     end
 
+    if contributions.role ~= nil then
+        entry.role = contributions.role == true
+    end
+
     local onLoad = contributions.onLoad
     if onLoad ~= nil then
         if entry.onLoad ~= nil and entry.onLoad ~= onLoad then
@@ -297,6 +306,26 @@ local function hasOnLoad(typeName, extends)
         if entry.onLoad then found = true end
     end)
     return found
+end
+
+--- True iff `typeName` is an engine ROLE, not a table type — a word a Files.tsv row
+--- uses to say what the engine should DO with a file (`asset_file`, `patch`,
+--- `bulk_patch`, `custom_type_def`, `type_wiring_def`, `SchemaOverlay`,
+--- `MigrationScript`, `Type`, `enum`, `files`), as opposed to the name of the record
+--- type its rows are.
+---
+--- The distinction matters because two checks in files_desc are about TABLE types
+--- and are category errors when applied to a role: "typeName 'X' should match
+--- fileName 'Y'" (a role is not named after the file — three files can all be
+--- `asset_file`), and "Multiple types with name 'X'" (several files legitimately
+--- share a role). Registering the role here fixes both at once, for the whole class,
+--- rather than hard-coding a list of exempt names inside files_desc.
+--- @param typeName string|nil
+--- @return boolean
+local function isRoleTypeName(typeName)
+    if type(typeName) ~= "string" then return false end
+    local entry = REGISTRY[typeName:lower()]
+    return entry ~= nil and entry.role == true
 end
 
 -- True iff `ancestorTypeName` appears in typeName's extends chain AND there
@@ -723,6 +752,7 @@ local API = {
     applyWiring = applyWiring,
     hasOnLoad = hasOnLoad,
     hasOnLoadFor = hasOnLoadFor,
+    isRoleTypeName = isRoleTypeName,
     descriptorColumns = descriptorColumns,
     descriptorColumnsByName = descriptorColumnsByName,
     sandboxAdditions = sandboxAdditions,

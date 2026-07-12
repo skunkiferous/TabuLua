@@ -30,6 +30,7 @@ tutorial/
     LevelScale.tsv                   # COG code generation
     FireItems.tsv                    # COG view: filtered subset of Item.tsv
     DraftItem.tsv                    # NOT in Files.tsv on purpose: warns, and is skipped
+    theme.json                       # asset_file: not a table -- copied byte-for-byte
     libs/
       gameLib.lua                    # Code library for expressions
   expansion/                         # Package: tutorial.expansion (mod)
@@ -508,8 +509,11 @@ here so you can see what happens when you forget to declare a data file. Every t
 prints:
 
 ```text
-WARN  [manifest_loader]  Data file not listed in Files.tsv, so NOT loaded:
-      tutorial/core/DraftItem.tsv (add a row for it to Files.tsv, or remove the file)
+WARN  [manifest_loader]  Not listed in Files.tsv, so NOT loaded: tutorial/core/DraftItem.tsv
+      If it is data, add a row for it to Files.tsv.
+      If it is an asset, add a row with typeName=asset_file, or a manifest `asset_files` glob,
+      to copy it to the export unparsed.
+      If it is neither (a temp file, say), add a manifest `ignored_files` glob, or remove the file.
 ```
 
 `Files.tsv` is the manifest of what a package's data **is**, so a data file no row declares
@@ -530,10 +534,48 @@ layers, is `.tsv`, `.csv`, `.json`, `.xml`, or `.eav` — so `Item.tsv.gz` is da
 they always did. Note also that a row matches a file by its **exact path**: `DraftItem.tsv`
 is not covered by the `Item.tsv` row just because its name ends the same way.
 
-To silence the warning, either delete the file or add a row for it to `Files.tsv`.
+The warning names all three ways out, because a file the loader will not read is not always a
+mistake: **declare it as data** (a row in `Files.tsv`), **declare it an asset**
+(`typeName=asset_file` — see `theme.json` below), or **say it is not yours at all** (a
+manifest `ignored_files` glob, for temp files and scratch directories, which silences the file
+completely). Deleting it works too.
 
 *Rationale:* The cost of a typo'd or forgotten declaration should be a loud, one-line
 warning naming the file — not data that silently loads with the wrong (or no) schema.
+
+---
+
+#### theme.json (An Asset — Declared, Not Parsed)
+
+The counterpart to `DraftItem.tsv`: a file the loader deliberately **does not read**, and
+that is nevertheless carried through to every export. Its `Files.tsv` row says so:
+
+```tsv
+fileName:filepath    typeName:type_spec    ...    loadOrder:number    description:text
+theme.json           asset_file            ...    900                 UI theme: an ASSET, not a table
+```
+
+`asset_file` is the way to say **"this file is not a table."** `theme.json` is nested JSON —
+no rows, no columns, no schema it could sensibly be read as — and with that one row the loader
+does not try: it is not parsed, gets no type, no validators, and no `loadEnv.files` entry, and
+is copied **byte-for-byte** into every export (`exported/json-json-natural/theme.json` is
+identical to the source, byte for byte). Without the declaration it would be exactly the case
+above — an undeclared `.json`, warned about and dropped.
+
+Two things worth knowing:
+
+- **Asset is not a new idea.** `.md`, `.txt`, `.lua` and `.zip` files have always been assets,
+  implicitly, by extension — `libs/gameLib.lua` is one. `asset_file` just lets you *say* it,
+  for a file whose extension would otherwise be read as data.
+- **A declaration beats the extension — for every extension.** `asset_file` works on a `.tsv`
+  too. A `.tsv` declared this way is not parsed, is **never reformatted in place**, and is
+  exported under its own name (a `--file=json` run will not turn it into `.json`). That is the
+  only way to ship a hand-formatted table, or a fixture meant for some other tool, through the
+  pipeline untouched.
+
+For bulk cases, the manifest takes glob lists instead: `asset_files` (`"ui/*.json"`) and
+`ignored_files` (`"*.tmp.tsv"`, `"scratch/**"`). See
+[DATA_FORMAT_README §Asset files](../DATA_FORMAT_README.md#asset-files-the-assetfile-tag--asset_file).
 
 ---
 

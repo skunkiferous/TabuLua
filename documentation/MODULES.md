@@ -8,7 +8,7 @@ The engine's library modules live in topical sub-directories and are required by
 
 | Directory | Purpose | Modules |
 |-----------|---------|---------|
-| `util/` | Leaf primitives (no/few deps) | table_utils, read_only, string_utils, sparse_sequence, comparators, predicates, table_parsing, number_identifiers, base64, regex_utils, global_reset |
+| `util/` | Leaf primitives (no/few deps) | table_utils, read_only, string_utils, sparse_sequence, comparators, predicates, table_parsing, number_identifiers, base64, regex_utils, glob, global_reset |
 | `infra/` | Cross-cutting infrastructure | named_logger, error_reporting, file_util, sandbox_env |
 | `tsv/` | Core TSV data model | raw_tsv, raw_eav, tsv_model, exploded_columns, file_joining, data_set |
 | `serde/` | Serialize ↔ deserialize / import / export | serialization, deserialization, importer, round_trip, schema_validator, exporter, svg_render |
@@ -35,6 +35,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [number_identifiers](#number_identifiers) | Numeric/string identifier conversion | error_reporting, read_only |
 | [base64](#base64) | Pure-Lua RFC 4648 Base64 encode/decode | read_only |
 | [regex_utils](#regex_utils) | Lua pattern to PCRE translation | predicates, read_only, sparse_sequence |
+| [glob](#glob) | Path glob matching (`*`, `**`, `?`) for the manifest's `asset_files` / `ignored_files` | read_only |
 | [global_reset](#global_reset) | Registry for resetting all module-level mutable state | *(none)* |
 
 **`infra/`**
@@ -281,6 +282,16 @@ Exports parsed TSV data to multiple formats including JSON, Lua tables, XML, SQL
 Analyzes and handles "exploded" columns in TSV files where nested structures (records and tuples) are flattened into multiple columns with dot-separated paths like `location.position._1`. Provides functions to detect tuple vs record structures and reassemble nested values.
 
 **Dependencies:** read_only, table_utils
+
+---
+
+### glob
+
+**File:** [glob.lua](../util/glob.lua)
+
+Path glob matching for the manifest's `asset_files` / `ignored_files` lists. `*` matches within one path segment (it never crosses `/`), `**` matches any run of segments including none, and `?` matches one character. A glob with no `/` matches by basename at any depth (the gitignore rule), so `*.tmp.tsv` catches `sub/deep/x.tmp.tsv`; a glob with a `/` is anchored. Case-insensitive. `matcher(globs)` compiles a list into a predicate, returning nil for an empty list so callers can skip the test entirely.
+
+**Dependencies:** read_only
 
 ---
 

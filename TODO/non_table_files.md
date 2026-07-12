@@ -1,5 +1,46 @@
 # Non-Table Files: Declaring Assets and Ignored Files Explicitly
 
+## Status
+
+**Done** (2026-07-12). All four phases landed: `asset_file` + the single `fileRole`
+resolver, the manifest `asset_files` / `ignored_files` globs (new `util/glob.lua`),
+role typeNames exempted from the table-type checks, and the tutorial's
+`theme.json`. Specs: `spec/non_table_files_spec.lua`, `spec/glob_spec.lua`.
+
+Where the plan below was ambiguous or wrong, what shipped:
+
+- **Undeclared `.json`/`.xml`: warned and dropped**, per "Decisions taken" §2 —
+  *not* the implicit-asset reading that Design §1's rules
+  3–4 imply (those two sections contradicted each other). Declaring the file is the
+  escape hatch, and the warning names all three routes. `fileRole` therefore keeps a
+  "looks like data" extension guess, consulted *inside* the one function, for
+  undeclared files only — the two GATES are unified, which was the actual bug.
+- **`ignored` was not merely missing a glob form — it was broken.** An
+  `IgnoredFile`-tagged file was being *exported*: the loader nil'd it from
+  `raw_files`, and the asset pass (walking the caller's unfiltered file list) put it
+  straight back. Ignored now means not loaded *and* not exported.
+- **Role-tag membership must be by NAME.** `parsers.isMemberOfTag` also matches by
+  SHAPE, and every record extends the empty record — so `asset_file` aliased to `{}`
+  (the obvious mirror of `patch`) briefly made *every table in the package* an asset.
+- **A declared asset is streamed verbatim**, not read as text: the text path
+  EOL-normalises on read and the export writes text, so "byte-for-byte" was not
+  actually achievable through it. Implicit `.md`/`.txt` assets keep the text path
+  (COG templates and `--strip-cog` need a string), so the guarantee is precisely
+  what *declaring* the file buys.
+
+Answers to the Open questions below:
+
+- **Glob syntax/matcher** — no reusable matcher existed (`content_pipeline`'s is
+  basename-only and its `*` crosses `/`), so `util/glob.lua` is new: `*` within a
+  segment, `**` across segments, `?` one char, and the gitignore rule that a glob
+  with no `/` matches the basename at any depth. Package-relative, so globs are
+  relocatable like a `Files.tsv`.
+- **One copy per export format** — unchanged (still one per format subdirectory).
+  Pre-existing, and out of scope for this thread.
+- **Archive members** — unchanged: a zip streams verbatim as one asset, and its
+  members are inputs only (the exporter already skips them), so an `asset_file`
+  member needs no separate copy.
+
 ## Summary
 
 TabuLua has no way to say **"this file is not a table."** Today a file's role is

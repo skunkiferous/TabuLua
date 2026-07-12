@@ -1,0 +1,21 @@
+{
+  "_comment": "An ASSET, not a table. Declared in Files.tsv with typeName=asset_file,",
+  "_comment2": "so the loader never parses it: it is copied byte-for-byte to every",
+  "_comment3": "export, exactly as you see it here. Note the deliberately un-tabular",
+  "_comment4": "shape below -- nested objects, no rows, no columns. There is no schema",
+  "_comment5": "this could be read as, and it never has to be one.",
+
+  "palette": {
+    "background": "#12141a",
+    "text": "#e8e8ea",
+    "accent": "#c8963c"
+  },
+  "rarityColors": {
+    "Common": "#9aa0a6",
+    "Uncommon": "#3ea36b",
+    "Rare": "#3b7dd8",
+    "Epic": "#9a5bd8",
+    "Legendary": "#c8963c"
+  },
+  "spacing": [4, 8, 16, 32]
+}
