@@ -17,7 +17,7 @@ local file_util = require("infra.file_util")
 local raw_tsv = require("tsv.raw_tsv")
 local stringToRawTSV = raw_tsv.stringToRawTSV
 local rawTSVToString = raw_tsv.rawTSVToString
-local LibDeflate = require("libdeflate")
+local LibDeflate = require("LibDeflate")
 local compression = require("content.compression")
 local parsers = require("parsers")
 

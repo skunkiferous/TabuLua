@@ -28,7 +28,7 @@ local function u16le(n)
     n = n & 0xFFFF
     return string.char(n & 0xFF, (n >> 8) & 0xFF)
 end
-local LibDeflate = require("libdeflate")
+local LibDeflate = require("LibDeflate")
 
 local function buildZip(members)
     local locals, central = {}, {}

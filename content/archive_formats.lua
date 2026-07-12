@@ -408,9 +408,9 @@ end
 -- loader pulls libdeflate lazily on first open; without it the whole zip format
 -- reports unsupported (logged once) and the archive's members simply don't load.
 registerProvider("zip", function()
-    local ok, LibDeflate = pcall(require, "libdeflate")
-    if not ok or type(LibDeflate) ~= "table" then
-        return nil, "libdeflate rock is not installed"
+    local LibDeflate, err = compression.requireLibDeflate()
+    if not LibDeflate then
+        return nil, err
     end
     -- A zip method-8 member is a raw DEFLATE stream (no gzip/zlib envelope), so
     -- the same DecompressDeflate call the gzip provider makes inflates it.

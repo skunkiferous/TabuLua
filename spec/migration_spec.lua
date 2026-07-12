@@ -679,9 +679,29 @@ describe("migration", function()
     ---------------------------------------------------------------------------
 
     describe("CLI", function()
+        -- The interpreter is named "lua54" on the dev box but plain "lua" in the Docker
+        -- test images, so hard-coding either name fails the CLI tests everywhere else
+        -- ("sh: lua54: not found"). Probe the same candidates, in the same order, as
+        -- bad_input/run_bad_input_tests.sh.
+        local function findLua()
+            for _, candidate in ipairs({ "lua54", "lua5.4", "lua" }) do
+                local h = io.popen(candidate .. " -v 2>&1", "r")
+                if h then
+                    local out = h:read("*a") or ""
+                    local ok = h:close()
+                    if ok and out:match("^Lua %d") then
+                        return candidate
+                    end
+                end
+            end
+            error("No Lua interpreter found (tried lua54, lua5.4, lua)")
+        end
+
+        local LUA = findLua()
+
         -- Helper to run migration.lua as a subprocess
         local function runCLI(args)
-            local cmd = "lua54 migration.lua " .. (args or "") .. " 2>&1"
+            local cmd = LUA .. " migration.lua " .. (args or "") .. " 2>&1"
             local h = io.popen(cmd, "r")
             local output = h:read("*a")
             local _, how, code = h:close()

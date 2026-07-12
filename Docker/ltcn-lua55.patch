@@ -1,0 +1,40 @@
+Fix Lua 5.5 incompatibility in ltcn's tokenset_to_list()
+
+Lua 5.5 makes the control variable of a generic `for ... in` loop read-only
+(implicitly <const>), so ltcn's `tokenset_to_list` dies with
+
+    attempt to assign to const variable 's'
+
+the moment it builds the expected-token list for an error message. Every
+TabuLua table-parsing test hits this: 22 failures on Lua 5.5.0, while Lua 5.3
+and 5.4 are unaffected.
+
+The fix copies the loop variable into a fresh local before rewriting it. It is
+behaviour-preserving (verified on Lua 5.4: identical sorted token list for the
+same input set, quoting of `'` included) and valid on Lua 5.1-5.5.
+
+Applies to ltcn master (https://gitlab.com/craigbarnes/ltcn), commit abde2ef8
+(2024-11-04) — which is also what `luarocks install --server=https://luarocks.org/dev
+ltcn` installs as scm-1. Upstream has had no commit since 2024-11-04 and its issue
+tracker and merge-request list are both empty, so Docker/Dockerfile.lua55 applies this
+to the installed rock in place. If the patch ever fails to apply, upstream has moved:
+re-check the tracker before regenerating. See TODO/lua55_compatibility.md.
+
+--- a/ltcn.lua
++++ b/ltcn.lua
+@@ -56,11 +56,12 @@
+     local list, i = {}, 0
+     for s in pairs(set) do
+         i = i + 1
+-        if s:match("^%p$") then
++        local token = s
++        if token:match("^%p$") then
+             -- Quote punctuation characters
+-            s = (s == "'") and '"\'"' or ("'" .. s .. "'")
++            token = (token == "'") and '"\'"' or ("'" .. token .. "'")
+         end
+-        list[i] = s
++        list[i] = token
+     end
+     sort(list)
+     return list

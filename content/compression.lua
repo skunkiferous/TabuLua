@@ -172,14 +172,30 @@ local function gzipFraming(s)
     return pos, isize
 end
 
+-- The rock ships its module as "LibDeflate" (that spelling is what lands in
+-- share/lua/<v>/), so requiring "libdeflate" only resolves on a case-insensitive
+-- filesystem: it worked on Windows and reported the rock as missing on every
+-- case-sensitive host. Ask for the real name first, keeping the lowercase spelling
+-- as a fallback for a hand-installed copy.
+local function requireLibDeflate()
+    local ok, lib = pcall(require, "LibDeflate")
+    if not ok or type(lib) ~= "table" then
+        ok, lib = pcall(require, "libdeflate")
+    end
+    if not ok or type(lib) ~= "table" then
+        return nil, "libdeflate rock is not installed"
+    end
+    return lib
+end
+
 -- gzip decompression (gunzip), built on the pure-Lua libdeflate rock. libdeflate
 -- 1.0.2 exposes raw-deflate / zlib but not the gzip wrapper, so we parse the
 -- envelope (gzipFraming) and hand the DEFLATE body to DecompressDeflate. The
 -- loader fails gracefully — returning (nil, reason) — when libdeflate is absent.
 registerProvider("gzip", DECOMPRESS, function()
-    local ok, LibDeflate = pcall(require, "libdeflate")
-    if not ok or type(LibDeflate) ~= "table" then
-        return nil, "libdeflate rock is not installed"
+    local LibDeflate, err = requireLibDeflate()
+    if not LibDeflate then
+        return nil, err
     end
     return function(s, maxBytes)
         local bodyStart, isizeOrErr = gzipFraming(s)
@@ -256,9 +272,9 @@ local GZIP_HEADER = string.char(0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xff)
 -- `opts.level` (1..9) is forwarded to libdeflate's deflate level. The loader
 -- degrades gracefully — (nil, reason) — when libdeflate is absent.
 registerProvider("gzip", COMPRESS, function()
-    local ok, LibDeflate = pcall(require, "libdeflate")
-    if not ok or type(LibDeflate) ~= "table" then
-        return nil, "libdeflate rock is not installed"
+    local LibDeflate, err = requireLibDeflate()
+    if not LibDeflate then
+        return nil, err
     end
     return function(s, opts)
         if type(s) ~= "string" then
@@ -299,6 +315,8 @@ local API = {
     -- (TODO/archive_files.md Q4): crc32(bytes) -> number, u32le(n) -> 4-byte LE.
     crc32 = crc32,
     u32le = u32le,
+    -- Shared so the zip provider resolves the rock by the same (case-correct) name.
+    requireLibDeflate = requireLibDeflate,
 }
 
 local function apiCall(_, operation, ...)

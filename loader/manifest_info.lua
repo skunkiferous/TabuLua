@@ -197,11 +197,14 @@ local function versionSatisfies(req_op, req_version, installed_version)
     elseif req_op == ">" then
         return installed_version > req_version
     elseif req_op == ">=" then
-        return installed_version >= req_version
+        -- semver defines __lt but not __le. Lua <= 5.4 emulated `a <= b` as `not (b < a)`;
+        -- Lua 5.5 dropped that emulation, so `>=` / `<=` on semver objects raise
+        -- "attempt to compare two table values". Express both through `<` alone.
+        return not (installed_version < req_version)
     elseif req_op == "<" then
         return installed_version < req_version
     elseif req_op == "<=" then
-        return installed_version <= req_version
+        return not (req_version < installed_version)
     elseif req_op == "~" then
         -- Compatible version, allows patch-level changes if minor version is specified
         return installed_version.major == req_version.major and

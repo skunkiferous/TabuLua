@@ -27,7 +27,7 @@ end
 
 local LibDeflate
 do
-    local ok, lib = pcall(require, "libdeflate")
+    local ok, lib = pcall(require, "LibDeflate")
     if ok and type(lib) == "table" then LibDeflate = lib end
 end
 

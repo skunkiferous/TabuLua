@@ -12,6 +12,7 @@ RUN luarocks install compat53 && \
     luarocks install lualogging && \
     luarocks install tableshape && \
     luarocks install lpeg && \
+    luarocks install libdeflate && \
     luarocks install --server=https://luarocks.org/dev ltcn && \
     luarocks install https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
 

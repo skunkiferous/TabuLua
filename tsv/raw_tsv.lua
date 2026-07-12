@@ -65,7 +65,16 @@ local function rawTSVToString(t)
         if type(line) == "string" then
             table.insert(result, line)
         else
-            local size = #line
+            -- A nil cell is legal (see the "nil" branch below), but it makes the row a
+            -- table with a hole, and `#line` on such a table may answer any border: Lua
+            -- 5.4 says 3 for {nil,false,3.14} while 5.5 says 0, silently emitting an
+            -- empty row. Take the largest integer key, which is independent of that.
+            local size = 0
+            for k in pairs(line) do
+                if type(k) == "number" and k % 1 == 0 and k > size then
+                    size = k
+                end
+            end
             for i=1, size do
                 local cell = line[i]
                 if i > 1 then

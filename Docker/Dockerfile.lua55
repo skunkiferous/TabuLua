@@ -1,7 +1,7 @@
 FROM nickblah/lua:5.5-luarocks-alpine
 
-# Install build dependencies
-RUN apk add --no-cache build-base linux-headers git
+# Install build dependencies ("patch" and "curl" are needed by the fix-ups below)
+RUN apk add --no-cache build-base linux-headers git patch curl
 
 # Install Lua dependencies
 RUN luarocks install busted && \
@@ -12,5 +12,26 @@ RUN luarocks install busted && \
     luarocks install lpeg && \
     luarocks install --server=https://luarocks.org/dev ltcn && \
     luarocks install https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
+
+# libdeflate is pure Lua and runs fine on 5.5 (deflate round-trip verified), but its
+# rockspec still declares "lua >= 5.1, < 5.5", so `luarocks install libdeflate` refuses
+# with "No results matching query were found for Lua 5.5". Build from the rockspec with
+# the stale upper bound relaxed. Drop this once upstream publishes a 5.5-capable rockspec
+# (https://luarocks.org/modules/safeteewow/libdeflate). See TODO/lua55_compatibility.md.
+RUN curl -sSLO https://luarocks.org/manifests/safeteewow/libdeflate-1.0.2-1.rockspec && \
+    sed -i 's/lua >= 5.1, < 5.5/lua >= 5.1/' libdeflate-1.0.2-1.rockspec && \
+    luarocks build libdeflate-1.0.2-1.rockspec && \
+    rm libdeflate-1.0.2-1.rockspec
+
+# ltcn is not Lua 5.5 compatible: 5.5 makes a for-in control variable <const>, and
+# ltcn's tokenset_to_list() reassigns one ("attempt to assign to const variable 's'"),
+# which takes down all 22 table-parsing tests. Upstream is dormant (no commit since
+# 2024-11-04, empty issue tracker), so patch the installed rock in place.
+# See TODO/lua55_compatibility.md. Build context is the project root.
+COPY Docker/ltcn-lua55.patch /tmp/ltcn-lua55.patch
+RUN LTCN="$(find / -name ltcn.lua -path '*/share/lua/*' -print -quit)" && \
+    test -n "$LTCN" && \
+    patch "$LTCN" < /tmp/ltcn-lua55.patch && \
+    lua -e 'local ltcn = require("ltcn"); local _, err = pcall(ltcn.parse, "return {"); assert(not tostring(err):match("const"), "ltcn Lua 5.5 patch did not take: " .. tostring(err)); print("ltcn Lua 5.5 patch OK")'
 
 WORKDIR /app

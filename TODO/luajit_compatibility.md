@@ -2,9 +2,15 @@
 
 ## Prerequisites
 
-This document assumes the **Safe Integer Migration** has been completed. See [safe_integer_migration.md](safe_integer_migration.md) for details.
+This document assumes the **Safe Integer Migration** has been completed. **It has** —
+it landed in commit `b29230a` (2026-02-01, "Refactored `number` support. Implemented
+`float` type and changed `integer` to only support values within the range supported by
+JSON and Lua JIT"), which also **deleted** its plan (`TODO/safe_integer_migration.md`,
+added in `b271f0e`) under the then-current delete-on-implement convention. Read it with
+`git show b271f0e:TODO/safe_integer_migration.md` if the rationale is needed. Nothing
+in this document is blocked.
 
-The Safe Integer Migration changes:
+The Safe Integer Migration changed:
 - `integer` type now means "any integer exactly representable as a double" (±2^53)
 - `long` type extends `number` directly (not `integer`) and supports full 64-bit range on Lua 5.3+
 - On LuaJIT, `long` values outside the safe range generate warnings about potential precision loss

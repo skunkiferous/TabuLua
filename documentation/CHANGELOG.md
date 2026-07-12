@@ -11,9 +11,62 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **Lua 5.5 now passes the full suite, at parity with 5.4.** It previously failed 22
+  tests outright. The blocker was the `ltcn` rock (our Lua-literal cell parser): Lua 5.5
+  makes a generic `for ... in` **control variable read-only** (implicitly `<const>`), and
+  `ltcn`'s `tokenset_to_list` reassigns one, so *every* table-parsing test died with
+  `attempt to assign to const variable 's'`. Upstream is dormant — no commit since
+  2024-11-04, and its issue and merge-request trackers are both empty — so waiting was
+  not a plan: `Docker/ltcn-lua55.patch` carries a three-line, behaviour-preserving fix
+  (copy the loop variable into a fresh local; valid on Lua 5.1–5.5, so it is also exactly
+  what an upstream MR would carry) and `Docker/Dockerfile.lua55` applies it to the
+  installed rock, then **asserts it took**, so the build fails loudly if upstream ever
+  moves. Note this fixes *our* test image, not the ecosystem: a user installing on Lua 5.5
+  from LuaRocks still gets the unpatched rock. See `TODO/lua55_compatibility.md`.
+
+- **The Docker test images actually install `libdeflate` now.** None of them ever did, so
+  every gzip/zip test failed in every image and the container runs carried ~48 permanent
+  failures that masked real ones. On Lua 5.5 the rock cannot be installed the normal way at
+  all — its rockspec still declares `lua >= 5.1, < 5.5`, so `luarocks install libdeflate`
+  refuses with *"No results matching query were found for Lua 5.5"* — even though the code
+  is pure Lua and runs there fine (deflate round-trip verified); that image therefore builds
+  it from the rockspec with the stale upper bound relaxed.
+
+- **`migration_spec`'s CLI tests no longer hard-code the interpreter name.** They shelled
+  out to `lua54`, which exists on a typical Windows dev box but not in the Docker images
+  (`sh: lua54: not found`), so seven tests could only ever pass in one environment. They now
+  probe `lua54`, `lua5.4`, `lua` in order — the same candidates, in the same order, as
+  `bad_input/run_bad_input_tests.sh`.
+
 ### Removed
 
 ### Fixed
+
+- **gzip and zip support was silently unavailable on Linux and macOS.** The `libdeflate`
+  rock installs its module as `LibDeflate.lua`, but we asked for it as
+  `require("libdeflate")`. That resolves on a **case-insensitive** filesystem (Windows) and
+  nowhere else, so on Linux and macOS the engine reported *"libdeflate rock is not
+  installed"* — **even when it was installed** — and degraded: `.gz` sources were rejected
+  as unsupported, and every member of every `.zip` package silently failed to load. The
+  lookup now goes through one shared `compression.requireLibDeflate()`, which asks for the
+  rock's real name first and keeps the lowercase spelling as a fallback; the zip provider
+  reuses it rather than repeating the `require`. Nothing about this was Lua-version
+  specific — it was invisible only because development happens on Windows.
+
+- **A row with an empty leading cell could serialize as a blank line.**
+  `raw_tsv.rawTSVToString` explicitly supports a `nil` cell (it writes `nil`), but sized the
+  row with `#line` — and `#` over a table with a **hole** is a *border*: the language is
+  free to return any of them. Lua 5.4 answered 3 for `{nil, false, 3.14}` and Lua 5.5
+  answers 0, which silently emitted an **empty row** instead of the data. The width is now
+  the largest integer key, which does not depend on that choice, so such a row round-trips
+  identically on every Lua version.
+
+- **Version constraints (`>=`, `<=`) in `dependencies` / `conflicts` crashed on Lua 5.5.**
+  The `semver` rock defines `__lt` but not `__le`. Lua up to 5.4 quietly emulated `a <= b`
+  as `not (b < a)`; Lua 5.5 removed that emulation, so any `>=` or `<=` version comparison
+  raised `attempt to compare two table values` and took down package loading wherever a
+  constraint was declared. `manifest_info.versionSatisfies` now expresses both through `<`
+  alone — equivalent for a total order, and correct on every Lua version.
 
 ## [0.31.0] - 2026-07-12
 
