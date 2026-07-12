@@ -195,3 +195,61 @@ describe("graph_layout.layout — determinism", function()
         assert.equal(a, b)
     end)
 end)
+
+-- ============================================================
+-- Undirected BFS-layering helper
+-- ============================================================
+
+describe("graph_layout.bfsLayering", function()
+    it("lays a path out by BFS distance from the smallest name", function()
+        -- a - b - c (undirected chain). BFS from 'a' gives distances 0,1,2.
+        local layers = graph_layout.bfsLayering(
+            {"a", "b", "c"},
+            {a = {"b"}, b = {"a", "c"}, c = {"b"}})
+        assert.equal(0, layers.a)
+        assert.equal(1, layers.b)
+        assert.equal(2, layers.c)
+    end)
+
+    it("handles a cycle (legal for basic graphs)", function()
+        -- Triangle a-b-c: from 'a', both b and c are distance 1.
+        local layers = graph_layout.bfsLayering(
+            {"a", "b", "c"},
+            {a = {"b", "c"}, b = {"a", "c"}, c = {"a", "b"}})
+        assert.equal(0, layers.a)
+        assert.equal(1, layers.b)
+        assert.equal(1, layers.c)
+    end)
+
+    it("stacks disconnected components below one another", function()
+        -- Component {a,b} then component {x,y}, the latter starting one layer
+        -- below the former's deepest.
+        local layers = graph_layout.bfsLayering(
+            {"a", "b", "x", "y"},
+            {a = {"b"}, b = {"a"}, x = {"y"}, y = {"x"}})
+        assert.equal(0, layers.a)
+        assert.equal(1, layers.b)
+        assert.equal(2, layers.x)
+        assert.equal(3, layers.y)
+    end)
+
+    it("orients each undirected edge exactly once, low layer to high", function()
+        local _, adjacency = graph_layout.bfsLayering(
+            {"a", "b", "c"},
+            {a = {"b", "c"}, b = {"a"}, c = {"a"}})
+        -- a (layer 0) points to both b and c (layer 1); no reverse edges.
+        assert.same({"b", "c"}, adjacency.a)
+        assert.is_nil(adjacency.b)
+        assert.is_nil(adjacency.c)
+    end)
+
+    it("produces a deterministic layout end-to-end", function()
+        local nodes = {"b", "a", "d", "c"}
+        local nbrs = {a = {"b", "c"}, b = {"a", "d"}, c = {"a"}, d = {"b"}}
+        local function run()
+            local layers, adj = graph_layout.bfsLayering(nodes, nbrs)
+            return serialize(graph_layout.layout(nodes, adj, {layers = layers}))
+        end
+        assert.equal(run(), run())
+    end)
+end)

@@ -9,6 +9,96 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Customizable SVG colour schemes** (`TODO/graph_svg_export.md`, follow-up).
+  `--file=svg` colours are now fully configurable from the command line, one
+  colour per drawable *type*. `--svg-color-scheme=<name>` picks a base palette
+  from four built-ins — `default`, `dark`, `mono`, `colorblind` (an unknown name
+  is now an error with a did-you-mean suggestion, instead of silently falling
+  back). `--svg-color=<key>=<color>` (repeatable) overrides an individual colour
+  on top of the base; the keys are `node`, `root`, `leaf`, `isolated`, `border`,
+  `label`, `edge-directed`, `edge-undirected`, `edge-label`, and `background`, and
+  `<color>` is a `#rgb` / `#rrggbb` hex value, a CSS colour name, or `none` for a
+  transparent canvas (validated, with did-you-mean on the key). Directed and
+  undirected links now carry **separate** colours (`edge-directed` vs
+  `edge-undirected`), so DAG arrows and peer links can be tinted independently.
+  The `isolated` key colours a directed-graph node with no edges at all (no
+  parents and no children — previously the confusingly-named `root-leaf`). The
+  `background` fills the canvas with a full-viewBox rect drawn first, but defaults
+  to transparent (`none`) for every scheme except `dark`, so diagrams still embed
+  cleanly and adapt to the page; there is no built-in title or frame (wrap the
+  `<svg>` yourself for a caption). The renderer merges the overrides over the
+  chosen base palette deterministically. Covered by new `svg_render` colour tests
+  (named scheme, per-key override merge, directed vs undirected link colours,
+  isolated fill, background on/off/override) and a
+  `bad_input/cli_errors/svg_color_scheme_suggestion` fixture for the unknown-scheme
+  error.
+
+- **SVG edge annotations & tuning flags** (`TODO/graph_svg_export.md`, Phase 5).
+  When a drawn node file has an attached `edgesFor` edge file, each drawn edge is
+  now labelled with a value from that edge file — by default the first
+  non-comment scalar column (e.g. `requiredLevel` on the tutorial's
+  `SkillEdges.tsv`), overridable with `--svg-label-column=<col>` and disableable
+  with `--no-svg-edge-labels`. The `svg*` layout/appearance knobs are exposed as
+  CLI flags on `--file=svg`: `--svg-sweeps=<N>` (crossing-reduction passes),
+  `--svg-node-spacing=<N>` / `--svg-layer-spacing=<N>` (px), and
+  `--svg-color-scheme=<name>`. All are documented in the usage help and covered by
+  an edge-labelling case in `spec/svg_export_integration_spec.lua` (weights appear
+  by default and vanish with labels off; the edge file itself is never drawn).
+
+- **Undirected graph SVG support** (`TODO/graph_svg_export.md`, Phase 4).
+  `--file=svg` now also draws `basic_graph_node` files. Since an undirected
+  graph has no inherent layering, the exporter synthesizes one and reuses the
+  single layout engine: new **`graph_layout.bfsLayering(nodes, neighbours)`**
+  does a deterministic BFS from the lexicographically smallest node (each node's
+  layer = its BFS distance), stacks disconnected components below one another
+  (ordered by smallest member), and orients each undirected edge lower-layer →
+  higher-layer (ties by name) exactly once. `graph_layout.layout` gained an
+  `opts.layers` override so a caller can supply that precomputed layering instead
+  of the longest-path ranking. Undirected diagrams are rendered without
+  arrowheads and without root/leaf tinting (an undirected graph has neither).
+  Cycles and disconnected components — both legal for basic graphs — lay out and
+  render deterministically. Covered by new `graph_layout.bfsLayering` unit tests
+  and an undirected end-to-end case in `spec/svg_export_integration_spec.lua`.
+
+- **`--file=svg` graph-diagram export** (`TODO/graph_svg_export.md`, Phase 3).
+  New **`exporter.exportSVG`**, registered as the `svg` file format in
+  `reformatter.lua`, draws graph-family data files as SVG diagrams —
+  `lua reformatter.lua --file=svg <dirs…>` writes one `svg-svg/<name>.svg` per
+  graph file, mirroring the source layout. It is the first *selective* exporter:
+  it walks the processed files, detects each file's graph family via
+  `graph_wiring.detectRole` (over `joinMeta.lcFn2Type` / `extends`), draws the
+  directed families (`graph_node` / `tree_node`) by building the adjacency from
+  `graphChildren`, laying it out with `graph_layout` and rendering it with
+  `svg_render`, and **skips** every non-graph file with an info log plus an
+  end-of-run summary count (a graph-only picture of a non-graph file is
+  meaningless). Roots and leaves are tinted so a DAG's entry and terminal points
+  stand out. Undirected (`basic_graph_node`) graphs are recognised but deferred to
+  the next phase. Optional `exportParams` knobs (`svgSweeps`, `svgNodeSpacing`,
+  `svgLayerSpacing`, `svgColorScheme`) are plumbed through with sensible defaults.
+  Covered by `spec/svg_export_integration_spec.lua` (a graph file is drawn with
+  one box per node and one edge per parent link; a sibling non-graph file
+  produces no `.svg`; two runs are byte-identical).
+
+- **SVG graph renderer** (`TODO/graph_svg_export.md`, Phase 2). New
+  **`serde/svg_render.lua`** with **`render(laidOut, opts)`**, which turns a
+  laid-out graph (exactly what `graph_layout.layout` returns, plus optional
+  per-node `label`/`role` and per-edge `label`/`directed`) into a complete,
+  self-contained `<svg>` document string. Nodes are rounded `<rect>`s with a
+  centred label; edges are `<polyline>`s through the node centres and dummy bend
+  points, with the final segment clipped to the target box border so a directed
+  arrowhead (a single reusable `<marker>` in `<defs>`) lands cleanly on the edge.
+  Roots and leaves get distinct fills from a small built-in palette (labels stay
+  dark so they read on the fill on any page background). The renderer knows
+  nothing about graph families or the engine — the caller supplies the
+  `directed` flag and node roles — and the output is fully self-contained (no
+  external stylesheet, font, or script) and deterministic: nodes emit in name
+  order, coordinates are integers, labels are XML-escaped, and the crossing count
+  is surfaced as an `<!-- crossings: N -->` comment, so identical input yields a
+  byte-identical SVG. Covered by `spec/svg_render_spec.lua` (element counts,
+  viewBox, directed vs undirected markers, box-edge clipping, role tints,
+  escaping, and a golden-string byte-stability test). The exporter/reformatter
+  wiring that drives this over real graph files lands in Phase 3.
+
 - **Layered graph-layout engine** (`TODO/graph_svg_export.md`, Phase 1). New
   **`wiring/graph_layout.lua`** with a single pure entry point
   **`layout(nodes, adjacency, opts)`** that turns a flat list of node names plus

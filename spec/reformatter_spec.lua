@@ -420,3 +420,52 @@ thing2	20
     end)
   end)
 end)
+
+-- ============================================================
+-- SVG colour policy (named palettes live in the CLI wrapper, not the renderer)
+-- ============================================================
+
+local svg_render = require("serde.svg_render")
+
+describe("reformatter SVG colour policy", function()
+  it("returns nil when no scheme and no overrides are given", function()
+    assert.is_nil(reformatter.resolveSvgColors(nil, {}))
+    assert.is_nil(reformatter.resolveSvgColors("default", {}))
+  end)
+
+  it("resolves a named scheme into an override table", function()
+    local colors = reformatter.resolveSvgColors("dark", {})
+    assert.is_table(colors)
+    assert.equal("#1e1e2a", colors.background)   -- dark canvas
+    assert.equal("#e8ecf5", colors.text)
+  end)
+
+  it("lets explicit overrides win over the scheme, order-independently", function()
+    local colors = reformatter.resolveSvgColors("dark",
+      {background = "none", rootFill = "#123456"})
+    assert.equal("none", colors.background)      -- override beat the scheme
+    assert.equal("#123456", colors.rootFill)
+    assert.equal("#e8ecf5", colors.text)         -- untouched scheme value stays
+  end)
+
+  it("passes overrides through with no scheme", function()
+    local colors = reformatter.resolveSvgColors(nil, {rootFill = "#abcdef"})
+    assert.same({rootFill = "#abcdef"}, colors)
+  end)
+
+  -- Guard against drift between the wrapper's colour vocabulary and the
+  -- renderer's actual colour slots (the single source of truth).
+  it("maps every colour key / scheme entry to a real renderer slot", function()
+    local slots = svg_render.DEFAULT_COLORS
+    for _, slot in pairs(reformatter.SVG_COLOR_KEYS) do
+      assert.is_not_nil(slots[slot],
+        "SVG_COLOR_KEYS maps to unknown renderer slot: " .. tostring(slot))
+    end
+    for name, scheme in pairs(reformatter.SVG_SCHEMES) do
+      for slot in pairs(scheme) do
+        assert.is_not_nil(slots[slot],
+          "scheme '" .. name .. "' sets unknown renderer slot: " .. tostring(slot))
+      end
+    end
+  end)
+end)

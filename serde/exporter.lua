@@ -80,6 +80,13 @@ local groupSecondaryFiles = file_joining.groupSecondaryFiles
 local findFilePath = file_joining.findFilePath
 local joinFiles = file_joining.joinFiles
 
+-- Graph-diagram export (TODO/graph_svg_export.md): family detection plus the
+-- pure layout + render modules. The exporter is the thin glue between them.
+local graph_wiring = require("wiring.graph_wiring")
+local detectRole = graph_wiring.detectRole
+local graph_layout = require("wiring.graph_layout")
+local svg_render = require("serde.svg_render")
+
 -- Column names used for file joining metadata (to be excluded from exported Files.tsv)
 local JOIN_COLUMNS = {
     joinInto = true,
@@ -1056,6 +1063,250 @@ local function registerJoinedTypes(processedFiles)
     return count
 end
 
+-- ============================================================
+-- SVG graph-diagram export (TODO/graph_svg_export.md)
+--
+-- Unlike every other exporter, exportSVG is *selective*: it walks the
+-- processed files, draws each one whose type belongs to a graph node family,
+-- and skips everything else (logged at info — a graph-only picture of a
+-- non-graph file is meaningless). It is the thin glue between family
+-- detection, the pure graph_layout engine, and the pure svg_render renderer.
+-- Phase 3 handles the directed families (graph_node / tree_node); undirected
+-- (basic_graph_node) support lands in Phase 4.
+-- ============================================================
+
+-- Reads the parsed value of a named column on a data row (nil-safe). The TSV
+-- model keys the header both numerically and by column name, so header[name]
+-- is the descriptor and .idx is the cell position.
+local function readNamedCell(row, header, colName)
+    local col = header[colName]
+    local idx = col and col.idx
+    if not idx then return nil end
+    local cell = row[idx]
+    return cell and cell.parsed or nil
+end
+
+-- Builds the {nodes, adjacency, roles} inputs for a directed graph file from
+-- its processed TSV. `nodes` is name-ordered for determinism; adjacency
+-- follows graphChildren; a node's role tags whether it is a root/leaf so the
+-- renderer can tint entry and terminal points.
+local function buildDirectedGraph(tsv)
+    local header = tsv[1]
+    local nodes, adjacency, roles = {}, {}, {}
+    for i = 2, #tsv do
+        local row = tsv[i]
+        if type(row) == "table" then
+            local name = readNamedCell(row, header, "name")
+            if name ~= nil then
+                nodes[#nodes + 1] = name
+                local children = readNamedCell(row, header, "graphChildren") or {}
+                local parents = readNamedCell(row, header, "graphParents") or {}
+                local kids = {}
+                for _, c in ipairs(children) do kids[#kids + 1] = c end
+                adjacency[name] = kids
+                local isRoot = #parents == 0
+                local isLeaf = #children == 0
+                -- No parents AND no children = an isolated node (no edges).
+                if isRoot and isLeaf then roles[name] = "isolated"
+                elseif isRoot then roles[name] = "root"
+                elseif isLeaf then roles[name] = "leaf" end
+            end
+        end
+    end
+    return nodes, adjacency, roles
+end
+
+-- Builds the {nodes, neighbours} inputs for an undirected (basic) graph file
+-- from its processed TSV. `neighbours` follows graphLinks (symmetric). Roles
+-- are not tinted for undirected graphs (they have no roots/leaves).
+local function buildUndirectedGraph(tsv)
+    local header = tsv[1]
+    local nodes, neighbours = {}, {}
+    for i = 2, #tsv do
+        local row = tsv[i]
+        if type(row) == "table" then
+            local name = readNamedCell(row, header, "name")
+            if name ~= nil then
+                nodes[#nodes + 1] = name
+                local links = readNamedCell(row, header, "graphLinks") or {}
+                local nbrs = {}
+                for _, l in ipairs(links) do nbrs[#nbrs + 1] = l end
+                neighbours[name] = nbrs
+            end
+        end
+    end
+    return nodes, neighbours
+end
+
+-- Picks the edge-file column whose value labels each drawn edge. An explicit
+-- name (exportParams.svgLabelColumn) wins; otherwise the first non-`name`,
+-- non-comment column — e.g. `requiredLevel` on the tutorial's SkillEdges.tsv.
+-- Returns the cell index, or nil if there is nothing to label with.
+local function pickEdgeLabelColumn(header, preferred)
+    if preferred and header[preferred] then return header[preferred].idx end
+    for j = 1, #header do
+        local col = header[j]
+        if col.name ~= "name" and not isCommentColumn(col) then
+            return j
+        end
+    end
+    return nil
+end
+
+-- Builds a map from an edge file's primary key (e.g. "perception__aim") to the
+-- string label taken from the chosen column. Table-valued cells are skipped
+-- (a label is a scalar). Returns nil when there is no usable column.
+local function buildEdgeLabelMap(edgeTsv, preferred)
+    local header = edgeTsv[1]
+    local nameIdx = header["name"] and header["name"].idx
+    local labelIdx = pickEdgeLabelColumn(header, preferred)
+    if not nameIdx or not labelIdx then return nil end
+    local map = {}
+    for i = 2, #edgeTsv do
+        local row = edgeTsv[i]
+        if type(row) == "table" then
+            local key = row[nameIdx] and row[nameIdx].parsed
+            local val = row[labelIdx] and row[labelIdx].parsed
+            if key ~= nil and val ~= nil and type(val) ~= "table" then
+                map[key] = tostring(val)
+            end
+        end
+    end
+    return map
+end
+
+--- Exports graph-family files as SVG diagrams, one per node file. Non-graph
+--- files are skipped with an info log. Returns true on success.
+--- @param process_files table Result from the loader (tsv_files, joinMeta, …).
+--- @param exportParams table Export parameters: {exportDir, formatSubdir, …}.
+--- @return boolean
+local function exportSVG(process_files, exportParams)
+    logger:info("Exporting graph files as SVG to: " .. exportParams.exportDir)
+    local tsv_files = process_files.tsv_files or {}
+    local joinMeta = process_files.joinMeta or {}
+    local file2dir = process_files.file2dir
+    local lcFn2Type = joinMeta.lcFn2Type or {}
+    local extendsMap = joinMeta.extends or {}
+
+    local baseExportDir = exportParams.exportDir
+    local formatSubdir = exportParams.formatSubdir or ""
+    local exportDir = formatSubdir ~= "" and pathJoin(baseExportDir, formatSubdir)
+        or baseExportDir
+
+    -- Edge-file annotation setup: a node file's drawn edges are labelled with
+    -- data from its attached `edgesFor` edge file (default on). Build the
+    -- node→edge reverse index and a basename→path index once.
+    local svgLabelEdges = exportParams.svgLabelEdges
+    if svgLabelEdges == nil then svgLabelEdges = true end
+    local nodeToEdge = {}
+    for edgeLc, nodeLc in pairs(joinMeta.lcFn2EdgesFor or {}) do
+        nodeToEdge[nodeLc] = edgeLc
+    end
+    local baseToPath = {}
+    for fn in pairs(tsv_files) do
+        baseToPath[(fn:match("[^/\\]+$") or fn):lower()] = fn
+    end
+
+    -- Deterministic file order.
+    local fileNames = {}
+    for fn in pairs(tsv_files) do fileNames[#fileNames + 1] = fn end
+    table.sort(fileNames)
+
+    local dirChecked = {}
+    local drawn, skipped = 0, 0
+    for _, file_name in ipairs(fileNames) do
+        local relative_name = computeRelativePath(file_name, file2dir)
+        -- Type/family are keyed by basename lowercased, matching how Files.tsv
+        -- metadata is indexed (see builtin_wiring's edge-consistency pass).
+        local baseLc = (relative_name:match("[^/\\]+$") or relative_name):lower()
+        local typeName = lcFn2Type[baseLc]
+        local role = typeName and detectRole(typeName, extendsMap) or nil
+
+        -- Respect the same variant / secondary-file gating as the TSV export.
+        local lcfnKey = relative_name:lower():gsub("\\", "/")
+        local exportable = true
+        if joinMeta.lcFn2Export and joinMeta.lcFn2JoinInto then
+            exportable = shouldExport(lcfnKey, joinMeta)
+        end
+
+        if role == nil then
+            logger:info("No graph to draw for " .. file_name .. " (skipping)")
+            skipped = skipped + 1
+        elseif not exportable then
+            logger:info("Skipping export of secondary/variant-inactive graph file: "
+                .. file_name)
+            skipped = skipped + 1
+        else
+            local tsv = tsv_files[file_name]
+            local layoutOpts = {
+                sweeps = exportParams.svgSweeps,
+                nodeSpacing = exportParams.svgNodeSpacing,
+                layerSpacing = exportParams.svgLayerSpacing,
+            }
+            local laidOut, directed, roles, nodeCount
+            if role.family == "directed" then
+                -- DAG / tree: layer by longest path, arrowheads, root/leaf tint.
+                local nodes, adjacency
+                nodes, adjacency, roles = buildDirectedGraph(tsv)
+                laidOut = graph_layout.layout(nodes, adjacency, layoutOpts)
+                directed = true
+                nodeCount = #nodes
+            else
+                -- Undirected (basic): synthesize a BFS layering, orient edges
+                -- for the engine, and draw without arrowheads or role tints.
+                local nodes, neighbours = buildUndirectedGraph(tsv)
+                local layers, adjacency = graph_layout.bfsLayering(nodes, neighbours)
+                layoutOpts.layers = layers
+                laidOut = graph_layout.layout(nodes, adjacency, layoutOpts)
+                directed = false
+                nodeCount = #nodes
+            end
+            -- Attach roles (directed only) so the renderer can tint roots/leaves.
+            if roles then
+                for name, node in pairs(laidOut.nodes) do
+                    node.role = roles[name]
+                end
+            end
+            -- Annotate edges from the attached edge file, if any. Try both key
+            -- orderings so a directed "parent__child" key and an undirected
+            -- canonical key both resolve.
+            if svgLabelEdges and nodeToEdge[baseLc] then
+                local edgePath = baseToPath[nodeToEdge[baseLc]]
+                local edgeTsv = edgePath and tsv_files[edgePath]
+                local labelMap = edgeTsv and buildEdgeLabelMap(edgeTsv,
+                    exportParams.svgLabelColumn)
+                if labelMap then
+                    for _, edge in ipairs(laidOut.edges) do
+                        local v = labelMap[edge.from .. "__" .. edge.to]
+                            or labelMap[edge.to .. "__" .. edge.from]
+                        if v ~= nil then edge.label = v end
+                    end
+                end
+            end
+            local svg = svg_render.render(laidOut, {
+                directed = directed,
+                colors = exportParams.svgColors,
+            })
+
+            local out_name = changeExtension(pathJoin(exportDir, relative_name), "svg")
+            if not ensureParentDir(out_name, dirChecked) then
+                return false
+            end
+            if not writeExportFile(out_name, svg) then
+                return false
+            end
+            logger:info(string.format("Drew %s (%d nodes, %d crossings)",
+                file_name, nodeCount, laidOut.crossings))
+            drawn = drawn + 1
+        end
+    end
+
+    logger:info(string.format(
+        "SVG export complete: %d graph file(s) drawn, %d file(s) skipped",
+        drawn, skipped))
+    return true
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -1073,6 +1324,7 @@ local API = {
     exportNaturalJSONTSV = exportNaturalJSONTSV,
     exportSchema = exportSchema,
     exportSQL = exportSQL,
+    exportSVG = exportSVG,
     exportXML = exportXML,
     registerJoinedTypes = registerJoinedTypes,
 }

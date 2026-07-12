@@ -1,0 +1,4 @@
+
+TS	ERROR	[reformatter]	Unknown SVG color scheme: drak (did you mean 'dark'?)
+TS	ERROR	[reformatter]	Valid schemes: colorblind, dark, default, mono
+Use 'lua reformatter.lua' without arguments to see usage.

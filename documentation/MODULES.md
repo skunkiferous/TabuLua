@@ -11,7 +11,7 @@ The engine's library modules live in topical sub-directories and are required by
 | `util/` | Leaf primitives (no/few deps) | table_utils, read_only, string_utils, sparse_sequence, comparators, predicates, table_parsing, number_identifiers, base64, regex_utils, global_reset |
 | `infra/` | Cross-cutting infrastructure | named_logger, error_reporting, file_util, sandbox_env |
 | `tsv/` | Core TSV data model | raw_tsv, raw_eav, tsv_model, exploded_columns, file_joining, data_set |
-| `serde/` | Serialize ↔ deserialize / import / export | serialization, deserialization, importer, round_trip, schema_validator, exporter |
+| `serde/` | Serialize ↔ deserialize / import / export | serialization, deserialization, importer, round_trip, schema_validator, exporter, svg_render |
 | `content/` | Pre-parse content pipeline + transcoders | content_pipeline, builtin_content_stages, compression, archive_formats, lua_cog, cog_discovery, doc_generator, eav_transcoder, json_transcoders, xml_transcoder, tsv_transcoders, lua_transcoder |
 | `wiring/` | Type wiring, validation, processors | type_wiring, builtin_wiring, graph_helpers, graph_wiring, graph_layout, validator_executor, validator_helpers, processor_executor |
 | `overrides/` | Mod-override engine | patch_executor, patch_lineage, schema_overlay |
@@ -67,6 +67,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [round_trip](#round_trip) | Round-trip serialization/deserialization testing | deserialization, read_only, serialization |
 | [schema_validator](#schema_validator) | Validates typed JSON and XML export formats | read_only |
 | [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
+| [svg_render](#svg_render) | Renders a laid-out graph (from graph_layout) to a self-contained, deterministic SVG string; knows nothing about graph families or the engine | read_only |
 
 **`content/`**
 
@@ -267,7 +268,9 @@ Error collection and reporting system using `badVal` handlers instead of excepti
 
 Exports parsed TSV data to multiple formats including JSON, Lua tables, XML, SQL, and MessagePack. An archive file streams to the export verbatim (passthrough copy), but a loaded archive *member* is input-only: it is skipped (via `file_util.resolveArchivePath`) so it is never re-emitted at a nested `.zip/`-as-directory path — the packed archive is its export representation (archive_files.md §5).
 
-**Dependencies:** base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model
+`exportSVG` (`--file=svg`, `TODO/graph_svg_export.md`) is the one *selective* exporter: it walks the processed files, and for each one whose type belongs to a graph node family (detected via [graph_wiring](#graph_wiring) `detectRole` over `joinMeta.lcFn2Type` / `extends`) it builds the directed adjacency from the file's `graphChildren`, lays it out with [graph_layout](#graph_layout), renders it with [svg_render](#svg_render), and writes `svg-svg/<name>.svg` (mirroring the source layout). Non-graph files are skipped with an info log and a summary count — a graph-only picture of a non-graph file is meaningless. Directed families (`graph_node` / `tree_node`) draw with arrowheads and root/leaf tinting; undirected (`basic_graph_node`) files are laid out via `graph_layout.bfsLayering` and drawn without arrowheads.
+
+**Dependencies:** base64, error_reporting, exploded_columns, file_joining, file_util, graph_layout, graph_wiring, named_logger, parsers, predicates, raw_tsv, read_only, serialization, svg_render, tsv_model
 
 ---
 
@@ -369,6 +372,21 @@ Detects graph-family files in a manifest and auto-attaches their completion pre-
 Pure, family-agnostic layered (Sugiyama-style) graph-layout engine, the geometry half of the `--file=svg` export (`TODO/graph_svg_export.md`). It knows nothing about graph families, TSV rows, SVG, or the engine runtime — the single entry point `layout(nodes, adjacency, opts)` takes a flat list of node names plus a directed adjacency (`name → array of names it points to`) and returns `{ nodes = {name → {x, y, layer}}, edges = { {from, to, points} }, width, height, crossings }`, so any directed graph (a graph-data file today, a package-dependency graph later) can be drawn through the same code.
 
 Four stages: **layer assignment** (longest-path from the roots, via Kahn relaxation whose result is pop-order-independent), **virtual nodes** (edges spanning more than one layer are split into dummy chains so every layered edge joins adjacent layers, and the dummies become polyline bend points), **crossing reduction** (the wmedian heuristic swept a configurable number of times with best-of retention, since the heuristic is not monotone), and **coordinate assignment** (`y = layer·spacing`; `x` from the within-layer order plus a light centre-under-the-widest-layer pass). Output is **integer coordinates only** and every ordering tie breaks on the node name, so identical input yields byte-identical output on every run and platform — the same determinism discipline as [package_order_determinism.md]. The reported `crossings` count is surfaced (not hidden inside the picture) so callers and tests can see the heuristic's result. Exact crossing minimization is NP-hard; this targets *low*, not provably minimal, crossings.
+
+For undirected input (which has no inherent layering), `bfsLayering(nodes, neighbours)` synthesizes one: a deterministic BFS from the smallest node name sets each node's layer to its BFS distance, disconnected components are stacked below one another (ordered by smallest member), and each undirected edge is oriented lower-layer → higher-layer exactly once. Feed its result back through `layout` with `opts.layers` (an override that skips the longest-path ranking) to reuse the whole crossing-reduction / coordinate machinery — the renderer then draws the edges without arrowheads.
+
+**Dependencies:** read_only
+
+---
+
+### svg_render
+**File:** [svg_render.lua](../serde/svg_render.lua)
+
+The rendering half of the `--file=svg` export (`TODO/graph_svg_export.md`). `render(laidOut, opts)` takes exactly what [graph_layout](#graph_layout) produces — `{ nodes = {name → {x, y, layer, [label], [role]}}, edges = { {from, to, points, [label], [directed]} }, width, height, crossings }` — and returns a complete, self-contained `<svg>` document string. It knows nothing about graph families, TSV rows, or the engine: the caller decides whether the graph is directed (arrowheads via a single reusable `<marker>` in `<defs>`) and tags each node's role, which selects a fill from a small built-in palette (roots and leaves get distinct tints; labels are always dark so they read on the fill regardless of page background).
+
+Colours are customizable but the renderer is deliberately **scheme-agnostic** — mechanism, not policy. It knows only its own built-in `DEFAULT_COLORS` (one field per drawable type: the four node-role fills including `isolated` for a node with no edges at all, the node border and label, the two link kinds — **directed vs undirected links carry separate colours** — the edge label, and the canvas `background`, which is `none`/transparent by default). `render` merges `opts.colors` (an override table keyed by those field names) over the defaults. The `background`, when set, is a full-viewBox rect drawn first (skipped when `none`, so the SVG stays transparent and adapts to whatever embeds it). The **named palettes** (`dark`, `mono`, `colorblind`) and the friendly CLI colour vocabulary are *policy* and live in the [reformatter](#reformatter) (`SVG_SCHEMES` / `SVG_COLOR_KEYS`), which resolves a scheme name plus `--svg-color` overrides into that override table — so a new palette is a config change in the wrapper, never a renderer edit. There is no title/frame element by design.
+
+Nodes are rounded `<rect>`s with a centred `<text>` label; edges are `<polyline>`s through the node centres and any dummy bend points, with the final segment clipped to the target box border so a directed arrowhead lands cleanly on the edge instead of hiding under the box. The document is built by plain string concatenation (no XML dependency, the same technique [exporter](#exporter) uses), has no external stylesheet / web font / script, and is fully deterministic: nodes emit in name order, edges in the order given, every coordinate is an integer, and all label text is XML-escaped — so identical input yields a byte-identical SVG. The crossing count is surfaced as an `<!-- crossings: N -->` comment.
 
 **Dependencies:** read_only
 

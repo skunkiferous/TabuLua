@@ -403,6 +403,82 @@ local function assignCoordinates(built, opts)
 end
 
 -- ============================================================
+-- Undirected → layered helper
+--
+-- An undirected graph has no inherent layering, so we synthesize one and
+-- reuse the single engine: BFS from the lexicographically smallest node,
+-- with each node's layer = its BFS distance. Disconnected components are
+-- stacked below one another (the next component starts one layer below the
+-- previous one's deepest), ordered by their smallest member — fully
+-- deterministic. Each undirected edge is oriented lower-layer → higher-layer
+-- (ties by name) so the engine can lay it out; the renderer draws it without
+-- an arrowhead. Returns (layers = {name -> int}, adjacency = {name -> list}).
+-- ============================================================
+
+local function bfsLayering(nodes, neighbours)
+    neighbours = neighbours or {}
+    local nodeSet = {}
+    for _, n in ipairs(nodes or {}) do nodeSet[n] = true end
+
+    local order = sortedNames(keysOf(nodeSet))
+    local layer, visited = {}, {}
+    local baseLayer = 0  -- where the current component starts
+
+    for _, start in ipairs(order) do
+        if not visited[start] then
+            -- BFS this component from `start` (the smallest unvisited name).
+            visited[start] = true
+            layer[start] = baseLayer
+            local queue, head = {start}, 1
+            local maxLayer = baseLayer
+            while head <= #queue do
+                local u = queue[head]; head = head + 1
+                local nbrs = {}
+                for _, v in ipairs(neighbours[u] or {}) do
+                    if nodeSet[v] then nbrs[#nbrs + 1] = v end
+                end
+                table.sort(nbrs)
+                for _, v in ipairs(nbrs) do
+                    if not visited[v] then
+                        visited[v] = true
+                        layer[v] = layer[u] + 1
+                        if layer[v] > maxLayer then maxLayer = layer[v] end
+                        queue[#queue + 1] = v
+                    end
+                end
+            end
+            baseLayer = maxLayer + 1  -- stack the next component below
+        end
+    end
+
+    -- Orient each undirected edge once, lower layer → higher (ties by name).
+    local adjacency, seen = {}, {}
+    for _, a in ipairs(order) do
+        local nbrs = {}
+        for _, b in ipairs(neighbours[a] or {}) do
+            if nodeSet[b] and a ~= b then nbrs[#nbrs + 1] = b end
+        end
+        table.sort(nbrs)
+        for _, b in ipairs(nbrs) do
+            local lo, hi
+            if layer[a] < layer[b] or (layer[a] == layer[b] and a < b) then
+                lo, hi = a, b
+            else
+                lo, hi = b, a
+            end
+            local key = lo .. "\1" .. hi
+            if not seen[key] then
+                seen[key] = true
+                adjacency[lo] = adjacency[lo] or {}
+                adjacency[lo][#adjacency[lo] + 1] = hi
+            end
+        end
+    end
+
+    return layer, adjacency
+end
+
+-- ============================================================
 -- Public entry point
 -- ============================================================
 
@@ -438,7 +514,20 @@ local function layout(nodes, adjacency, opts)
         children[from] = kept
     end
 
-    local layer = assignLayers(nodeSet, children)
+    -- Layer assignment. A caller may supply a precomputed layering via
+    -- opts.layers (map name -> int), used by the undirected path where BFS
+    -- distance — not longest-path — defines the bands. Missing nodes default
+    -- to 0. Otherwise the standard longest-path layering runs.
+    local layer
+    if opts.layers then
+        layer = {}
+        for name in pairs(nodeSet) do
+            local L = opts.layers[name]
+            layer[name] = type(L) == "number" and L or 0
+        end
+    else
+        layer = assignLayers(nodeSet, children)
+    end
     local built = buildLayers(nodeSet, layer, edgeList)
     local crossings = reduceCrossings(built, optOr(opts, "sweeps"))
     local coord, width, height = assignCoordinates(built, opts)
@@ -487,6 +576,7 @@ end
 local API = {
     getVersion = getVersion,
     layout = layout,
+    bfsLayering = bfsLayering,
     DEFAULTS = DEFAULTS,
 }
 

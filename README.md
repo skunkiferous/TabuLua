@@ -14,6 +14,7 @@ TabuLua provides a robust way to define, validate, and manage structured data in
 - **Code Generation (COG)** - Generate rows programmatically with embedded Lua
 - **Package System** - Organize data into packages with dependencies and versioning
 - **Multi-Format Export** - Export to JSON, Lua tables, XML, SQL, and MessagePack
+- **SVG Graph Diagrams** - `--file=svg` draws graph-family files as self-contained, deterministic SVG diagrams (layered layout with crossing reduction); non-graph files are skipped
 - **Comprehensive Validation** - Custom types, row/file/package validators
 - **Pre-Processors** - Mutate parsed rows before validation (derive inverse relations, normalise data)
 - **Graph Types** - Built-in `basic_graph_node` / `graph_node` / `tree_node` families with auto-wired link completion, cycle detection, tree-shape checks, and optional `edgesFor` edge files for per-edge data

@@ -73,6 +73,86 @@ local didYouMean = error_reporting.didYouMean
 
 local exporter = require("serde.exporter")
 
+-- ============================================================
+-- SVG colour policy (the opinionated part of the SVG export).
+--
+-- The renderer (serde.svg_render) is deliberately scheme-agnostic: it draws
+-- with individual colours over its own DEFAULT_COLORS and merges any overrides
+-- it is handed. The *named palettes* and the *friendly CLI colour vocabulary*
+-- are policy, so they live here in the CLI wrapper — a new scheme is a config
+-- change here, not a library edit. Each scheme is a set of overrides keyed by
+-- svg_render's colour-slot field names; the empty `default` means "use the
+-- renderer's built-in colours".
+-- ============================================================
+
+local SVG_SCHEMES = {
+    default = {},
+    dark = {
+        nodeFill = "#2b3245", rootFill = "#26402b", leafFill = "#402b26",
+        isolatedFill = "#403a26", stroke = "#8a9ac0", text = "#e8ecf5",
+        edgeDirected = "#9aa5b5", edgeUndirected = "#7fa8c9",
+        edgeText = "#aab2c0", background = "#1e1e2a",
+    },
+    mono = {
+        nodeFill = "#eeeeee", rootFill = "#dddddd", leafFill = "#cccccc",
+        isolatedFill = "#d5d5d5", stroke = "#333333", text = "#111111",
+        edgeDirected = "#555555", edgeUndirected = "#888888",
+        edgeText = "#444444", background = "none",
+    },
+    colorblind = {  -- Okabe–Ito-derived link hues (blue / vermillion)
+        nodeFill = "#e6f0f5", rootFill = "#cfe8d6", leafFill = "#f5e6cf",
+        isolatedFill = "#efe0f0", stroke = "#333333", text = "#111111",
+        edgeDirected = "#0072b2", edgeUndirected = "#d55e00",
+        edgeText = "#444444", background = "none",
+    },
+}
+
+-- Friendly CLI colour name (--svg-color=<key>=<value>) -> svg_render colour slot.
+local SVG_COLOR_KEYS = {
+    ["node"]            = "nodeFill",
+    ["root"]            = "rootFill",
+    ["leaf"]            = "leafFill",
+    ["isolated"]        = "isolatedFill",
+    ["border"]          = "stroke",
+    ["label"]           = "text",
+    ["edge-directed"]   = "edgeDirected",
+    ["edge-undirected"] = "edgeUndirected",
+    ["edge-label"]      = "edgeText",
+    ["background"]      = "background",
+}
+
+-- Resolves a scheme name plus explicit per-slot overrides into a single colour
+-- table for svg_render.render's `opts.colors`. Explicit overrides always win
+-- over the scheme base (order-independent). Returns nil when nothing is set, so
+-- the renderer falls back to its own DEFAULT_COLORS.
+local function resolveSvgColors(schemeName, overrides)
+    local scheme = SVG_SCHEMES[schemeName or "default"] or {}
+    local hasOverrides = overrides ~= nil and next(overrides) ~= nil
+    if next(scheme) == nil and not hasOverrides then return nil end
+    local out = {}
+    for k, v in pairs(scheme) do out[k] = v end
+    if overrides then for k, v in pairs(overrides) do out[k] = v end end
+    return out
+end
+
+-- True if `v` is an acceptable SVG colour literal: a #rgb / #rrggbb hex value or
+-- a bare CSS colour name (letters only, e.g. "none"/"steelblue"). Emitted
+-- verbatim, so output stays deterministic.
+local function isSvgColor(v)
+    if type(v) ~= "string" then return false end
+    return v:match("^#%x%x%x$") ~= nil
+        or v:match("^#%x%x%x%x%x%x$") ~= nil
+        or v:match("^%a+$") ~= nil
+end
+
+-- Returns the sorted keys of a table (for deterministic error listings).
+local function sortedKeys(t)
+    local names = {}
+    for k in pairs(t) do names[#names + 1] = k end
+    table.sort(names)
+    return names
+end
+
 -- Export-time COG doc generation (content_pipeline.md §3.10): discover templates,
 -- then expand them after the per-format exporters (which skip them).
 local cog_discovery = require("content.cog_discovery")
@@ -123,6 +203,13 @@ local DATA_FORMATS = {
         description = "MessagePack binary format",
         mpkExporter = exporter.exportMessagePack,
         sqlTableSerializer = serializeMessagePackSQLBlob,
+    },
+    -- SVG has no cell-serialization axis (it draws a picture, it doesn't
+    -- serialize cells). This passthrough entry exists only so --data
+    -- validation and the svg-svg subdir naming stay uniform with every
+    -- other format (TODO/graph_svg_export.md).
+    ["svg"] = {
+        description = "SVG diagram (no cell serialization; passthrough)",
     },
 }
 
@@ -191,6 +278,13 @@ local FILE_FORMATS = {
             local df = DATA_FORMATS[dataFormat]
             return df and df.mpkExporter
         end,
+    },
+    ["svg"] = {
+        extension = ".svg",
+        description = "SVG diagram of graph-family files (skips non-graph files)",
+        validData = {"svg"},
+        defaultData = "svg",
+        getExporter = function() return exporter.exportSVG end,
     },
 }
 
@@ -263,8 +357,10 @@ end
 local KNOWN_OPTIONS = {
     "--check-conflicts", "--clean", "--cog-docs", "--collapse-exploded",
     "--data", "--explain-patch", "--export-dir", "--export-merged",
-    "--file", "--log-level", "--no-number-warn", "--no-unquoted-warn",
-    "--strip-cog", "--variant",
+    "--file", "--log-level", "--no-number-warn", "--no-svg-edge-labels",
+    "--no-unquoted-warn", "--strip-cog", "--svg-color", "--svg-color-scheme",
+    "--svg-label-column", "--svg-layer-spacing", "--svg-node-spacing",
+    "--svg-sweeps", "--variant",
 }
 
 --- Generates the usage help text dynamically from the format configuration.
@@ -337,6 +433,21 @@ local function generateUsage()
         "                        Can be specified multiple times (e.g., --variant=en --variant=ios)",
         "                        Only Files.tsv rows whose variant matches are loaded",
         "",
+        "  SVG diagram tuning (only affect --file=svg):",
+        "  --svg-sweeps=<N>          Crossing-reduction passes (default 8)",
+        "  --svg-node-spacing=<N>    Horizontal gap between nodes in px (default 140)",
+        "  --svg-layer-spacing=<N>   Vertical gap between layers in px (default 90)",
+        "  --svg-color-scheme=<name> Base colour palette: default, dark, mono, colorblind",
+        "  --svg-color=<key>=<color> Override one palette colour (repeatable). Keys:",
+        "                            node, root, leaf, isolated, border, label,",
+        "                            edge-directed, edge-undirected, edge-label, background.",
+        "                            <color> is #rgb, #rrggbb, a CSS colour name, or",
+        "                            'none' (background only; transparent canvas).",
+        "                            e.g. --svg-color=root=#2e7d32 --svg-color=background=#fff",
+        "  --svg-label-column=<col>  Edge-file column to label edges with",
+        "                            (default: first non-comment scalar column)",
+        "  --no-svg-edge-labels      Do not label edges from the attached edge file",
+        "",
         "FILE FORMATS:",
     }
 
@@ -404,6 +515,10 @@ local function generateUsage()
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua --file=lua --file=json tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Export to multiple formats (uses defaults for each)")
+    table.insert(lines, "")
+    table.insert(lines, "  lua reformatter.lua --file=svg tutorial/core/ tutorial/expansion/")
+    table.insert(lines, "      Draw graph-family files as SVG diagrams to exported/svg-svg/")
+    table.insert(lines, "      (non-graph files are skipped)")
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua --export-merged tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Write the post-override merged state of every file to merged/")
@@ -1007,6 +1122,8 @@ if isMainScript then
         local explainPatch = nil        -- --explain-patch[=<filter>] (nil = off, true = all)
         local checkConflicts = false    -- --check-conflicts flag (conflicts-only report)
         local variants = {}             -- --variant=<name> values
+        local svgSchemeName = nil       -- --svg-color-scheme=<name> (nil = default)
+        local svgColorOverrides = {}    -- --svg-color=<key>=<v> (slot -> colour)
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
         local hasError = false
@@ -1118,6 +1235,56 @@ if isMainScript then
                     logger:error("--variant= requires a name")
                     hasError = true
                 end
+            elseif arg_i:match("^%-%-svg%-sweeps=") then
+                local v = tonumber(arg_i:match("^%-%-svg%-sweeps=(.+)$"))
+                if v then exportParams.svgSweeps = v
+                else logger:error("--svg-sweeps= requires a number"); hasError = true end
+            elseif arg_i:match("^%-%-svg%-node%-spacing=") then
+                local v = tonumber(arg_i:match("^%-%-svg%-node%-spacing=(.+)$"))
+                if v then exportParams.svgNodeSpacing = v
+                else logger:error("--svg-node-spacing= requires a number"); hasError = true end
+            elseif arg_i:match("^%-%-svg%-layer%-spacing=") then
+                local v = tonumber(arg_i:match("^%-%-svg%-layer%-spacing=(.+)$"))
+                if v then exportParams.svgLayerSpacing = v
+                else logger:error("--svg-layer-spacing= requires a number"); hasError = true end
+            elseif arg_i:match("^%-%-svg%-color%-scheme=") then
+                local name = arg_i:match("^%-%-svg%-color%-scheme=(.+)$")
+                if name and SVG_SCHEMES[name] then
+                    svgSchemeName = name
+                else
+                    local schemes = sortedKeys(SVG_SCHEMES)
+                    logger:error("Unknown SVG color scheme: " .. tostring(name)
+                        .. didYouMean(name, schemes))
+                    logger:error("Valid schemes: " .. table.concat(schemes, ", "))
+                    hasError = true
+                end
+            elseif arg_i:match("^%-%-svg%-color=") then
+                -- --svg-color=<key>=<color>, repeatable, overrides one colour.
+                local spec = arg_i:match("^%-%-svg%-color=(.+)$")
+                local key, val = nil, nil
+                if spec then key, val = spec:match("^([%w%-]+)=(.+)$") end
+                if not key then
+                    logger:error("--svg-color= expects <key>=<color>"
+                        .. " (e.g. --svg-color=root=#2e7d32)")
+                    hasError = true
+                elseif not SVG_COLOR_KEYS[key] then
+                    local keys = sortedKeys(SVG_COLOR_KEYS)
+                    logger:error("Unknown SVG color key: " .. key
+                        .. didYouMean(key, keys))
+                    logger:error("Valid keys: " .. table.concat(keys, ", "))
+                    hasError = true
+                elseif not isSvgColor(val) then
+                    logger:error("Invalid color '" .. tostring(val)
+                        .. "' for --svg-color=" .. key
+                        .. " (expected #rgb, #rrggbb, or a CSS colour name)")
+                    hasError = true
+                else
+                    svgColorOverrides[SVG_COLOR_KEYS[key]] = val
+                end
+            elseif arg_i:match("^%-%-svg%-label%-column=") then
+                exportParams.svgLabelColumn = arg_i:match("^%-%-svg%-label%-column=(.+)$")
+            elseif arg_i == "--no-svg-edge-labels" then
+                exportParams.svgLabelEdges = false
             elseif arg_i:match("^%-%-") then
                 local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
                 logger:error("Unknown option: " .. arg_i
@@ -1170,6 +1337,10 @@ if isMainScript then
         else
             exportDir = normalizePath(exportDir)
             exportParams.exportDir = exportDir
+            -- Resolve the SVG colour scheme + per-colour overrides into a single
+            -- override table for the (scheme-agnostic) renderer. nil when neither
+            -- was given, so the renderer keeps its own defaults.
+            exportParams.svgColors = resolveSvgColors(svgSchemeName, svgColorOverrides)
             -- Set exportExploded=false when --collapse-exploded is specified
             if collapseExploded then
                 exportParams.exportExploded = false
@@ -1212,6 +1383,11 @@ local API = {
     getVersion = getVersion,
     processFiles = processFiles,
     refreshDocs = refreshDocs,
+    -- SVG colour policy (named palettes + CLI colour vocabulary), exposed for
+    -- tests. The renderer stays scheme-agnostic; these live in the wrapper.
+    resolveSvgColors = resolveSvgColors,
+    SVG_SCHEMES = SVG_SCHEMES,
+    SVG_COLOR_KEYS = SVG_COLOR_KEYS,
 }
 
 -- Enables the module to be called as a function

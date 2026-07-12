@@ -1509,6 +1509,40 @@ inner TSV/CSV. It is reversible: the reformatter reformats the decoded TSV and
 re-compresses it, writing the bytes back over the `.gz` (never clobbering it with
 plain text). Decompression is bounded against decompression bombs.
 
+### SVG diagram export (`--file=svg`)
+
+`lua reformatter.lua --file=svg <dirs…>` draws the **graph-family** data files
+(`basic_graph_node` / `graph_node` / `tree_node`) as self-contained SVG diagrams,
+one `.svg` per node file under `exported/svg-svg/`, mirroring the source layout.
+Unlike every other export, it is **selective**: a file that is not a graph family
+is skipped (logged at `info`, counted in an end-of-run summary) — a graph-only
+picture of a non-graph file is meaningless, so a whole-directory run over mixed
+files naturally emits diagrams only for the graphs. A run that finds no graph
+files writes nothing and says so; it is not an error.
+
+The layout is a **layered (Sugiyama-style) drawing** — directed families
+(`graph_node` / `tree_node`) are ranked by longest path with arrowheads and
+root/leaf tinting; undirected (`basic_graph_node`) graphs are laid out from a
+deterministic BFS and drawn without arrowheads. Edge crossings are reduced with
+the standard median heuristic (the count is *low*, not provably minimal — exact
+minimization is NP-hard — and is surfaced in an `<!-- crossings: N -->` comment).
+The SVG is pure text: no external stylesheet, web font, or script, and **byte
+deterministic** — identical input data produces an identical diagram on every run
+and platform, so the output diffs cleanly. Open it in any browser or embed it in
+generated Markdown docs.
+
+Colours are configurable per drawable type. `--svg-color-scheme=<name>` selects a
+base palette (`default`, `dark`, `mono`, `colorblind`), and `--svg-color=<key>=<color>`
+(repeatable) overrides an individual colour on top of it — `node`, `root`, `leaf`,
+`isolated` (a node with no edges at all), `border`, `label`, `edge-directed`,
+`edge-undirected`, `edge-label`, or `background`, where the value is a `#rgb` /
+`#rrggbb` hex, a CSS colour name, or `none` for a transparent canvas. Directed and
+undirected links carry separate colours. The canvas is transparent by default (so
+the diagram adapts to whatever it is embedded in) except under the `dark` scheme.
+There is no built-in title or frame — wrap the `<svg>` yourself for a caption. See
+[REFORMATTER.md](REFORMATTER.md#svg-tuning-flags-only-affect---filesvg) for the full
+flag list.
+
 ## Package Manifest (Manifest.transposed.tsv)
 
 Data files can be grouped in "packages" which can be created independently or depend on each other. A `Manifest.transposed.tsv` file can be defined in the package directory to specify package metadata.

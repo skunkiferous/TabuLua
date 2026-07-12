@@ -62,8 +62,47 @@ The `--file=<format>` option specifies the output file type. Each file format su
 | `lua` | `.lua` | Lua table (sequence-of-sequences) | lua | lua |
 | `mpk` | `.mpk` | MessagePack binary | mpk | mpk |
 | `sql` | `.sql` | SQL CREATE TABLE + INSERT statements | json-typed, json-natural, xml, mpk | (none) |
+| `svg` | `.svg` | SVG diagram of graph-family files (skips non-graph files) | svg | svg |
 | `tsv` | `.tsv` | Tab-separated values | lua, json-typed, json-natural | (none) |
 | `xml` | `.xml` | XML document | xml | xml |
+
+`svg` is **selective**: it draws only the graph-family files (`basic_graph_node` /
+`graph_node` / `tree_node`) and skips everything else with an `info` log plus a
+summary count. See [SVG diagram export](DATA_FORMAT_README.md#svg-diagram-export---filesvg)
+for the layout and determinism details.
+
+### SVG tuning flags (only affect `--file=svg`)
+
+| Flag | Effect |
+|------|--------|
+| `--svg-sweeps=<N>` | Crossing-reduction passes (default 8) |
+| `--svg-node-spacing=<N>` | Horizontal gap between nodes, px (default 140) |
+| `--svg-layer-spacing=<N>` | Vertical gap between layers, px (default 90) |
+| `--svg-color-scheme=<name>` | Base palette: `default`, `dark`, `mono`, `colorblind` |
+| `--svg-color=<key>=<color>` | Override one palette colour (repeatable) — see below |
+| `--svg-label-column=<col>` | Edge-file column used to label edges (default: first non-comment scalar) |
+| `--no-svg-edge-labels` | Do not label edges from the attached `edgesFor` edge file |
+
+`--svg-color` overrides an individual colour on top of the chosen base scheme,
+one colour per drawable type. It is repeatable. The `<key>` names the type and
+`<color>` is a `#rgb` / `#rrggbb` hex value or a CSS colour name:
+
+| Key | Colours |
+|-----|---------|
+| `node` | Default node fill |
+| `root` | Root-node fill (no parents) |
+| `leaf` | Leaf-node fill (no children) |
+| `isolated` | Isolated-node fill (no parents and no children — no edges at all) |
+| `border` | Node box outline |
+| `label` | Node label text |
+| `edge-directed` | Directed links + arrowheads |
+| `edge-undirected` | Undirected links |
+| `edge-label` | Edge annotation text |
+| `background` | Canvas background (`none` = transparent, the default for all schemes except `dark`) |
+
+The diagram has **no title or frame** — wrap the emitted `<svg>` in your own
+container if you need a caption or border. Example:
+`lua reformatter.lua --file=svg --svg-color-scheme=dark --svg-color=root=#2e7d32 --svg-color=background=none pkg/`
 
 ## Data Formats
 
@@ -75,6 +114,7 @@ The `--data=<format>` option specifies how Lua values are serialized within the 
 | `json-typed` | JSON with Lua type preservation (integers as `{"int":"N"}`) |
 | `lua` | Lua literal syntax |
 | `mpk` | MessagePack binary format |
+| `svg` | SVG diagram (no cell serialization; passthrough) |
 | `xml` | XML with type-tagged elements |
 
 ## Valid Combinations
@@ -87,6 +127,7 @@ Not all file/data format combinations are valid. The table below shows which com
 | lua | lua | lua |
 | mpk | mpk | mpk |
 | sql | json-typed, json-natural, xml, mpk | (none) |
+| svg | svg | svg |
 | tsv | lua, json-typed, json-natural | (none) |
 | xml | xml | xml |
 
@@ -145,6 +186,13 @@ Exports to both `exported/lua-lua/` and `exported/json-json-natural/` simultaneo
 lua reformatter.lua --file=sql --data=json-natural --export-dir=db tutorial/core/ tutorial/expansion/
 ```
 Exports as SQL with JSON columns to `db/sql-json-natural/`.
+
+### Draw graph files as SVG diagrams
+```bash
+lua reformatter.lua --file=svg tutorial/core/ tutorial/expansion/
+```
+Draws each graph-family file (e.g. `SkillTree.tsv`) to `exported/svg-svg/` and
+skips every non-graph file. Open the `.svg` in any browser.
 
 ### Multiple source directories
 ```bash
