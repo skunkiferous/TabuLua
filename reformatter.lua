@@ -61,6 +61,7 @@ local hasExtension = file_util.hasExtension
 
 local manifest_loader = require("loader.manifest_loader")
 local manifest_info = require("loader.manifest_info")
+local format_report = require("loader.format_report")
 
 -- Reversible decode round-trip (§3.6): lets reformat rewrite a compressed data
 -- source (data.tsv.gz) by reformatting its decoded TSV and re-compressing it.
@@ -357,10 +358,10 @@ end
 local KNOWN_OPTIONS = {
     "--check-conflicts", "--clean", "--cog-docs", "--collapse-exploded",
     "--data", "--explain-patch", "--export-dir", "--export-merged",
-    "--file", "--log-level", "--no-number-warn", "--no-svg-edge-labels",
-    "--no-unquoted-warn", "--strip-cog", "--svg-color", "--svg-color-scheme",
-    "--svg-label-column", "--svg-layer-spacing", "--svg-node-spacing",
-    "--svg-sweeps", "--variant",
+    "--file", "--list-columns", "--log-level", "--no-number-warn",
+    "--no-svg-edge-labels", "--no-unquoted-warn", "--strip-cog", "--svg-color",
+    "--svg-color-scheme", "--svg-label-column", "--svg-layer-spacing",
+    "--svg-node-spacing", "--svg-sweeps", "--variant",
 }
 
 --- Generates the usage help text dynamically from the format configuration.
@@ -426,6 +427,13 @@ local function generateUsage()
         "                        Also flags likely-typo onlyIfPackages gate ids (matched",
         "                        no loaded package, named by no manifest).",
         "                        Diagnostic only: conflicts never fail the run.",
+        "",
+        "  --list-columns        List every Files.tsv column and Manifest field the engine",
+        "                        accepts, marking which your packages already declare and",
+        "                        which are available but unused, newest first. An optional",
+        "                        column is never warned about when absent, so this is how",
+        "                        you find what a newer release added that you could adopt.",
+        "                        Loads and reports; nothing is exported.",
         "",
         "  --cog-docs            Refresh COG doc templates (.md/.txt/.html with a COG",
         "                        block) in place against the loaded data, keeping markers.",
@@ -537,6 +545,9 @@ local function generateUsage()
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua --check-conflicts tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Report cells / rows / defaults where two or more mods overwrite each other")
+    table.insert(lines, "")
+    table.insert(lines, "  lua reformatter.lua --list-columns tutorial/core/")
+    table.insert(lines, "      List the Files.tsv columns / manifest fields you could be using but aren't")
 
     return table.concat(lines, "\n")
 end
@@ -933,6 +944,14 @@ local function processFiles(directories, exporters, exportParams, opt_variants)
         if explainPatch ~= nil and result.lineage then
             print(result.lineage:report(parseExplainFilter(explainPatch)))
         end
+        -- Print the format inventory: every Files.tsv column / manifest field the
+        -- engine accepts, marked with what these packages already declare. An
+        -- absent OPTIONAL column is never warned about (it cannot be — see
+        -- format_report), so this report is the only way to discover one that a
+        -- newer release added. Diagnostic only — never affects the exit code.
+        if exportParams and exportParams.listColumns then
+            print(format_report.report(result.packages, result.joinMeta))
+        end
         -- Print the conflicts-only report: slots 2+ sources overwrote, as
         -- apply-order chains. Diagnostic only — never affects the exit code.
         if checkConflicts and result.lineage then
@@ -1130,6 +1149,7 @@ if isMainScript then
         local mergedSet = false         -- whether --export-merged was given
         local explainPatch = nil        -- --explain-patch[=<filter>] (nil = off, true = all)
         local checkConflicts = false    -- --check-conflicts flag (conflicts-only report)
+        local listColumns = false       -- --list-columns flag (format inventory report)
         local variants = {}             -- --variant=<name> values
         local svgSchemeName = nil       -- --svg-color-scheme=<name> (nil = default)
         local svgColorOverrides = {}    -- --svg-color=<key>=<v> (slot -> colour)
@@ -1213,6 +1233,8 @@ if isMainScript then
                 explainPatch = true
             elseif arg_i == "--check-conflicts" then
                 checkConflicts = true
+            elseif arg_i == "--list-columns" then
+                listColumns = true
             elseif arg_i:match("^%-%-log%-level=") then
                 local levelName = arg_i:match("^%-%-log%-level=(.+)$")
                 local level = LOG_LEVELS[levelName:lower()]
@@ -1324,6 +1346,7 @@ if isMainScript then
             if mergedSet then offending[#offending + 1] = "--export-merged" end
             if explainPatch ~= nil then offending[#offending + 1] = "--explain-patch" end
             if checkConflicts then offending[#offending + 1] = "--check-conflicts" end
+            if listColumns then offending[#offending + 1] = "--list-columns" end
             if #offending > 0 then
                 logger:error("--cog-docs cannot be combined with export options ("
                     .. table.concat(offending, ", ") .. "). It refreshes COG doc "
@@ -1374,6 +1397,11 @@ if isMainScript then
             -- --check-conflicts: track lineage + print the conflicts-only report.
             if checkConflicts then
                 exportParams.checkConflicts = true
+            end
+            -- --list-columns: print the format inventory (which columns/fields the
+            -- loaded packages declare, and which they could be adopting).
+            if listColumns then
+                exportParams.listColumns = true
             end
             processFiles(directories, exporters, exportParams, #variants > 0 and variants or nil)
         end

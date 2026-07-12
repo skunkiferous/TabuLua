@@ -353,12 +353,13 @@ end
 
 local function specsEqual(a, b)
     -- Equality predicate used to detect identical re-declarations of the
-    -- same descriptor column. Compares name, type, fieldOnMeta, and
+    -- same descriptor column. Compares name, type, fieldOnMeta, since, and
     -- relativePath; the `parse` field is opaque (function-identity equality).
     return a.name == b.name
         and a.type == b.type
         and a.fieldOnMeta == b.fieldOnMeta
         and a.parse == b.parse
+        and (a.since or false) == (b.since or false)
         and (a.relativePath or false) == (b.relativePath or false)
 end
 
@@ -396,6 +397,21 @@ local function validateColumnDecl(moduleName, decl, index)
     if decl.relativePath ~= nil and type(decl.relativePath) ~= "boolean" then
         error("type_wiring.registerModule: descriptorColumns[" .. index
             .. "].relativePath must be a boolean for moduleName '"
+            .. moduleName .. "'", 3)
+    end
+    -- `since` is the engine version that first accepted this column, and exists
+    -- for ONE reason: an optional column is invisible until you already know it
+    -- is there. Nothing warns about a column you have not written — that would
+    -- mean a warning per unused feature per Files.tsv on every load — so a user
+    -- who last touched their Files.tsv three releases ago has no way, short of
+    -- reading the CHANGELOG, to learn what they could now be declaring.
+    -- `--list-columns` is that way, and `since` is what lets it say WHEN each
+    -- column appeared, so "what is new since I last looked?" has an answer.
+    -- Omit it for a column that predates the tracking; the report simply does
+    -- not annotate those.
+    if decl.since ~= nil and (type(decl.since) ~= "string" or decl.since == "") then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "].since must be a non-empty version string for moduleName '"
             .. moduleName .. "'", 3)
     end
 end

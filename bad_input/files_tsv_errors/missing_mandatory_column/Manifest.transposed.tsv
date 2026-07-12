@@ -1,0 +1,4 @@
+package_id:package_id	test.files.missingcolumn
+name:string	Test Missing Mandatory Column
+version:version	1.0.0
+description:markdown	Files.tsv 'loadOrder' typo'd as 'loadOrdr' must be an error, not a warning

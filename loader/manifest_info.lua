@@ -123,6 +123,30 @@ local MANIFEST_SPEC = [[{
     ignored_files:{string}|nil
 }]]
 
+-- The release that first accepted each manifest field, for `--list-columns`.
+-- An OPTIONAL manifest field is invisible until you already know it is there:
+-- its absence is never reported (loadManifestFile deliberately marks every
+-- `|nil` field as "found" before the missing-column check, because warning
+-- about every unused feature on every load would be intolerable). So a package
+-- written against an older release keeps working, silently, while never
+-- learning what it could now be declaring. `--list-columns` is the answer to
+-- "what is new since I last looked?", and this table is what lets it say when.
+--
+-- A field with no entry predates the CHANGELOG's useful range (package_id,
+-- name, version, description, url, dependencies, load_after, code_libraries) —
+-- there is no honest version to name, and the report leaves those unannotated.
+-- ADD AN ENTRY HERE whenever a field is added to MANIFEST_SPEC above.
+local MANIFEST_FIELD_SINCE = {
+    custom_types       = "0.3.0",
+    package_validators = "0.5.0",
+    variant_groups     = "0.17.0",
+    bootstrap          = "0.21.0",
+    preProcessors      = "0.28.0",
+    conflicts          = "0.30.0",
+    asset_files        = "0.31.0",
+    ignored_files      = "0.31.0",
+}
+
 -- Our own badVal (uses module logger by default)
 local function myBadVal()
     local bad_val = error_reporting.badValGen()
@@ -135,6 +159,30 @@ parsers.registerAlias(myBadVal(), "package_id", "name")
 
 local MANIFEST_SPEC_PARSER = parsers.parseType(myBadVal(), MANIFEST_SPEC)
 local FORMATTED_MANIFEST_SPEC = parsers.findParserSpec(MANIFEST_SPEC_PARSER)
+
+--- The manifest's full field inventory, for the `--list-columns` report.
+--- Each entry is {name, type, required, since} — `required` is the negation of
+--- "declared |nil in MANIFEST_SPEC", which is exactly the rule loadManifestFile
+--- enforces, so the report cannot drift from the loader. Sorted by name.
+--- @return table Sequence of {name=string, type=string, required=boolean, since=string|nil}
+local function manifestFields()
+    local optional = {}
+    for _, name in ipairs(parsers.recordOptionalFieldNames(FORMATTED_MANIFEST_SPEC) or {}) do
+        optional[name] = true
+    end
+    local types = parsers.recordFieldTypes(FORMATTED_MANIFEST_SPEC) or {}
+    local out = {}
+    for _, name in ipairs(parsers.recordFieldNames(FORMATTED_MANIFEST_SPEC) or {}) do
+        out[#out + 1] = {
+            name = name,
+            type = types[name],
+            required = not optional[name],
+            since = MANIFEST_FIELD_SINCE[name],
+        }
+    end
+    table.sort(out, function(a, b) return a.name < b.name end)
+    return out
+end
 
 -- Returns true if the installed version satisfies the given version requirement
 local function versionSatisfies(req_op, req_version, installed_version)
@@ -1000,6 +1048,7 @@ local API = {
     getVersion = getVersion,
     isManifestFile = isManifestFile,
     loadManifestFile = loadManifestFile,
+    manifestFields = manifestFields,
     resolveDependencies = resolveDependencies,
     runPackageBootstraps = runPackageBootstraps,
     unknownGateIds = unknownGateIds,

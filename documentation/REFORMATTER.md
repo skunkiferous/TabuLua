@@ -585,6 +585,59 @@ item.tsv
   **mutually exclusive with `--cog-docs`**. Both reports can be printed in one run
   by passing both flags.
 
+## List Columns (`--list-columns`)
+
+`--list-columns` prints the **format's full inventory** — every `Files.tsv` column
+and every `Manifest.transposed.tsv` field the engine accepts — marked with which
+ones your packages already declare, and which are **available but unused**.
+
+```bash
+lua reformatter.lua --list-columns tutorial/core/ tutorial/expansion/
+```
+
+It answers a question nothing else can. An **optional** column is silent when
+absent, and must be: most packages use almost none of the dozen-plus feature
+columns, so warning about each unused one on every load would bury every real
+warning you have. But that silence means a package written against an older
+release keeps working while its author never learns what the engine has since
+learned to accept — a new column simply never announces itself.
+
+```text
+=== Files.tsv columns (2 descriptors loaded) ===
+
+  -- core --
+   [x]  fileName:filepath                  -         2/2   (required)
+   [x]  loadOrder:number                   -         2/2   (required)
+  -- optional (feature columns) --
+   [x]  patchOf:filepath|nil               0.28.0    1/2
+   [ ]  ifMissing:missing_policy|nil       0.30.0    0/2
+   [ ]  transcoder:string|nil              0.22.0    0/2
+
+=== Manifest.transposed.tsv fields (2 packages loaded) ===
+
+   [ ]  asset_files:{string}|nil           0.31.0    0/2
+   [x]  custom_types:{custom_type_def}|nil 0.3.0     2/2
+
+7 optional columns/fields are available but unused. Newest first:
+   asset_files (manifest)   added in 0.31.0
+   ifMissing (Files.tsv)   added in 0.30.0
+```
+
+- **How to read it.** `[x]` / `[ ]` is "does anything declare this?"; `declared by
+  n/total` says how many of your loaded `Files.tsv` (or manifests) do. The `since`
+  column is the release that added the column — a `-` means it predates the
+  tracking.
+- **Newest first.** The closing summary ranks the unused columns by the release
+  that introduced them, so *"what's new since I last looked?"* is the first thing
+  you read. Cross-reference `CHANGELOG.md` for what each one does.
+- **Feature columns are registry-driven.** A column contributed by a
+  bootstrap-registered module appears in the report automatically. If you add one,
+  give its `descriptorColumns` declaration a `since` (and a manifest field an entry
+  in `manifest_info`'s `MANIFEST_FIELD_SINCE`) — without it the report cannot tell
+  anyone the column arrived.
+- **Diagnostic, not a gate.** Loads and reports; exports nothing and never affects
+  the exit code. **Mutually exclusive with `--cog-docs`.**
+
 ## Error Handling
 
 - The reformatter logs warnings when file content changes during reformatting

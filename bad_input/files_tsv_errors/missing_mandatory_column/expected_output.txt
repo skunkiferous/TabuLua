@@ -1,0 +1,7 @@
+      If it is an asset, add a row with typeName=asset_file, or a manifest `asset_files` glob, to copy it to the export unparsed.
+      If it is data, add a row for it to Files.tsv.
+      If it is neither (a temp file, say), add a manifest `ignored_files` glob, or remove the file.
+TS	ERROR	[reformatter]	Reformatting errors: 1
+TS	ERROR	[reformatter]	loadOrder in {DIR}/Files.tsv on line 1: 'loadOrder' (Missing column 'loadOrder' in {DIR}/Files.tsv (did you mean 'loadOrdr'?) -- no file can be declared without it, so NOTHING in this package will load)
+TS	WARN	[files_desc]	Column ignored: loadOrdr:number (did you mean 'loadOrder:number'?)
+TS	WARN	[manifest_loader]	Not listed in Files.tsv, so NOT loaded: {DIR}/Data.tsv

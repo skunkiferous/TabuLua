@@ -77,12 +77,45 @@ local CORE_COLUMNS_BY_HEADER = {
     ["description:text"]     = "description",
 }
 
--- The five core columns whose absence is a configuration error worth
--- warning about. `description` is pure user metadata so its absence is
--- harmless.
-local REQUIRED_CORE_COLUMNS = {
-    "fileName", "typeName", "superType", "baseType", "loadOrder",
+-- The two core columns the row loop CANNOT RUN WITHOUT: without them
+-- processFilesDesc declares nothing at all (see its `if fileNameIdx and
+-- loadOrderIdx` guard), so every data file in the package then falls through as
+-- undeclared and the load "succeeds" with an empty model. That used to be a
+-- single warning drowned in a flood of consequent "Not listed in Files.tsv"
+-- warnings, and it left the exit code clean. It is an error.
+local MANDATORY_CORE_COLUMNS = {
+    "fileName", "loadOrder",
 }
+
+-- The core columns whose absence is a probable mistake but which the row loop
+-- tolerates (each simply reads as nil per row). `description` is pure user
+-- metadata, so its absence is not even worth a warning.
+local EXPECTED_CORE_COLUMNS = {
+    "typeName", "superType", "baseType",
+}
+
+--- The intrinsic core columns, for the `--list-columns` report — the counterpart
+--- of type_wiring.descriptorColumns() (which covers every registry-contributed
+--- column). Each entry is {name, type, status}, status being one of:
+---   "required" — MANDATORY_CORE_COLUMNS: absent => load error
+---   "expected" — EXPECTED_CORE_COLUMNS: absent => warning
+---   "optional" — absent => silent (`description`)
+--- @return table Sequence of {name=string, type=string, status=string}, by name
+local function coreColumns()
+    local status = {}
+    for _, name in ipairs(MANDATORY_CORE_COLUMNS) do status[name] = "required" end
+    for _, name in ipairs(EXPECTED_CORE_COLUMNS) do status[name] = "expected" end
+    local out = {}
+    for headerStr, name in pairs(CORE_COLUMNS_BY_HEADER) do
+        out[#out + 1] = {
+            name = name,
+            type = headerStr:match("^[^:]+:(.+)$"),
+            status = status[name] or "optional",
+        }
+    end
+    table.sort(out, function(a, b) return a.name < b.name end)
+    return out
+end
 
 -- Returns true, if this is a process-first meta-data file
 local function isFilesDescriptor(file)
@@ -224,7 +257,7 @@ local loadDescriptorFile = genLoadDescriptorFile()
 -- other column is matched against the type-wiring descriptorColumns()
 -- declarations. Unrecognised headers produce a "Column ignored" warning,
 -- preserving the prior behaviour.
-local function parseFilesDescHeader(file_name, file, log)
+local function parseFilesDescHeader(file_name, file, log, badVal)
     local header = file[1]
     local indicesByName = {}
     local optCols = descriptorColumnsByName()
@@ -260,13 +293,49 @@ local function parseFilesDescHeader(file_name, file, log)
             end
         end
     end
-    -- Warn (don't error) about missing required core columns. publishContext
-    -- and publishColumn previously also warned on absence — those moved to
-    -- the registry and are now properly optional (no warning).
-    for _, name in ipairs(REQUIRED_CORE_COLUMNS) do
+    -- Missing core columns. `fileName` / `loadOrder` are fatal (nothing can be
+    -- declared without them); the rest only warn. Both messages suggest the
+    -- closest column the header ACTUALLY has, which is what turns "Missing
+    -- column 'loadOrder'" into "...did you mean 'loadOrdr:number'?" when the
+    -- real fault is a typo. (A typo also trips the "Column ignored" warning
+    -- above, but only this one names the column you lost.)
+    --
+    -- Note what is deliberately NOT reported: an absent OPTIONAL column. There
+    -- are a dozen-plus registry columns and most packages use none of them, so
+    -- warning per unused column per Files.tsv would be pure noise. `--list-columns`
+    -- is how an unused column gets discovered instead — see type_wiring's `since`.
+    log = log or logger
+    -- Suggest against the BARE header names ("loadOrdr", not "loadOrdr:number"):
+    -- the missing name carries no type, so comparing it to a "name:type" string
+    -- puts the type's characters into the edit distance and the real near-miss
+    -- never clears the threshold.
+    local present = {}
+    for _, col in ipairs(header) do
+        local colStr = tostring(col)
+        present[#present + 1] = colStr:match("^([^:]+):") or colStr
+    end
+    for _, name in ipairs(MANDATORY_CORE_COLUMNS) do
         if indicesByName[name] == nil then
-            log = log or logger
-            log:warn("Missing column '" .. name .. "' in " .. file_name)
+            local msg = "Missing column '" .. name .. "' in " .. file_name
+                .. didYouMean(name, present)
+            if badVal then
+                badVal.source_name = file_name
+                badVal.line_no = 1
+                badVal.row_key = ""
+                badVal.col_name = name
+                badVal.col_idx = 0
+                badVal.col_types = {}
+                badVal(name, msg .. " -- no file can be declared without it,"
+                    .. " so NOTHING in this package will load")
+            else
+                log:error(msg)
+            end
+        end
+    end
+    for _, name in ipairs(EXPECTED_CORE_COLUMNS) do
+        if indicesByName[name] == nil then
+            log:warn("Missing column '" .. name .. "' in " .. file_name
+                .. didYouMean(name, present))
         end
     end
     return indicesByName
@@ -388,7 +457,7 @@ local function processFilesDesc(file_name, file, max_prio, opts)
     local skippedGates = opts.skippedGates
     local knownVariants = opts.knownVariants
 
-    local indicesByName = parseFilesDescHeader(file_name, file, log)
+    local indicesByName = parseFilesDescHeader(file_name, file, log, opts.badVal)
     fn2Idx[file_name] = indicesByName
 
     local fileNameIdx  = indicesByName.fileName
@@ -773,6 +842,9 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
         lcFn2LineNo = lcFn2LineNo,
         fn2Idx = fn2Idx,
         log = log,
+        -- Reports a missing MANDATORY core column (fileName / loadOrder) as an
+        -- error, not a warning: see MANDATORY_CORE_COLUMNS.
+        badVal = badVal,
         variants = variants,
         lcSkippedFiles = lcSkippedFiles,
         -- The loaded-package set for `onlyIfPackages` gating: the same
@@ -794,6 +866,10 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     }
     metaMaps.skippedGates = opts.skippedGates
     metaMaps.knownVariants = opts.knownVariants
+    -- Each descriptor's recognised header columns (descriptor path -> {colName ->
+    -- idx}). Rides joinMeta out to the `--list-columns` report, which needs to say
+    -- which Files.tsv already DECLARE a column in order to say which don't.
+    metaMaps.fn2Idx = fn2Idx
     for field, map in pairs(metaMaps) do
         opts[field] = map
     end
@@ -843,6 +919,7 @@ end
 
 -- The public, versioned, API of this module
 local API = {
+    coreColumns = coreColumns,
     extractFilesDescriptors = extractFilesDescriptors,
     getVersion = getVersion,
     isFilesDescriptor = isFilesDescriptor,

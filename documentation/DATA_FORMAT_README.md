@@ -1133,7 +1133,15 @@ The header alone does not give all information about the "type" of a file. The `
 
 `Files.tsv` must also include a row describing **itself** (e.g., `Files.tsv	Files	...`). This self-referencing entry is required for consistency.
 
-The system expects a specific set of columns. The first seven columns (`fileName` through `loadOrder`) are required — a warning is issued if any are missing. The remaining columns are optional. Any unrecognized column generates a warning to help catch typos.
+The system expects a specific set of columns, in three tiers:
+
+- **Required** — `fileName` and `loadOrder`. Without them no row can declare anything (the loader cannot know *which* file at *what* order), so the package would load as an empty model. **Their absence is an error** and fails the run.
+- **Expected** — `typeName`, `superType`, `baseType`. The loader tolerates their absence (each row simply reads them as unset), so a missing one is a **warning**.
+- **Optional** — everything else, including `description` and every feature column below. **A missing optional column is silent**, and has to be: most packages use almost none of them, and a warning per unused column per `Files.tsv` would bury every real warning you have.
+
+Any *unrecognized* column generates a warning (with a did-you-mean suggestion) to catch typos.
+
+> **Discovering optional columns.** Because an absent optional column says nothing, a new one never announces itself — a `Files.tsv` written two releases ago keeps working while never using what has since been added. Run **`lua reformatter.lua --list-columns <dirs>`** to print every column and manifest field the engine accepts, marked with which your packages already declare and which are available but unused, **newest first**. See [REFORMATTER.md](REFORMATTER.md#list-columns---list-columns).
 
 ### Files.tsv Fields
 

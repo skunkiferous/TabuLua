@@ -15,7 +15,7 @@ The engine's library modules live in topical sub-directories and are required by
 | `content/` | Pre-parse content pipeline + transcoders | content_pipeline, builtin_content_stages, compression, archive_formats, lua_cog, cog_discovery, doc_generator, eav_transcoder, json_transcoders, xml_transcoder, tsv_transcoders, lua_transcoder |
 | `wiring/` | Type wiring, validation, processors | type_wiring, builtin_wiring, graph_helpers, graph_wiring, graph_layout, validator_executor, validator_helpers, processor_executor |
 | `overrides/` | Mod-override engine | patch_executor, patch_lineage, schema_overlay |
-| `loader/` | Package loading orchestration | manifest_info, manifest_loader, files_desc |
+| `loader/` | Package loading orchestration | manifest_info, manifest_loader, files_desc, format_report |
 | `parsers/` | Type-parsing package (unchanged) | parsers.builtin, parsers.generators, parsers.introspection, parsers.lpeg_parser, parsers.registration, parsers.schema_export, parsers.state, parsers.type_parsing, parsers.utils |
 | *(root)* | CLI entry points + `parsers` aggregator | parsers, migration, ollama_batch, tsv_diff, reformatter, export_tester, extract_test_errors |
 
@@ -115,6 +115,7 @@ The engine's library modules live in topical sub-directories and are required by
 | [manifest_info](#manifest_info) | Package metadata, versioning, dependencies, and the `bootstrap` field dispatcher (`runPackageBootstraps`) | error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, sandbox, sandbox_env, string_utils, tsv_model |
 | [manifest_loader](#manifest_loader) | Package loading orchestration and dependency resolution | builtin_wiring, error_reporting, file_util, files_desc, lua_cog, manifest_info, parsers, patch_executor, patch_lineage, processor_executor, raw_tsv, read_only, sandbox_env, schema_overlay, table_utils, tsv_model, type_wiring, validator_executor |
 | [files_desc](#files_desc) | File descriptor discovery and load order management | builtin_wiring, error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring |
+| [format_report](#format_report) | The `--list-columns` inventory: which Files.tsv columns / manifest fields exist, which you declare, which you could adopt | builtin_wiring, files_desc, manifest_info, read_only, semver, type_wiring |
 
 **`parsers/`**
 
@@ -346,6 +347,17 @@ File system operations including path manipulation, file reading/writing, and di
 Discovers and processes file descriptors from `Files.tsv`, managing file load order and metadata. Consults the [type_wiring](#type_wiring) registry (via `hasOnLoad`) to decide which files need a second descriptor pass — any typeName whose ancestor chain has a registered `onLoad` qualifies, so future built-ins or user packages that register a wired type are picked up automatically. Two row-level gates run in `processFilesDesc` before a row takes effect: the `variant` filter and `onlyIfPackages` package gating (a row listing package ids is active only when every one is loaded — the declarative half of optional mod compatibility); a gated-off row's file is skipped like a variant-filtered one (not parsed, not exported, exempt from the existence check), and its not-loaded gate ids are collected into `joinMeta.skippedGates` (id → gated file names) for the `--check-conflicts` typo heuristic — a skipped row exits before descriptor-column storage, so this collector is the only record of them.
 
 **Dependencies:** builtin_wiring, error_reporting, file_util, lua_cog, named_logger, parsers, raw_tsv, read_only, table_utils, tsv_model, type_wiring
+
+---
+
+### format_report
+**File:** [format_report.lua](../loader/format_report.lua)
+
+Builds the `--list-columns` report: the data format's full inventory — every `Files.tsv` column (core, from [files_desc](#files_desc)'s `coreColumns()`, plus every registry-contributed feature column from [type_wiring](#type_wiring)'s `descriptorColumns()`) and every `Manifest.transposed.tsv` field (from [manifest_info](#manifest_info)'s `manifestFields()`) — marked with which of them the loaded packages actually declare, and closing with the unused ones ranked **newest first** by each column's `since`.
+
+It exists because an **optional** column is undiscoverable by design: its absence is never reported, and cannot be (a warning per unused feature per `Files.tsv` on every load would be unusable noise), so a package written against an older release keeps working while its author has no way to learn what the engine has since learned to accept. This report is that way. "Used" is read from `joinMeta.fn2Idx` (each descriptor's recognised header columns) for `Files.tsv`, and from the loaded manifest itself for manifest fields. Diagnostic only — it never affects the exit code.
+
+**Dependencies:** builtin_wiring, files_desc, manifest_info, read_only, semver, type_wiring
 
 ---
 

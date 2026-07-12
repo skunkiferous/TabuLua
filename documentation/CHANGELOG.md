@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`--list-columns`: find out what you could be declaring but aren't.** An
+  **optional** `Files.tsv` column or manifest field is, by construction,
+  undiscoverable: nothing warns when one is absent, and nothing can — most
+  packages use almost none of the dozen-plus feature columns, so a warning per
+  unused column per `Files.tsv` on every load would be pure noise. The
+  consequence was that a package written against an older release kept working,
+  silently, while its author had no way short of reading this whole file to learn
+  what the engine had since learned to accept. `--list-columns` is that way:
+
+  ```sh
+  lua reformatter.lua --list-columns tutorial/core/ tutorial/expansion/
+  ```
+
+  It prints the format's full inventory — every core and optional `Files.tsv`
+  column, then every `Manifest.transposed.tsv` field — marking each `[x]`/`[ ]`
+  by whether the loaded packages declare it, with the release that added it and a
+  `declared by n/total` count. It closes with the unused ones **newest first**, so
+  *"what's new since I last looked?"* is the first thing you read. Diagnostic
+  only: it loads, reports, and exports nothing; it never touches the exit code.
+  Each column now carries a `since` in its `descriptorColumns` declaration
+  (`type_wiring`), and each manifest field one in `MANIFEST_FIELD_SINCE`
+  (`manifest_info`) — **add an entry when you add a column**, or the report cannot
+  tell anyone it arrived.
+
 - **`asset_file`: a package can now SAY that a file is not a table**
   (`TODO/non_table_files.md`, Phase 1). A `Files.tsv` row with
   `typeName=asset_file` declares its file an **asset**: it is not parsed, has no
@@ -254,6 +278,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
       `files_tsv_errors/column_typo_suggestion`.
 
 ### Changed
+
+- **A `Files.tsv` missing `fileName` or `loadOrder` is now an ERROR, not a
+  warning.** Without either column the descriptor's row loop declares *nothing*
+  (it is guarded on both indices), so every data file in the package then fell
+  through as undeclared and the load "succeeded" with an **empty model** — the one
+  real warning drowned in the flood of consequent `Not listed in Files.tsv`
+  warnings, and the exit code stayed clean, so a build script saw nothing wrong.
+  It now fails the run and says why (`no file can be declared without it, so
+  NOTHING in this package will load`), with a did-you-mean against the headers
+  actually present — which is what a typo'd `loadOrdr:number` really needs. The
+  remaining core columns (`typeName`, `superType`, `baseType`) still only warn:
+  the row loop tolerates their absence. `description` stays silent (it is pure
+  user metadata), and an absent **optional** column stays silent by design — see
+  `--list-columns` above. New fixture:
+  `files_tsv_errors/missing_mandatory_column`.
 
 - **An undeclared data file is now reported and skipped, not silently loaded.**
   A data file that no `Files.tsv` row declares is no longer parsed: it is reported

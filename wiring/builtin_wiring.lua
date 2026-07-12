@@ -296,6 +296,11 @@ type_wiring.registerModule("variants", {
     },
 })
 
+-- The `since` on each column below is the release that first accepted it, and
+-- feeds `--list-columns` (see validateColumnDecl). The columns declared ABOVE
+-- carry none: they predate the CHANGELOG's useful range, so there is no honest
+-- version to name — and nobody needs to "discover" joinInto anyway.
+
 -- Conditional file loading for optional mod compatibility
 -- (TODO/mod_ecosystem.md §2.1). A Files.tsv row listing package ids in
 -- `onlyIfPackages` is active only when EVERY listed package is loaded (AND);
@@ -308,23 +313,23 @@ type_wiring.registerModule("variants", {
 -- registry-driven. (`package_id` is the manifest alias for `name`.)
 type_wiring.registerModule("package_gating", {
     descriptorColumns = {
-        {name = "onlyIfPackages", type = "{package_id}|nil",
+        {name = "onlyIfPackages", type = "{package_id}|nil", since = "0.30.0",
          fieldOnMeta = "lcFn2OnlyIfPackages", parse = listOrNil},
     },
 })
 
 type_wiring.registerModule("validators", {
     descriptorColumns = {
-        {name = "rowValidators",  type = "{validator_spec}|nil",
+        {name = "rowValidators",  type = "{validator_spec}|nil", since = "0.5.0",
          fieldOnMeta = "lcFn2RowValidators",  parse = listOrNil},
-        {name = "fileValidators", type = "{validator_spec}|nil",
+        {name = "fileValidators", type = "{validator_spec}|nil", since = "0.5.0",
          fieldOnMeta = "lcFn2FileValidators", parse = listOrNil},
     },
 })
 
 type_wiring.registerModule("pre_processors", {
     descriptorColumns = {
-        {name = "preProcessors", type = "{processor_spec}|nil",
+        {name = "preProcessors", type = "{processor_spec}|nil", since = "0.19.0",
          fieldOnMeta = "lcFn2PreProcessors",  parse = listOrNil},
     },
 })
@@ -341,7 +346,7 @@ type_wiring.registerModule("pre_processors", {
 -- parse as part of a filepath, which is also why the qualifier is unambiguous).
 type_wiring.registerModule("schema_overlay", {
     descriptorColumns = {
-        {name = "schemaOverlayOf", type = "filepath|nil",
+        {name = "schemaOverlayOf", type = "filepath|nil", since = "0.28.0",
          altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2SchemaOverlayOf", parse = lowerOrNil},
     },
@@ -357,13 +362,13 @@ parsers.registerEnumParser(nullBadVal, {"add", "remove", "update", "replace"}, "
 parsers.registerEnumParser(nullBadVal, {"error", "silent", "warn"}, "missing_policy")
 type_wiring.registerModule("row_patch", {
     descriptorColumns = {
-        {name = "patchOf", type = "filepath|nil",
+        {name = "patchOf", type = "filepath|nil", since = "0.28.0",
          altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2PatchOf", parse = lowerOrNil},
         -- Bulk filter/transform patches: a file
         -- with `typeName=bulk_patch` and `bulkPatchOf=Target.tsv` selects parent
         -- rows by a `where` expression and updates/removes the matches.
-        {name = "bulkPatchOf", type = "filepath|nil",
+        {name = "bulkPatchOf", type = "filepath|nil", since = "0.28.0",
          altTypes = {"override_target|nil"},
          fieldOnMeta = "lcFn2BulkPatchOf", parse = lowerOrNil},
         -- Missing-target tolerance for multi-version compat patches
@@ -373,7 +378,7 @@ type_wiring.registerModule("row_patch", {
         -- (logged no-op), or silent. `add` on an EXISTING key stays an error
         -- always (that is a collision, not a version gap), and `replace` never
         -- needed tolerance (a missing key appends — upsert).
-        {name = "ifMissing", type = "missing_policy|nil",
+        {name = "ifMissing", type = "missing_policy|nil", since = "0.30.0",
          fieldOnMeta = "lcFn2IfMissing", parse = lowerOrNil},
     },
 })
@@ -440,7 +445,7 @@ end
 -- ':'), so it is typed `string|nil` rather than `name|nil`.
 type_wiring.registerModule("content_pipeline", {
     descriptorColumns = {
-        {name = "transcoder", type = "string|nil",
+        {name = "transcoder", type = "string|nil", since = "0.22.0",
          fieldOnMeta = "lcFn2Transcoder",     parse = nilIfEmpty},
     },
 })
@@ -614,7 +619,7 @@ type_wiring.registerModule("graph_wiring", {
     descriptorColumns = {
         -- Like joinInto, `edgesFor` names its node file by PATH and is matched
         -- exactly, so it too resolves relative to its Files.tsv's directory.
-        {name = "edgesFor", type = "filepath|nil", relativePath = true,
+        {name = "edgesFor", type = "filepath|nil", relativePath = true, since = "0.20.0",
          fieldOnMeta = "lcFn2EdgesFor",       parse = lowerOrNil},
     },
     enginePostPasses = {validateEdgeFilesPass},

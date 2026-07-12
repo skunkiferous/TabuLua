@@ -1,0 +1,3 @@
+fileName:filepath	typeName:type_spec	superType:super_type	baseType:boolean	loadOrdr:number	description:text
+Data.tsv	Data		true	100	Data file
+Files.tsv	Files		true	0	This file
