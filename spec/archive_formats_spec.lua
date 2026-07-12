@@ -127,6 +127,29 @@ describe("archive_formats", function()
             assert.equals("dir/a.tsv", entries[1].path)
         end)
 
+        -- Windows PowerShell's Compress-Archive writes backslash-separated member
+        -- names, against APPNOTE 4.4.17.1. Such a zip used to enumerate as
+        -- `data\Item.tsv` while every lookup normalised to `data/Item.tsv`, so the
+        -- member could never be read back ("member not found", with a did-you-mean
+        -- pointing at the name we had just listed).
+        it("normalises backslash-separated member names to forward slashes", function()
+            local zip = buildZip({{name = "data\\Item.tsv", data = "x\n"}})
+            local entries, err = archive_formats.list("zip", zip)
+            assert.is_nil(err)
+            assert.equals(1, #entries)
+            assert.equals("data/Item.tsv", entries[1].path)
+        end)
+
+        it("omits a backslash-terminated directory entry", function()
+            local zip = buildZip({
+                {name = "dir\\", data = ""},
+                {name = "dir\\a.tsv", data = "x\n"},
+            })
+            local entries = archive_formats.list("zip", zip)
+            assert.equals(1, #entries)
+            assert.equals("dir/a.tsv", entries[1].path)
+        end)
+
         it("finds the EOCD past a trailing comment", function()
             local zip = buildZip({{name = "a.txt", data = "hi"}},
                 {comment = "this is a zip file comment"})
@@ -169,6 +192,17 @@ describe("archive_formats", function()
     describe("read", function()
         it("reads a stored (method 0) member verbatim", function()
             local data, err = archive_formats.read("zip", sampleZip(), "data/Item.tsv")
+            assert.is_nil(err)
+            assert.equals("id\tvalue\nitem1\t42\n", data)
+        end)
+
+        -- The pay-off of normalising at parse time: a backslash-named member is
+        -- addressable by its normalised path, so a Windows-made zip loads like any
+        -- other. `read` matches the normalised path and then seeks by the
+        -- central-directory offset, never by the raw on-disk name.
+        it("reads a backslash-named member by its normalised path", function()
+            local zip = buildZip({{name = "data\\Item.tsv", data = "id\tvalue\nitem1\t42\n"}})
+            local data, err = archive_formats.read("zip", zip, "data/Item.tsv")
             assert.is_nil(err)
             assert.equals("id\tvalue\nitem1\t42\n", data)
         end)

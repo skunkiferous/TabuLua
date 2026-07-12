@@ -252,6 +252,24 @@ describe("export_tester", function()
         end)
 
         it("should test exported files and return results", function()
+            -- The source must be a real package: every input directory needs a
+            -- Manifest and a Files.tsv declaring its data files, or the loader
+            -- rejects it (a data file no Files.tsv declares is not loaded).
+            file_util.writeFile(
+                path_join(source_dir, "Manifest.transposed.tsv"),
+                table.concat({
+                    "package_id:package_id\tTestPkg",
+                    "name:string\tTest Package",
+                    "version:version\t0.1.0",
+                    "description:markdown\tExport tester fixture",
+                }, "\n") .. "\n"
+            )
+            file_util.writeFile(
+                path_join(source_dir, "Files.tsv"),
+                "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\t"
+                .. "baseType:boolean\tloadOrder:number\tdescription:text\n"
+                .. "Test.tsv\tTest\t\ttrue\t100\tTest data\n"
+            )
             -- Create source TSV file
             file_util.writeFile(
                 path_join(source_dir, "Test.tsv"),

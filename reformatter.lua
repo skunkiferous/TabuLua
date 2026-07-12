@@ -374,7 +374,15 @@ local function generateUsage()
         "  in-place if needed, and optionally exports them to various formats.",
         "",
         "ARGUMENTS:",
-        "  <dir1> [dir2] ...     One or more directories containing TSV files to process",
+        "  <dir1> [dir2] ...     One or more PACKAGE directories to process. Each must",
+        "                        have a Files.tsv in its ROOT, declaring its data files;",
+        "                        a data file it does not declare is not loaded. A",
+        "                        subdirectory needs no Files.tsv of its own -- the root",
+        "                        can declare its files by path (sub/X.tsv) -- but it may",
+        "                        have one, whose paths are then relative to IT. That is",
+        "                        what makes a package relocatable: drop a utility mod",
+        "                        into a subdirectory and its Files.tsv still works,",
+        "                        unedited.",
         "",
         "OPTIONS:",
         "  --export-dir=<dir>    Set the base export directory (default: \"exported\")",
@@ -496,7 +504,8 @@ local function generateUsage()
 
     table.insert(lines, "")
     table.insert(lines, "EXAMPLES:")
-    table.insert(lines, "  NOTE: Specify package directories directly (containing Manifest or Files.tsv)")
+    table.insert(lines, "  NOTE: Specify package directories directly -- each must have a Files.tsv")
+    table.insert(lines, "        in its root (declaring its data files), or it is an error.")
     table.insert(lines, "")
     table.insert(lines, "  lua reformatter.lua tutorial/core/ tutorial/expansion/")
     table.insert(lines, "      Reformat files in package directories (no export)")

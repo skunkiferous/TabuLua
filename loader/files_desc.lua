@@ -94,6 +94,52 @@ local function extractFilesDescriptors(files)
     return filterSeq(files, isFilesDescriptor)
 end
 
+--- Resolves a path written in a Files.tsv against the DIRECTORY OF THAT Files.tsv.
+---
+--- This is what makes a package relocatable. A Files.tsv declares its files
+--- relative to itself, so a small utility mod can be dropped into a subdirectory
+--- of a bigger package — `mods/utilmod/` — and keep working with its Files.tsv
+--- untouched: its `Item.tsv` resolves to `mods/utilmod/Item.tsv` because that is
+--- where its Files.tsv sits. A package that had to spell out its own location
+--- could not be moved without being edited.
+---
+--- `dirPrefix` is the descriptor's directory relative to the input directory
+--- (`""` for a Files.tsv at the package root, `"mods/utilmod/"` for a nested one),
+--- so the result is in the same key space as the loaded files. Applies to
+--- `fileName` and to every descriptor column declared `relativePath` (joinInto,
+--- edgesFor) — but NOT to the override-target columns (patchOf / bulkPatchOf /
+--- schemaOverlayOf), which are resolved by BASENAME and are therefore already
+--- location-independent.
+---
+--- A Files.tsv cannot point OUTSIDE its own directory: `..` is not a valid
+--- `filepath` (isFileName rejects a trailing '.'), so a nested descriptor can only
+--- ever declare files at or below itself. That is the point — a package that
+--- reached up into its parent would be making assumptions about where it was
+--- installed, which is exactly what relocatability rules out. The segment
+--- normalization below is therefore defensive (it also collapses `./` and repeated
+--- separators, and normalizes any backslashes).
+--- @param dirPrefix string The descriptor's directory ("" or "sub/dir/")
+--- @param path string|nil The path as written in the Files.tsv
+--- @return string|nil The resolved path (separators normalized to "/")
+local function resolveDescriptorPath(dirPrefix, path)
+    if type(path) ~= "string" or path == "" then
+        return path
+    end
+    local p = path:gsub("\\", "/")
+    if dirPrefix and dirPrefix ~= "" then
+        p = dirPrefix .. p
+    end
+    local segments = {}
+    for segment in p:gmatch("[^/]+") do
+        if segment == ".." and #segments > 0 and segments[#segments] ~= ".." then
+            table.remove(segments)
+        elseif segment ~= "." then
+            segments[#segments + 1] = segment
+        end
+    end
+    return table.concat(segments, "/")
+end
+
 
 -- Matches packages (package_id=>package{.path}]) and their descriptor files
 local function matchDescriptorFiles(packages, descriptorFilesNames, log)
@@ -363,16 +409,31 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                 idx = idx,
                 target = opts[decl.fieldOnMeta],
                 parse = decl.parse,
+                -- A path column (joinInto / edgesFor) resolves against this
+                -- descriptor's own directory, like fileName — see
+                -- resolveDescriptorPath. Basename-resolved override targets do not.
+                relativePath = decl.relativePath,
             }
         end
     end
+
+    -- This Files.tsv's directory, relative to the input directory ("" at a package
+    -- root). Every path it declares is resolved against it, so the package can be
+    -- relocated without editing this file.
+    local dirPrefix = opts.dirPrefix or ""
 
     if fileNameIdx and loadOrderIdx then
         for i, row in ipairs(file) do
             -- Ignore empty rows and header
             if i > 1 and type(row) == "table" then
                 local fn = row[fileNameIdx].parsed
-                local lcfn = fn:lower()
+                -- A fileName that failed to parse (not a valid `filepath`) is nil
+                -- here; the type parser has already reported it. Skip the row rather
+                -- than indexing nil — one bad cell must not take the loader down.
+                if type(fn) ~= "string" or fn == "" then
+                    goto continue
+                end
+                local lcfn = resolveDescriptorPath(dirPrefix, fn):lower()
                 -- Variant filtering: rows with a non-empty variant tag are
                 -- only active when that variant is explicitly selected.
                 if variantIdx then
@@ -460,6 +521,12 @@ local function processFilesDesc(file_name, file, max_prio, opts)
                         local raw = cell and cell.parsed
                         local stored = plan.parse and plan.parse(raw) or raw
                         if stored ~= nil and stored ~= '' then
+                            -- A path column points at another FILE, and is matched
+                            -- exactly against the file keys — so it must move with
+                            -- the package, exactly as fileName does.
+                            if plan.relativePath and type(stored) == "string" then
+                                stored = resolveDescriptorPath(dirPrefix, stored)
+                            end
                             target[lcfn] = stored
                         end
                     end
@@ -654,9 +721,13 @@ end
 -- `post_proc_files`) stay explicit because they are not registered columns.
 -- This signature is internal: the only in-tree callers are manifest_loader
 -- and the files_desc specs.
+-- `opt_descDirPrefixes` maps each descriptor file to its directory relative to the
+-- input directory ("" at a package root, "mods/utilmod/" for a nested one). Every
+-- path a Files.tsv declares is resolved against its own prefix, so a package is
+-- relocatable (resolveDescriptorPath). Absent => every descriptor is at a root.
 local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     post_proc_files, extends, lcFn2Type, lcFn2LineNo, metaMaps,
-    raw_files, loadEnv, badVal, variants, lcSkippedFiles)
+    raw_files, loadEnv, badVal, variants, lcSkippedFiles, opt_descDirPrefixes)
     local desc_files = {}
     local max_prio = -math.huge
     local cur_mod = nil
@@ -716,6 +787,9 @@ local function loadDescriptorFiles(desc_files_order, prios, desc_file2mod_id,
     for _, file_name in ipairs(desc_files_order) do
         local file = loadDescriptorFile(file_name, raw_files, loadEnv, badVal)
         if file then
+            -- Resolve this descriptor's paths against ITS OWN directory.
+            opts.dirPrefix = (opt_descDirPrefixes and opt_descDirPrefixes[file_name])
+                or ""
             local file_mod = desc_file2mod_id[file_name]
             if cur_mod ~= file_mod then
                 reprocessFilesDesc(mod_files, post_proc_files,

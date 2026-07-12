@@ -1065,6 +1065,33 @@ function M.registerDerivedParsers()
                   "p3:string|nil,p4:string|nil,p5:string|nil}"},
         {name = "IgnoredFile", parent = "table", members = {"MigrationScript"}},
     })
+
+    -- Asset marker type and the AssetFile tag.
+    --
+    -- `asset_file` is the typeName that says "this file is NOT a table": do not
+    -- parse it, keep it, copy it byte-for-byte to the export, and never rewrite
+    -- it in place. Asset is not a new role — .md / .txt / .lua / .zip already get
+    -- it implicitly, from their extension — it simply could not be *stated*
+    -- before, so a .json asset was indistinguishable from a .json nobody had got
+    -- round to declaring, and was dropped.
+    --
+    -- The declaration beats the extension for EVERY extension, so this is not a
+    -- .json/.xml patch: a .tsv can be declared an asset too, and is then carried
+    -- through the pipeline untouched (a hand-formatted lookup table, a fixture
+    -- shipped for someone else's tool, a file whose exact bytes matter). The
+    -- loader has no other way to express that: a .tsv it sees is otherwise either
+    -- parsed — and reformatted in place — or dropped.
+    --
+    -- The mechanism mirrors IgnoredFile above: a tag whose ancestor is `table`,
+    -- so any user record type can join it via its `tags` field. The type itself
+    -- is aliased to the empty record because its shape is never used — the file
+    -- is never parsed. The name is snake_case (the house style for engine-role
+    -- typeNames: custom_type_def, type_wiring_def, patch, bulk_patch), which also
+    -- leaves the plain name `Asset` free for a user's own table of asset METADATA.
+    registration.registerTypesFromSpec(ownBadVal, {
+        {name = "asset_file", parent = "{}"},
+        {name = "AssetFile", parent = "table", members = {"asset_file"}},
+    })
 end
 
 return M

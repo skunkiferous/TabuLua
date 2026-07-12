@@ -93,6 +93,7 @@ local API = {
     isBuiltInType = introspection.isBuiltInType,
     isMemberOfTag = introspection.isMemberOfTag,
     isNeverTable = introspection.isNeverTable,
+    listMembersOfTag = introspection.listMembersOfTag,
     isNullable = introspection.isNullable,
     mapKVType = introspection.mapKVType,
     recordFieldNames = introspection.recordFieldNames,

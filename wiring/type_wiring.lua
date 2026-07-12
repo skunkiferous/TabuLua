@@ -324,12 +324,13 @@ end
 
 local function specsEqual(a, b)
     -- Equality predicate used to detect identical re-declarations of the
-    -- same descriptor column. Compares name, type, and fieldOnMeta; the
-    -- `parse` field is opaque (function-identity equality).
+    -- same descriptor column. Compares name, type, fieldOnMeta, and
+    -- relativePath; the `parse` field is opaque (function-identity equality).
     return a.name == b.name
         and a.type == b.type
         and a.fieldOnMeta == b.fieldOnMeta
         and a.parse == b.parse
+        and (a.relativePath or false) == (b.relativePath or false)
 end
 
 local function validateColumnDecl(moduleName, decl, index)
@@ -355,6 +356,17 @@ local function validateColumnDecl(moduleName, decl, index)
     if decl.parse ~= nil and type(decl.parse) ~= "function" then
         error("type_wiring.registerModule: descriptorColumns[" .. index
             .. "].parse must be a function for moduleName '"
+            .. moduleName .. "'", 3)
+    end
+    -- `relativePath` marks a column whose value is a file path matched EXACTLY
+    -- against the loaded-file keys (e.g. joinInto, edgesFor). Such a value is
+    -- resolved against the directory of the Files.tsv it appears in, like
+    -- `fileName` — see files_desc.resolveDescriptorPath. Do NOT set it on a
+    -- column resolved by basename (the override targets), which is already
+    -- location-independent.
+    if decl.relativePath ~= nil and type(decl.relativePath) ~= "boolean" then
+        error("type_wiring.registerModule: descriptorColumns[" .. index
+            .. "].relativePath must be a boolean for moduleName '"
             .. moduleName .. "'", 3)
     end
 end

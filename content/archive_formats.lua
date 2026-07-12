@@ -300,7 +300,17 @@ local function parseCentralDirectory(s, opts)
         if #name ~= nameLen then
             return nil, ("corrupt zip (member name overruns the archive at entry %d)"):format(k)
         end
-        -- Skip directory entries; they carry no data and are not member files.
+        -- The zip spec (APPNOTE 4.4.17.1) mandates forward slashes, but some
+        -- writers (notably Windows PowerShell's Compress-Archive) emit backslashes.
+        -- Normalise here, at the single point where a member name enters the
+        -- system, so the rest of the loader — virtual member paths, findMember
+        -- lookups, Files.tsv references — sees one separator convention and a
+        -- Windows-made zip loads like any other. `read` matches this normalised
+        -- path and then seeks by the central-directory offset, never by name, so
+        -- the raw on-disk name is not needed past this point.
+        name = name:gsub("\\", "/")
+        -- Skip directory entries; they carry no data and are not member files
+        -- (checked after normalisation, so a backslash-terminated one is caught).
         if not name:match("/$") then
             if isUnsafeMemberPath(name) then
                 return nil, ("unsafe member path in zip (zip-slip / absolute): %q"):format(name)

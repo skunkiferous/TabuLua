@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`asset_file`: a package can now SAY that a file is not a table**
+  (`TODO/non_table_files.md`, Phase 1). A `Files.tsv` row with
+  `typeName=asset_file` declares its file an **asset**: it is not parsed, has no
+  schema and no `loadEnv.files` entry, is copied **byte-for-byte** to the export,
+  and is **never rewritten in place** by the reformatter. Asset is not a new role —
+  `.md`, `.txt`, `.lua` and `.zip` have always had it *implicitly*, from their
+  extension — it simply could not be **stated**, so a `.json` asset was
+  indistinguishable from a `.json` nobody had declared yet. `asset_file` is a
+  member of the new built-in **`AssetFile`** type tag (ancestor `table`, mirroring
+  `IgnoredFile`/`MigrationScript`), so any user file type can opt in through its
+  `tags` field. The plain name `Asset` stays free for a user's own table of asset
+  *metadata*.
+
+  **A declaration beats the extension, for every extension.** This is not a
+  `.json`/`.xml` patch: a **`.tsv`** can be declared an asset too, and is then
+  carried through the pipeline untouched — which the loader could not express at
+  all before, since any `.tsv` it saw was either parsed (and reformatted in place)
+  or dropped. A hand-formatted lookup table, a fixture shipped for another tool, or
+  any file whose exact bytes matter can now be declared and will arrive in the
+  export unchanged, under its own name (a `.tsv` asset is *not* re-serialized into
+  `--file=json`'s format). A declared asset is streamed verbatim rather than read as
+  text, so its bytes — EOLs included — are exactly preserved; implicit `.md`/`.txt`
+  assets keep their existing text handling (COG templates and `--strip-cog` need
+  their content as a string), so the byte-for-byte guarantee is precisely what
+  declaring the file buys.
+
+  Internally, the two "is it data?" gates that disagreed — the **parse** gate
+  (`loadOtherFiles`) and the **declaration** gate (which classified by extension) —
+  are now one function, `fileRole`, returning `table` / `asset` / `ignored` (plus
+  the non-role `undeclared`). Both callers ask it, so they can no longer contradict
+  each other. Rules 1–2 (the declarations) are checked **before** the extension;
+  the extension is only ever a guess for an *undeclared* file. New spec
+  `spec/non_table_files_spec.lua`.
+
 - **Customizable SVG colour schemes** (`TODO/graph_svg_export.md`, follow-up).
   `--file=svg` colours are now fully configurable from the command line, one
   colour per drawable *type*. `--svg-color-scheme=<name>` picks a base palette
@@ -189,9 +223,108 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **An undeclared data file is now reported and skipped, not silently loaded.**
+  A data file that no `Files.tsv` row declares is no longer parsed: it is reported
+  (`Not listed in Files.tsv, so NOT loaded: <path>`, naming both ways out) and skipped
+  entirely — not parsed, not reformatted in place, and not exported (it never
+  reaches `raw_files`). Previously such a file was loaded anyway with whatever its
+  header said, entering the model with no `typeName` (so no registered type, no
+  `schema.tsv` entry, no `loadEnv.files` entry), no load order (it sorted ahead of
+  every declared file), and none of the per-file wiring `Files.tsv` supplies
+  (joins, validators, pre-processors, transcoder, variant) — a stray or
+  half-renamed file was indistinguishable from a real one. "Data" is now one
+  concept across the loader: any file whose extension, **after** the content
+  pipeline peels its decode layers, is `.tsv`, `.csv`, `.json`, `.xml`, or `.eav`
+  — so `Item.tsv.gz` and `Item.json.gz` are data too. Notably an undeclared `.eav`
+  used to be a hard error that failed the whole run (the transcoder needs the
+  `typeName` only `Files.tsv` can give it); it is now simply skipped.
+
+  **Assets** (`.md`, `.txt`, `.lua`, `.zip`, and a `.gz` wrapping a non-data name)
+  are not data: they need no declaration and still load and export as before. A
+  declared-but-variant/gate-inactive file is *declared*, and keeps its existing
+  treatment. New spec `spec/undeclared_data_files_spec.lua`.
+
+  **Migration — `.json` / `.xml` assets must now be declared.** `.json` and `.xml`
+  count as data extensions above, so a `.json`/`.xml` file that **no `Files.tsv` row
+  declares** is now skipped and **no longer copied into the export**, where 0.30.0
+  copied it verbatim. Silent removal from an export is the kind of thing you find
+  out about late, so: if such a file is data, give it a row **with a `transcoder`**
+  (e.g. `json:objects`); if it is not data, give it a row with
+  **`typeName=asset_file`** (see Added, above), which restores the verbatim copy and
+  says so explicitly. The warning names both routes.
+
+- **An `IgnoredFile`-tagged file is no longer exported.** A file the loader is told
+  to ignore (`typeName=MigrationScript`, or any type tagged `IgnoredFile`) is now
+  *neither loaded nor exported* — "pretend it isn't there", as its documentation
+  always claimed. It was in fact being copied into every export: the loader dropped
+  it from `raw_files`, and the asset pass that runs afterwards — walking the
+  unfiltered file list — put it straight back. In-tree migration scripts therefore
+  disappear from export trees; they remain untouched in the source tree, which is
+  where `migration.lua` reads them from.
+
+- **A `Files.tsv` now declares its paths relative to ITSELF, so a package is
+  relocatable.** A self-contained utility mod can be copied into a subdirectory of a
+  bigger package — `mods/utilmod/` — and keep working with its `Files.tsv`
+  **byte-for-byte unchanged**: its `Item.tsv` resolves to `mods/utilmod/Item.tsv`,
+  because that is where its `Files.tsv` sits. Previously every path in a nested
+  `Files.tsv` had to be spelled out from the package root, so a package encoded its
+  own install location and could not be moved without being edited — the opposite of
+  a reusable mod. This applies to `fileName` and to the descriptor columns that name
+  a file by path and are matched exactly, now declared `relativePath` in the wiring
+  registry: `joinInto` and `edgesFor`. The override-target columns (`patchOf`,
+  `bulkPatchOf`, `schemaOverlayOf`) resolve by *basename* and were already
+  location-independent, so they are unaffected. A `Files.tsv` at a package root is
+  unchanged in every respect (its prefix is empty), which is the overwhelmingly
+  common case. A descriptor cannot point outside its own directory: `..` is not a
+  valid `filepath`, so a nested `Files.tsv` can only declare files at or below
+  itself. New spec `spec/relocatable_package_spec.lua`. As a side fix, a `fileName`
+  cell that fails to parse is now reported and skipped instead of crashing the
+  loader.
+
+- **An input directory with no `Files.tsv` is now an error.** Every directory passed
+  to the loader must be a package directory: one with a `Files.tsv` in its **root**,
+  declaring its data files. Only the root needs one — the root's `Files.tsv` can
+  declare files anywhere below it by path (`sub/Item.tsv`), and a subdirectory needs
+  no `Files.tsv` of its own (though it may have one; see the relocatability entry
+  above). Previously a bare folder of TSVs was accepted as a
+  "simple package" and its files were loaded untyped — the same guessing the change
+  above removes, so the two rules now agree: data is loaded because a `Files.tsv`
+  says what it is, or it is not loaded. An **empty** directory is rejected too
+  (passing one is a mistake — a typo'd path, or the parent of the real packages —
+  worth hearing about rather than silently doing nothing). This subsumes the old
+  "contains files but no Manifest or Files.tsv directly" check with one rule and a
+  clearer message, and still catches its case: the parent of your packages
+  (`tutorial/` instead of `tutorial/core/`) has no `Files.tsv` of its own.
+
 ### Removed
 
 ### Fixed
+
+- **A `Files.tsv` row no longer governs a file it was never about.** A file's declared
+  load order was found by matching a row's path against the **tail** of the file's
+  path, so any file whose path merely *ended with* a declared one's was silently
+  governed by that row: `DraftItem.tsv` ends with `item.tsv`, and so does
+  `sub/Item.tsv`. Both took the root `Item.tsv` row's priority and counted as
+  *declared* — while none of that row's actual wiring (typeName, joins, validators,
+  pre-processors, all looked up by exact key) ever applied to them. That made the
+  file exactly the untyped stray the undeclared-data rule above exists to catch, and
+  it slipped through. The lookup is now by **exact key** — the same
+  input-directory-relative key every other `Files.tsv` map uses — so a row governs a
+  file here precisely when it governs it everywhere else. The tutorial's
+  `DraftItem.tsv` is this case, kept on purpose as a live demonstration of the
+  undeclared-file warning.
+
+- **Zip members with backslash-separated names now load.** Zips written by Windows
+  PowerShell's `Compress-Archive` use `\` in member names, against the zip spec
+  (APPNOTE 4.4.17.1), which mandates `/`. Such an archive enumerated its members
+  as `data\Item.tsv` while every lookup normalised to `data/Item.tsv`, so a member
+  could never be read back — the load failed with `member not found in archive`,
+  whose did-you-mean unhelpfully suggested the very name it had just listed.
+  Member names are now normalised to forward slashes at the single point where
+  they enter the system (the central-directory parse in `archive_formats`), so the
+  rest of the loader sees one separator convention; `read` matches the normalised
+  path and seeks by the central-directory offset, never by the raw on-disk name. A
+  backslash-terminated *directory* entry is now also correctly skipped.
 
 ## [0.30.0] - 2026-07-10
 

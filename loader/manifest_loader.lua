@@ -17,7 +17,6 @@ local logger = require( "infra.named_logger").getLogger(NAME)
 
 local table_utils = require("util.table_utils")
 local filterSeq = table_utils.filterSeq
-local keys = table_utils.keys
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
@@ -40,7 +39,32 @@ local stringToRawTSV = raw_tsv.stringToRawTSV
 
 local parsers = require("parsers")
 local parseType = parsers.parseType
-local isMemberOfTag = parsers.isMemberOfTag
+local listMembersOfTag = parsers.listMembersOfTag
+
+--- True iff `typeName` is a member of the role tag `tagName` BY NAME — the tag's
+--- own member list (`IgnoredFile` -> MigrationScript; `AssetFile` -> asset_file),
+--- plus any user type that opted in through its `tags` field, which registers it
+--- into that same list by name.
+---
+--- Deliberately NOT parsers.isMemberOfTag, which also answers true for any type
+--- whose SHAPE is a subtype of a member's. That is right for a value tag (`ubyte`
+--- belongs to a `Unit` tag via `integer`) and catastrophic for a role marker,
+--- whose shape is meaningless because the file is never parsed: `asset_file` is
+--- the empty record, EVERY record extends the empty record, and so shape-matching
+--- makes every table in the package an "asset" — patch files included (`patch` and
+--- `bulk_patch` are aliased to the empty record too). A file's role comes from what
+--- its typeName IS, never from what its columns look like.
+local function isRoleTagMember(tagName, typeName)
+    if type(typeName) ~= "string" then
+        return false
+    end
+    for _, member in ipairs(listMembersOfTag(tagName) or {}) do
+        if member == typeName or member:lower() == typeName:lower() then
+            return true
+        end
+    end
+    return false
+end
 
 local manifest_info = require("loader.manifest_info")
 local isManifestFile = manifest_info.isManifestFile
@@ -119,37 +143,171 @@ local TSV = "tsv"
 -- Manifest files use .transposed.tsv, which is covered by TSV.
 local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav", "zip"}
 
--- Find the priority of the file
-local function findPriority(priorities, file, missingPriority)
-    local lfile = file:lower()
-    local matches = {}
-    for f,p in pairs(priorities) do
-        if lfile:sub(-#f) == f then
-            matches[#matches+1] = f
-        end
+-- The extensions that make a collected file LOOK like data, and therefore
+-- something Files.tsv must declare. This is only ever a GUESS, consulted for a
+-- file no declaration covers (see fileRole rule 4): a declaration beats the
+-- extension for every extension. A data file may be wrapped in decode layers
+-- (`Item.tsv.gz`, `Item.json.gz`) — the test peels those first, so the wrapper
+-- never changes what a file IS. Everything else the loader collects (.md, .txt,
+-- .lua, .zip, and a .gz wrapping a non-data name) looks like an asset: it needs
+-- no declaration and is copied/streamed through untouched.
+local DATA_EXTENSIONS = {tsv = true, csv = true, json = true, xml = true, eav = true}
+
+--- True iff `file_name` LOOKS like a data file: its final extension, after the
+--- content pipeline peels any decode layers, is one of DATA_EXTENSIONS.
+--- @param file_name string The (possibly virtual, possibly compressed) file path
+--- @return boolean
+local function isDataFileName(file_name)
+    if type(file_name) ~= "string" then
+        return false
     end
-    if #matches == 0 then
-        -- "Priority-defining-files" has priority 0, so anything else should be higher
-        missingPriority[file] = true
-        return 1
-    end
-    local m, l = nil, 0
-    for _,f in ipairs(matches) do
-        if #f > l then
-            l = #f
-            m = f
-        end
-    end
-    return priorities[m]
+    local ext = content_pipeline.peeledName(file_name):match("%.([^.\\/]+)$")
+    return ext ~= nil and DATA_EXTENSIONS[ext:lower()] == true
 end
 
--- Order files by priority
-local function orderFilesByPriorities(files, priorities)
+-- True iff a collected file is TSV/CSV data only AFTER the content pipeline peels
+-- its decode extensions — i.e. a compressed data file like data.tsv.gz. A .gz
+-- that peels to a non-TSV name (notes.txt.gz, image.png.gz) is NOT data and stays
+-- on the stream/passthrough path. Plain .tsv/.csv peel to themselves, so this is
+-- false for them (they are matched directly by fileRole's hasExtension checks).
+local function isCompressedDataFile(file_name)
+    local peeled = content_pipeline.peeledName(file_name)
+    if peeled == file_name then return false end
+    local lower = peeled:lower()
+    return lower:sub(-4) == ".tsv" or lower:sub(-4) == ".csv"
+end
+
+-- The role a collected file plays in a package. Every file resolves to exactly
+-- one of these (see fileRole), plus the one NON-role, ROLE_UNDECLARED.
+local ROLE_TABLE    = "table"      -- parsed as data, exported in the target format
+local ROLE_ASSET    = "asset"      -- not parsed, copied byte-for-byte to the export
+local ROLE_IGNORED  = "ignored"    -- not parsed, not exported: "pretend it isn't there"
+-- Not a role: a file that LOOKS like a table (by extension) but that no Files.tsv
+-- row declares. It is reported and dropped — the only case that loses a file, and
+-- declaring it (as a table, or as an asset) is what resolves it.
+local ROLE_UNDECLARED = "undeclared"
+
+--- Resolves what a collected file IS. This is the ONE answer to a question that
+--- used to be asked twice, by two gates written independently — a parse gate
+--- (`loadOtherFiles`: is it TSV/CSV, compressed data, transcoded, or
+--- auto-transcoding?) and a declaration gate (is its extension a data extension?)
+--- — which disagreed about `.json`/`.xml`: a `.json` was a table only when a
+--- Files.tsv row gave it a `transcoder`, yet an undeclared one was called data
+--- and dropped rather than copied like any other asset. Both callers now ask
+--- this function, so they cannot contradict each other again.
+---
+--- Rules, IN ORDER (the order is the feature, not an implementation accident):
+---   1. typeName is an `IgnoredFile` member (e.g. MigrationScript), or an
+---      `ignored_files` manifest glob matches   -> ignored
+---   2. typeName is an `AssetFile` member (`asset_file`), or an `asset_files`
+---      manifest glob matches                   -> asset  (DECLARED)
+---   3. .tsv/.csv, compressed .tsv/.csv, a Files.tsv `transcoder` id, or an
+---      extension that auto-transcodes (.eav)   -> table  (or the non-role
+---      ROLE_UNDECLARED, when no Files.tsv row declares it)
+---   4. a data-LOOKING extension (.json/.xml) that no row declares
+---                                              -> ROLE_UNDECLARED
+---   5. otherwise                               -> asset  (IMPLICIT: .md, .txt,
+---      .lua, .zip — and a declared .json/.xml whose row gives no transcoder,
+---      which the caller warns about, since such a file cannot be parsed as data)
+---
+--- Rules 1-2 are checked BEFORE the extension, which is what lets `asset_file`
+--- (or an `ignored_files` glob) apply to a `.tsv` — the most table-ish extension
+--- there is — and not merely to the extensions that were ambiguous anyway. Do not
+--- "simplify" this by testing the extension first. Rules 2 and 5 return the same
+--- role, which is the point: declaring an asset does not create a special kind of
+--- file, it just overrides the extension guess. Stated as one rule:
+---
+---   A file is a table because something SAID it is (a typeName, a transcoder,
+---   or — for .tsv/.csv/.eav — the extension in the absence of any contrary
+---   declaration). Never because of its extension alone.
+---
+--- @param file_name string Full path of the collected file
+--- @param key string Its input-directory-relative, lowercased key
+--- @param roleCtx table {lcFn2Type, lcFn2Transcoder, undeclared, assetGlobs, ignoredGlobs}
+--- @return string role One of ROLE_TABLE / ROLE_ASSET / ROLE_IGNORED / ROLE_UNDECLARED
+--- @return boolean declared True iff a Files.tsv row (or a manifest glob) stated this role
+local function fileRole(file_name, key, roleCtx)
+    local fileType = roleCtx.lcFn2Type[key]
+    local assetGlobs, ignoredGlobs = roleCtx.assetGlobs, roleCtx.ignoredGlobs
+    -- 1. Ignored: declared in Files.tsv but deliberately not loaded (a migration
+    --    script's parameter columns carry no fixed per-row type and its primary
+    --    key repeats, so parsing would fail), or glob-ignored (temp files).
+    if isRoleTagMember("IgnoredFile", fileType) then
+        return ROLE_IGNORED, true
+    end
+    if ignoredGlobs and ignoredGlobs[file_name] then
+        return ROLE_IGNORED, true
+    end
+    -- 2. Declared asset: overrides the extension, whatever the extension is.
+    if isRoleTagMember("AssetFile", fileType) then
+        return ROLE_ASSET, true
+    end
+    if assetGlobs and assetGlobs[file_name] then
+        return ROLE_ASSET, true
+    end
+    local undeclared = roleCtx.undeclared and roleCtx.undeclared[file_name]
+    -- 3. Table: the definition of "data" — exactly the old parse gate.
+    if hasExtension(file_name, CSV) or hasExtension(file_name, TSV)
+        or roleCtx.lcFn2Transcoder[key] or isCompressedDataFile(file_name)
+        or content_pipeline.autoTranscodes(file_name) then
+        if undeclared then
+            return ROLE_UNDECLARED, false
+        end
+        return ROLE_TABLE, true
+    end
+    -- 4. Looks like data (.json/.xml), and nothing declares it.
+    if undeclared and isDataFileName(file_name) then
+        return ROLE_UNDECLARED, false
+    end
+    -- 5. Implicit asset.
+    return ROLE_ASSET, fileType ~= nil
+end
+
+-- Computes the lowercase file name key relative to its directory
+local function computeFilenameKey(file_name, file2dir)
+    local dir = normalizePath(file2dir[file_name]) or ""
+    local nfile = normalizePath(file_name) or file_name
+    -- When directory is "." (CWD), normalizePath strips any leading "./" from the
+    -- file name, so the key is simply the normalized relative path.
+    if dir == "." or dir == "" then
+        return nfile:lower()
+    end
+    local prefix = dir .. "/"
+    if nfile:sub(1, #prefix) == prefix then
+        return nfile:sub(#prefix + 1):lower()
+    end
+    return nfile:lower()
+end
+
+--- Find the priority declared for `file`, or nil if no Files.tsv row declares it.
+---
+--- The lookup is by EXACT key — the same input-directory-relative key every other
+--- Files.tsv map (typeName, joins, validators, ...) is keyed by, so a row governs a
+--- file here exactly when it governs it everywhere else. This used to match a key
+--- against the TAIL of the path instead, which let a file answer to a row that was
+--- never about it: `DraftItem.tsv` ends with `item.tsv`, and `sub/Item.tsv` ends
+--- with `item.tsv` too, so either would silently take the root `Item.tsv` row's
+--- priority and count as declared — while none of that row's actual wiring, all of
+--- it looked up by exact key, ever reached them.
+local function findPriority(priorities, file, file2dir, missingPriority)
+    local priority = priorities[computeFilenameKey(file, file2dir)]
+    if priority == nil then
+        missingPriority[file] = true
+        -- "Priority-defining-files" has priority 0, so anything else should be higher
+        return 1
+    end
+    return priority
+end
+
+-- Order files by priority. Returns the set of files that no Files.tsv row
+-- declares (no row is keyed by their path, so they fell back to the default
+-- priority) — the input to rejectUndeclaredDataFiles below.
+local function orderFilesByPriorities(files, priorities, file2dir)
     logger:info("Sorting files by priority ...")
     local missingPriority = {}
     local cache = {}
     for _,file in ipairs(files) do
-        cache[file] = findPriority(priorities, file, missingPriority)
+        cache[file] = findPriority(priorities, file, file2dir, missingPriority)
     end
     table.sort(files, function(a, b)
         local aPriority = cache[a]
@@ -159,16 +317,80 @@ local function orderFilesByPriorities(files, priorities)
         end
         return aPriority < bPriority
     end)
-    for _,file in ipairs(keys(missingPriority)) do
-        if not hasExtension(file, "lua") then
-            if hasExtension(file, "md") then
-                logger:debug("No priority found for " .. file)
-            else
-                logger:warn("No priority found for " .. file)
+    logger:debug("Sorted files: "..table.concat(files, ", "))
+    return missingPriority
+end
+
+--- Resolves every collected file's role (fileRole), and splits the load list by it.
+---
+--- Two roles never reach the loader at all, and this is where they are removed:
+---
+--- * **ROLE_UNDECLARED** — a file that LOOKS like a table (.tsv/.csv/.eav, or a
+---   .json/.xml) but that no Files.tsv row declares. Files.tsv is the manifest of
+---   what a package's data IS: it supplies the typeName (hence the schema, the
+---   registered type, and the `loadEnv.files` entry other files' expressions see),
+---   the load order, and all per-file wiring (joins, validators, pre-processors,
+---   transcoder, variant). An undeclared data file has none of that, so parsing it
+---   anyway put a typeless, unordered, unwired dataset into the model — and a stray
+---   or half-renamed file was indistinguishable from a real one. It is reported and
+---   skipped: not parsed, not reformatted, and (never reaching raw_files) not
+---   exported. Declaring it — as a table, or as an `asset_file` — is what resolves it.
+---
+--- * **ROLE_IGNORED** — "pretend it isn't there": an IgnoredFile-tagged typeName
+---   (e.g. a MigrationScript) or an `ignored_files` glob. Silently dropped, with no
+---   warning: unlike an undeclared file, someone SAID this one does not belong to
+---   the model.
+---
+--- Every input directory is required to have a Files.tsv (collectAndLogFiles errors
+--- otherwise), so every collected data file is covered by this rule — there is no
+--- "declare-less" corner left for one to hide in.
+---
+--- Assets (.md, .txt, .lua, .zip, a .gz over a non-data name, and anything declared
+--- `asset_file`) are kept, and keep the long-standing "No priority found" notice
+--- when no row declares them — an implicit asset needs no declaration.
+---
+--- Variant- and gate-skipped files are declared — just inactive for this run — and
+--- the caller filters them out before this runs, so they are never reported here.
+--- @param files table Sequence of collected files (in load order)
+--- @param roleCtx table The fileRole context (see fileRole)
+--- @param file2dir table Maps each file to its input directory
+--- @return table The files to load (tables + assets)
+--- @return table Full-path -> role, for every file in `files` (travels on joinMeta)
+--- @return table The set of files that must never reach raw_files (undeclared + ignored)
+local function partitionFilesByRole(files, roleCtx, file2dir)
+    local kept, roles, excluded = {}, {}, {}
+    for _, file in ipairs(files) do
+        local key = computeFilenameKey(file, file2dir)
+        local role, declared = fileRole(file, key, roleCtx)
+        roles[file] = role
+        if role == ROLE_UNDECLARED then
+            logger:warn("Not listed in Files.tsv, so NOT loaded: " .. file
+                .. "\n      If it is data, add a row for it to Files.tsv"
+                .. (isDataFileName(file) and not hasExtension(file, TSV)
+                    and not hasExtension(file, CSV)
+                    and " (a .json/.xml row also needs a `transcoder`, e.g. json:objects)"
+                    or "")
+                .. ".\n      If it is not data, add a row with typeName=asset_file to copy"
+                .. " it to the export unparsed, or remove the file.")
+            excluded[file] = true
+        elseif role == ROLE_IGNORED then
+            logger:info("Ignored (not loaded, not exported): " .. file)
+            excluded[file] = true
+        else
+            kept[#kept + 1] = file
+            -- Code libraries are declared in the manifest rather than Files.tsv, so
+            -- they never warn. A DECLARED asset never warns either — that is what
+            -- declaring it was for.
+            if role == ROLE_ASSET and not declared and not hasExtension(file, "lua") then
+                if hasExtension(file, "md") then
+                    logger:debug("No priority found for " .. file)
+                else
+                    logger:warn("No priority found for " .. file)
+                end
             end
         end
     end
-    logger:debug("Sorted files: "..table.concat(files, ", "))
+    return kept, roles, excluded
 end
 
 -- Finds, and removes, the manifest files that define the package dependencies
@@ -326,22 +548,6 @@ local function setupLoadEnvironment(loadEnv)
     return expr_eval, contexts, options_extractor
 end
 
--- Computes the lowercase file name key relative to its directory
-local function computeFilenameKey(file_name, file2dir)
-    local dir = normalizePath(file2dir[file_name]) or ""
-    local nfile = normalizePath(file_name) or file_name
-    -- When directory is "." (CWD), normalizePath strips any leading "./" from the
-    -- file name, so the key is simply the normalized relative path.
-    if dir == "." or dir == "" then
-        return nfile:lower()
-    end
-    local prefix = dir .. "/"
-    if nfile:sub(1, #prefix) == prefix then
-        return nfile:sub(#prefix + 1):lower()
-    end
-    return nfile:lower()
-end
-
 -- Ensures `map[key]` is a populated array, creating an empty one if missing.
 -- Returns the array. Used to give type_wiring.applyWiring writable targets
 -- for the per-file processor / validator wiring contributions.
@@ -366,18 +572,11 @@ local function processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, co
     badVal.source = file_name
     local lcFNKey = computeFilenameKey(file_name, file2dir)
     local fileType = lcFn2Type[lcFNKey]
-    -- Files whose typeName is a member of the IgnoredFile tag (e.g. migration
-    -- scripts, typeName=MigrationScript) are declared in Files.tsv but must NOT
-    -- be loaded as data: their columns carry no fixed per-row type and their
-    -- primary key may repeat, so parsing would fail. Recognised declaratively
-    -- via the type tag rather than a hard-coded shape heuristic; any user type
-    -- can opt in the same way by adding IgnoredFile to its `tags`. Gated before
-    -- the content read, so the file is never parsed and not stored in raw_files.
-    if fileType and isMemberOfTag("IgnoredFile", fileType) then
-        logger:info("Skipping IgnoredFile-tagged file: " .. file_name)
-        raw_files[file_name] = nil
-        return
-    end
+    -- Only files whose role is ROLE_TABLE reach here: an IgnoredFile-tagged file
+    -- (e.g. a MigrationScript) and a declared asset were both resolved by fileRole
+    -- and removed from the load list before this pass, so no role test is needed —
+    -- and none can be forgotten.
+    --
     -- The content pipeline reads the file (binary), populates raw_files with the
     -- normalised pre-COG source, and runs the decode→transcode→normalise→COG
     -- stages. COG is no longer named here — it is the registered `macro` stage.
@@ -448,8 +647,18 @@ end
 -- descriptor (a stat, not a read) and are block-streamed at export time, so a
 -- multi-hundred-MB asset never sits in memory (§3.5 "Large binary files").
 -- opt_badVal, if given, reports read/stat failures.
-local function storeRawFile(file_name, raw_files, opt_badVal)
-    if content_pipeline.isTextFile(file_name) then
+--
+-- `opt_verbatim` takes the passthrough path for a TEXT file too, which is how a
+-- DECLARED asset (typeName=asset_file) gets the byte-for-byte guarantee its whole
+-- purpose rests on. The text path cannot give it: it normalises EOLs on the way in
+-- and the export writes text, so a file that arrived LF-only leaves as CRLF on
+-- Windows, and --strip-cog would rewrite its content besides. Streaming the
+-- original bytes is the only way to promise the exact file back. An IMPLICIT text
+-- asset (.md, .txt) keeps the text path it has always had — COG templates and the
+-- sink stripper need its content as a string — so the guarantee is precisely what
+-- declaring the file buys you.
+local function storeRawFile(file_name, raw_files, opt_badVal, opt_verbatim)
+    if content_pipeline.isTextFile(file_name) and not opt_verbatim then
         local content, err = readFileBinary(file_name)
         if content then
             raw_files[file_name] = unixEOL(content)
@@ -471,34 +680,52 @@ local function storeRawFile(file_name, raw_files, opt_badVal)
     end
 end
 
--- True iff a collected file is TSV/CSV data only AFTER the content pipeline peels
--- its decode extensions — i.e. a compressed data file like data.tsv.gz. A .gz
--- that peels to a non-TSV name (notes.txt.gz, image.png.gz) is NOT data and stays
--- on the stream/passthrough path. Plain .tsv/.csv peel to themselves, so this is
--- false for them (they are matched directly by the caller's hasExtension checks).
-local function isCompressedDataFile(file_name)
-    local peeled = content_pipeline.peeledName(file_name)
-    if peeled == file_name then return false end
-    local lower = peeled:lower()
-    return lower:sub(-4) == ".tsv" or lower:sub(-4) == ".csv"
-end
-
--- Reads a non-TSV/CSV file and stores its content (or a passthrough descriptor).
-local function processUnknownFile(file_name, raw_files, badVal)
-    if hasExtension(file_name, "lua") then
+-- Stores an ASSET: a file whose role is "keep it, don't read it" (fileRole rules
+-- 2 and 5). It is copied byte-for-byte to the export and never rewritten in place
+-- by the reformatter (only tsv_files entries are, and an asset is never parsed
+-- into one).
+--
+-- The message says what HAPPENED, not that the loader was confused. The old
+-- "Don't know how to process X" fired at WARN for every asset that was not .md or
+-- .lua — including every .txt and .zip, which are perfectly ordinary assets — and
+-- was the only signal a declared-but-unparseable file got.
+--
+-- `declared` is true when a Files.tsv row (or a manifest glob) SAID this is an
+-- asset: nothing to report, so it stays silent. The one case worth a warning is a
+-- file that looks like data and carries a real typeName but that nothing can
+-- parse: a .json/.xml declared without a `transcoder`. It is still copied (as it
+-- always was), but the row is almost certainly a mistake — either the transcoder
+-- is missing, or the row means `asset_file`.
+local function processAssetFile(file_name, raw_files, badVal, declared, fileType)
+    if declared then
+        logger:debug("Copied as an asset (declared, not a table): " .. file_name)
+    elseif fileType and isDataFileName(file_name) then
+        logger:warn("Copied as an asset, NOT parsed as data: " .. file_name
+            .. "\n      Its Files.tsv row declares typeName=" .. fileType
+            .. ", but a " .. (content_pipeline.peeledName(file_name):match("%.([^.\\/]+)$") or "?")
+            .. " file needs a `transcoder` (e.g. json:objects) to be read as a table."
+            .. "\n      Add one, or declare typeName=asset_file if it is not a table.")
+    elseif hasExtension(file_name, "lua") then
         logger:info("Loading code library: " .. file_name)
-    elseif hasExtension(file_name, "md") then
-        logger:debug("Don't know how to process " .. file_name)
     else
-        logger:warn("Don't know how to process " .. file_name)
+        logger:debug("Copied as an asset (not a table): " .. file_name)
     end
-    storeRawFile(file_name, raw_files, badVal)
+    -- Only a DECLARED asset is streamed verbatim; see storeRawFile.
+    storeRawFile(file_name, raw_files, badVal, declared)
 end
 
--- Load all the non-description files
+-- Load all the non-description files.
+--
+-- The parse/copy decision is NOT made here: it is `roleCtx`'s (fileRole's), the
+-- same one function the declaration gate asked in partitionFilesByRole. That is
+-- the point of the role model — this loop no longer re-derives "is it data?" from
+-- the extension, so it can no longer disagree with the gate that dropped, or kept,
+-- the file in the first place. Undeclared and ignored files were already removed
+-- from `files`, so only tables and assets arrive here.
 local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
-    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder, opt_schemaOverlays)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder, opt_schemaOverlays,
+    roleCtx, excluded)
     local expr_eval, contexts, options_extractor = setupLoadEnvironment(loadEnv)
     lcFn2Transcoder = lcFn2Transcoder or {}
 
@@ -513,22 +740,26 @@ local function loadOtherFiles(files, files_cache, file2dir, lcFn2Type, lcFn2Ctx,
                 goto continue
             end
         end
-        -- A file is parsed as data if it's a TSV/CSV, a compressed TSV/CSV the
-        -- pipeline can decode (data.tsv.gz), if Files.tsv assigned it a transcoder
-        -- (e.g. a .json routed through json:objects), OR if its extension
-        -- auto-matches a transcoder (e.g. .eav). Everything else is copied/streamed
-        -- through as an asset (unchanged).
-        if hasExtension(file_name, CSV) or hasExtension(file_name, TSV)
-            or lcFn2Transcoder[key] or isCompressedDataFile(file_name)
-            or content_pipeline.autoTranscodes(file_name) then
+        local role, declared = fileRole(file_name, key, roleCtx)
+        if role == ROLE_TABLE then
             processSingleTSVFile(fileRegisteredTypes, file_name, file2dir, contexts,
                 lcFn2Type, lcFn2Ctx, lcFn2Col,
                 lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
                 extends, raw_files, files_cache,
                 options_extractor, expr_eval, loadEnv, badVal, lcFn2Transcoder[key],
                 opt_schemaOverlays)
+        elseif role == ROLE_IGNORED then
+            -- partitionFilesByRole already removed every file it could SEE was
+            -- ignored. One can still surface here: a user type becomes an
+            -- IgnoredFile member when the custom_type_def file carrying its `tags`
+            -- is loaded, which happens inside this very loop. Recording it in
+            -- `excluded` keeps the caller's asset pass from copying it into the
+            -- export after all.
+            logger:info("Ignored (not loaded, not exported): " .. file_name)
+            raw_files[file_name] = nil
+            if excluded then excluded[file_name] = true end
         else
-            processUnknownFile(file_name, raw_files, badVal)
+            processAssetFile(file_name, raw_files, badVal, declared, lcFn2Type[key])
         end
         ::continue::
     end
@@ -591,9 +822,19 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         end
     end
     local lcSkippedFiles = {}
+    -- Each descriptor's own directory, in the same (input-dir-relative, lowercase)
+    -- key space as the loaded files: "" for a Files.tsv at a package root,
+    -- "mods/utilmod/" for one nested in a subdirectory. files_desc resolves every
+    -- path that descriptor declares against this prefix, so a package carries no
+    -- knowledge of where it sits and can be relocated unedited.
+    local descDirPrefixes = {}
+    for _, desc_file in ipairs(desc_files_order) do
+        local key = computeFilenameKey(desc_file, file2dir)
+        descDirPrefixes[desc_file] = key:match("^(.*/)[^/]*$") or ""
+    end
     local desc_files = loadDescriptorFiles(desc_files_order, priorities, desc_file2pkg_id,
         post_proc_files, extends, lcFn2Type, lcFn2LineNo, metaMaps,
-        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles)
+        raw_files, loadEnv, badVal, variantsSet, lcSkippedFiles, descDirPrefixes)
     if not desc_files then
         logger:error("Could not load/process files descriptors. Aborting.")
         return
@@ -659,8 +900,9 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
             end
         end
     end
-    -- Remove variant-skipped files before sorting, so they don't trigger
-    -- spurious "No priority found" warnings
+    -- Remove variant-skipped files before sorting: they ARE declared (just
+    -- inactive for this run), so they must not be reported as undeclared below,
+    -- nor trigger a spurious "No priority found" warning.
     if next(lcSkippedFiles) then
         local filtered = {}
         for _, file_name in ipairs(files) do
@@ -671,7 +913,23 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
         end
         files = filtered
     end
-    orderFilesByPriorities(files, priorities)
+    -- Sorting reports which files no Files.tsv row declares. That set, plus the
+    -- descriptor maps, is everything fileRole needs to say what each file IS
+    -- (table / asset / ignored, or the non-role: undeclared). The roleCtx is built
+    -- ONCE here and handed to both callers — the declaration gate below and the
+    -- parse gate in loadOtherFiles — so the two cannot answer differently.
+    local roleCtx = {
+        lcFn2Type = lcFn2Type,
+        lcFn2Transcoder = lcFn2Transcoder,
+        undeclared = orderFilesByPriorities(files, priorities, file2dir),
+    }
+    -- Undeclared and ignored files are dropped from the load list here (reported,
+    -- and neither parsed nor exported). The excluded set travels on joinMeta so the
+    -- caller's asset pass (loadRemainingFiles) skips them too — otherwise it would
+    -- pick them straight back up as assets: `files` here may be the filtered copy
+    -- above, not the caller's table.
+    local fileRoles, excludedFiles
+    files, fileRoles, excludedFiles = partitionFilesByRole(files, roleCtx, file2dir)
     local tsv_files = {}
     for _, desc_file in ipairs(desc_files) do
         tsv_files[desc_file[1].__source] = desc_file
@@ -784,7 +1042,8 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     loadOtherFiles(files, tsv_files, file2dir, lcFn2Type,
     lcFn2Ctx, lcFn2Col,
     lcFn2PreProcessors, lcFn2RowValidators, lcFn2FileValidators,
-    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder, schemaOverlays)
+    extends, raw_files, loadEnv, badVal, lcSkippedFiles, lcFn2Transcoder, schemaOverlays,
+    roleCtx, excludedFiles)
     -- Note: graph wiring (completion pre-processors + structural file
     -- validators) is now applied per-file through type_wiring.applyWiring
     -- inside processSingleTSVFile — see builtin_wiring.lua's register()
@@ -802,6 +1061,17 @@ local function processOrderedFiles(badVal, files, file2dir, desc_files_order, de
     joinMeta.extends = extends
     -- Variant metadata
     joinMeta.lcSkippedFiles = lcSkippedFiles
+    -- Each collected file's role (full path -> "table" / "asset" / "ignored" /
+    -- "undeclared"). The exporter needs it to know that a .tsv whose role is
+    -- `asset` is NOT a table: it must be copied byte-for-byte under its own name,
+    -- not serialized from tsv_files (where it does not appear) into the target
+    -- format's extension.
+    joinMeta.fileRoles = fileRoles
+    -- Files that must never reach raw_files: the undeclared (no Files.tsv row) and
+    -- the ignored (IgnoredFile typeName, or an ignored_files glob). Already dropped
+    -- from the load list here; the caller's asset pass skips them, so they are not
+    -- exported either.
+    joinMeta.excludedFiles = excludedFiles
     -- Full-path -> transcoder id, for the reformatter's id-selected reversible
     -- round-trip: an id-only transcoder (e.g. xml:tabulua) has no `extensions`,
     -- so reversibleTranscode can't find it by file name alone. lcFn2Transcoder is
@@ -834,63 +1104,42 @@ local function initializeBadVal(badVal)
     return badVal
 end
 
--- Checks if a file is a TSV or CSV data file (not just any file like README.md)
-local function isTsvOrCsvFile(file)
-    local lower = file:lower()
-    return lower:sub(-4) == ".tsv" or lower:sub(-4) == ".csv"
-end
-
--- Checks if a directory has TSV/CSV files ONLY in subdirectories but no package markers directly
--- This catches the case where user specifies a parent dir instead of package dirs
--- Returns true if the directory is INVALID:
---   - Has TSV/CSV files in subdirectories but no manifest/Files.tsv directly
--- Returns false if the directory is valid:
---   - Empty directory (or only non-TSV files like README.md)
---   - Has manifest/Files.tsv directly
---   - Has TSV/CSV data files directly (simple package without subdirs)
-local function hasSubdirFilesButNoPackageMarkers(directory, files)
+-- True iff `directory` holds a Files.tsv DIRECTLY in it (not in a subdirectory).
+-- Every input directory must: it is what makes the directory a package — the
+-- declaration of what its data files are.
+--
+-- Only the package ROOT needs one. A Files.tsv `fileName` is a path, not a bare
+-- name (`sub/Item.tsv`), so the root's Files.tsv can declare files anywhere in the
+-- tree below it; a subdirectory needs no Files.tsv of its own, though it MAY have
+-- one — whose paths are then relative to IT, not to the root
+-- (files_desc.resolveDescriptorPath), which is what lets a self-contained utility
+-- mod be dropped into a subdirectory unedited. Hence this looks only at the input
+-- directories themselves and never recurses.
+local function hasDirectFilesDescriptor(directory, files)
     local dirPrefix = directory
     -- Normalize: ensure directory ends without separator for prefix matching
     if dirPrefix:sub(-1) == "/" or dirPrefix:sub(-1) == "\\" then
         dirPrefix = dirPrefix:sub(1, -2)
     end
     local dirPrefixLen = #dirPrefix
-    local hasTsvInSubdirs = false
-    local hasDirectTsvFiles = false
-    local hasPackageMarker = false
     for _, file in ipairs(files) do
-        -- Check if file belongs to this directory
-        if file:sub(1, dirPrefixLen) == dirPrefix then
-            -- Get the part after the directory prefix
+        if file:sub(1, dirPrefixLen) == dirPrefix and isFilesDescriptor(file) then
             local suffix = file:sub(dirPrefixLen + 1)
-            -- Remove leading separator
             if suffix:sub(1, 1) == "/" or suffix:sub(1, 1) == "\\" then
                 suffix = suffix:sub(2)
             end
-            -- Check if this is a direct child (no subdirectory separators in suffix)
-            local slashPos = suffix:find("[/\\]")
-            local isDirectChild = (slashPos == nil)
-            if isDirectChild then
-                if isTsvOrCsvFile(file) then
-                    hasDirectTsvFiles = true
-                end
-                if isManifestFile(file) or isFilesDescriptor(file) then
-                    hasPackageMarker = true
-                end
-            else
-                if isTsvOrCsvFile(file) then
-                    hasTsvInSubdirs = true
-                end
+            -- A direct child has no further path separator in its suffix.
+            if not suffix:find("[/\\]") then
+                return true
             end
         end
     end
-    -- Invalid only if TSV/CSV files exist in subdirs but no package markers and no direct TSV files
-    -- This catches "tutorial/" case but allows simple packages with TSV files directly in the dir
-    return hasTsvInSubdirs and not hasPackageMarker and not hasDirectTsvFiles
+    return false
 end
 
--- Collects files from directories and logs any errors
--- Also validates that each top-level directory contains package markers
+-- Collects files from directories and logs any errors.
+-- Also validates that every input directory IS a package directory — one with a
+-- Files.tsv directly in it. A directory that is not is a load error.
 -- Returns files list, or nil if validation fails
 local function collectAndLogFiles(directories, file2dir, opt_excludeDirs)
     local files, errors = collectFiles(directories, EXTENSIONS, file2dir, logger, opt_excludeDirs)
@@ -900,15 +1149,26 @@ local function collectAndLogFiles(directories, file2dir, opt_excludeDirs)
         end
         -- We continue anyway, in case we did not need the files that cause errors
     end
-    -- Validate that each top-level directory contains package markers
-    -- Only error if the directory has files but no manifest directly in it
-    -- (empty directories are allowed - they just produce no packages)
+    -- Every input directory must be a PACKAGE directory: one with a Files.tsv
+    -- directly in it. Files.tsv is what declares a package's data files (their
+    -- typeName, load order, and wiring), so a directory without one has no way to
+    -- say what its data IS — the loader would be guessing. This also catches, with
+    -- one rule, the common mistake of passing the parent of your packages
+    -- ('tutorial/' instead of 'tutorial/core/'): the parent has no Files.tsv of its
+    -- own. An empty directory is rejected too — passing one is a mistake worth
+    -- hearing about, not a silent no-op.
     local hasInvalidDir = false
     for _, dir in ipairs(directories) do
         if dir and dir ~= "" then
-            if hasSubdirFilesButNoPackageMarkers(dir, files) then
-                logger:error("Directory '" .. dir .. "' contains files but no Manifest or Files.tsv directly. " ..
-                    "Specify package directories directly (e.g., 'tutorial/core/' not 'tutorial/').")
+            if not hasDirectFilesDescriptor(dir, files) then
+                -- A directory-level error, so it is logged rather than reported
+                -- through badVal (whose message shape is cell/line oriented). The
+                -- load aborts: processFiles returns nil, which every caller checks.
+                logger:error("Directory '" .. dir .. "' has no Files.tsv directly in "
+                    .. "it, so it is not a package directory. Every input directory "
+                    .. "must declare its data files in a Files.tsv. If '" .. dir
+                    .. "' is the PARENT of your packages, pass the package directories "
+                    .. "themselves (e.g. 'tutorial/core/' not 'tutorial/').")
                 hasInvalidDir = true
             end
         end
@@ -982,10 +1242,19 @@ local function resolveFileDescriptors(files, packages, package_order)
     return desc_files_order, desc_file2pkg_id
 end
 
--- Loads any remaining files that haven't been loaded yet
-local function loadRemainingFiles(files, raw_files)
+-- Loads any remaining files that haven't been loaded yet (the assets).
+--
+-- `opt_excluded`, when given, is the set of files fileRole gave no place in the
+-- model — the UNDECLARED (no Files.tsv row) and the IGNORED (an IgnoredFile
+-- typeName, or an ignored_files glob). They must not be picked up here, or this
+-- pass would quietly undo the exclusion and copy them into the export anyway.
+-- That is not hypothetical: an IgnoredFile-tagged migration script used to be
+-- exported for exactly this reason — the loader dropped it from raw_files, and
+-- this pass, walking the caller's UNfiltered file list, put it straight back.
+local function loadRemainingFiles(files, raw_files, opt_excluded)
     for _, file_name in ipairs(files) do
-        if not raw_files[file_name] then
+        if not raw_files[file_name]
+            and not (opt_excluded and opt_excluded[file_name]) then
             storeRawFile(file_name, raw_files)
         end
     end
@@ -1474,7 +1743,7 @@ local function processFiles(directories, badVal, opt_excludeDirs, opt_variants, 
         desc_files_order, desc_file2pkg_id,
         raw_files, loadEnv, opt_variants, packages)
 
-    loadRemainingFiles(files, raw_files)
+    loadRemainingFiles(files, raw_files, joinMeta and joinMeta.excludedFiles)
     mergeManifestFiles(tsv_files, manifest_tsv_files)
 
     -- Run pre-processors (mutate parsed rows) before any validation. Processors

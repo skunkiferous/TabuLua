@@ -1,0 +1,23 @@
+# DELIBERATELY NOT DECLARED IN Files.tsv — this file is here on purpose.
+#
+# It is a data file (.tsv) that no Files.tsv row declares, so on every tutorial
+# run TabuLua warns and SKIPS it:
+#
+#   WARN  Data file not listed in Files.tsv, so NOT loaded: <...>/DraftItem.tsv
+#         (add a row for it to Files.tsv, or remove the file)
+#
+# Skipped means skipped: it is not parsed, not type-checked, not reformatted in
+# place, and not exported. Nothing below this comment block is ever read — the
+# columns need not even be valid (`sharpness:blade_edge` is not a real type, and
+# no error is reported for it, because the file never reaches the parser).
+#
+# That is the point of the warning. Without it, a file you forgot to declare —
+# or a half-finished draft, or a stray copy — would quietly load with whatever
+# its header happened to say, and none of the wiring Files.tsv supplies (load
+# order, joins, validators, pre-processors) would apply to it.
+#
+# To make this a real file, delete this comment block and add a row for it to
+# Files.tsv. To silence the warning without loading it, delete the file (or move
+# it outside the package directory).
+name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	sharpness:blade_edge
+mithrilDagger	5555555555555555	DGR-001	Rare	450	0.8	keen

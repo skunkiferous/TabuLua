@@ -150,6 +150,21 @@ local function computeRelativePath(file_name, file2dir)
     return file_name
 end
 
+-- True iff the loader resolved this file's role as an ASSET (manifest_loader's
+-- fileRole): "keep it, don't read it". An asset is never parsed, so it has no
+-- tsv_files entry — it is copied byte-for-byte, under its OWN name.
+--
+-- This matters only because an asset can now have a data extension: a .tsv
+-- declared `typeName=asset_file` (or matched by an `asset_files` glob) is an asset,
+-- and treating it as a table on the strength of its extension would both fail to
+-- find its (non-existent) parse and rename it into the target format — e.g. write
+-- a hand-formatted lookup table out as .json. The extension is not what decides;
+-- the declaration is.
+local function isAssetFile(joinMeta, file_name)
+    return joinMeta ~= nil and joinMeta.fileRoles ~= nil
+        and joinMeta.fileRoles[file_name] == "asset"
+end
+
 -- Ensures the parent directory of the given path exists.
 -- Uses dirChecked table to avoid redundant checks.
 -- Returns true on success, false on failure.
@@ -370,7 +385,9 @@ local function exportTSV(process_files, exportParams, serializer)
             end
             goto continue
         end
-        local is_tsv = hasExtension(file_name, "tsv")
+        -- A .tsv the loader resolved as an ASSET is not a table: it is copied
+        -- verbatim below, keeping its own name and extension.
+        local is_tsv = hasExtension(file_name, "tsv") and not isAssetFile(joinMeta, file_name)
         local new_name = pathJoin(exportDir, relative_name)
         if is_tsv and fileExt ~= "tsv" then
             new_name = changeExtension(new_name, fileExt)
@@ -897,7 +914,8 @@ local function exportMessagePack(process_files, exportParams)
             end
             goto continue
         end
-        local is_tsv = hasExtension(file_name, "tsv")
+        -- As in exportTSV: an asset .tsv is copied verbatim, not packed as data.
+        local is_tsv = hasExtension(file_name, "tsv") and not isAssetFile(joinMeta, file_name)
         local new_name = pathJoin(exportDir, relative_name)
         if is_tsv then
             new_name = changeExtension(new_name, "mpk")

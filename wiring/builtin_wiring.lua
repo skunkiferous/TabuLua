@@ -271,9 +271,14 @@ type_wiring.registerModule("publish", {
     },
 })
 
+-- `joinInto` names a file by PATH and is matched exactly (not by basename, as the
+-- override-target columns are), so it is `relativePath`: resolved against the
+-- directory of the Files.tsv it appears in, exactly like `fileName`. That is what
+-- lets a package be relocated — dropped into a subdirectory of a bigger one —
+-- without editing its Files.tsv.
 type_wiring.registerModule("file_joining", {
     descriptorColumns = {
-        {name = "joinInto",       type = "filepath|nil",
+        {name = "joinInto",       type = "filepath|nil", relativePath = true,
          fieldOnMeta = "lcFn2JoinInto",       parse = lowerOrNil},
         {name = "joinColumn",     type = "name|nil",
          fieldOnMeta = "lcFn2JoinColumn",     parse = nilIfEmpty},
@@ -571,7 +576,9 @@ end
 -- dependency a centralised registration would create here.
 type_wiring.registerModule("graph_wiring", {
     descriptorColumns = {
-        {name = "edgesFor", type = "filepath|nil",
+        -- Like joinInto, `edgesFor` names its node file by PATH and is matched
+        -- exactly, so it too resolves relative to its Files.tsv's directory.
+        {name = "edgesFor", type = "filepath|nil", relativePath = true,
          fieldOnMeta = "lcFn2EdgesFor",       parse = lowerOrNil},
     },
     enginePostPasses = {validateEdgeFilesPass},

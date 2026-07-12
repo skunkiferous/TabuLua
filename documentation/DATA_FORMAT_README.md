@@ -554,7 +554,9 @@ custom_types:{custom_type_def}|nil  {name="UnitTag",parent="number",members={"in
 types the loader should recognise but **not** load as data. When a file's
 `typeName` in `Files.tsv` is a member of `IgnoredFile`, the loader skips it
 before any parsing or validation runs — it never appears in the loaded data,
-and no errors are raised for its contents.
+**nor in the export**, and no errors are raised for its contents. This is the
+"pretend it isn't there" role, as distinct from an *asset*'s "keep it, don't
+read it" (next section).
 
 This exists for files that live in the data tree but aren't dataset data and
 would not survive normal parsing — for example, files whose columns have no
@@ -589,6 +591,63 @@ ScratchFile  {note:text}                               IgnoredFile
 Files declared with `typeName=ScratchFile` are then recognised and skipped the
 same way. Typical uses: scratch/template files, fixtures, or example data kept
 in-tree but excluded from the dataset.
+
+### Asset files (the `AssetFile` tag / `asset_file`)
+
+Every file in a package has exactly one **role**:
+
+| Role | How it gets the role | Parsed? | Exported? |
+| --- | --- | --- | --- |
+| **table** | a `Files.tsv` row with a real `typeName` (plus a `transcoder`, for `.json`/`.xml`) | yes | yes, in the target format |
+| **asset** | *implicitly*, by extension (`.md`, `.txt`, `.lua`, `.zip`); or **declared** on **any** extension, with `typeName=asset_file` | no | yes, copied byte-for-byte |
+| **ignored** | a `typeName` that is an `IgnoredFile` member (previous section) | no | **no** |
+
+A file that *looks* like data (`.tsv`, `.csv`, `.json`, `.xml`, `.eav`) but that no
+`Files.tsv` row declares is reported and **dropped** — not loaded, not exported.
+Declaring it, as either a table or an `asset_file`, is what resolves that.
+
+`asset_file` says **"this file is not a table"**: don't parse it, keep it, copy it
+byte-for-byte to the export, and never rewrite it in place. Asset is not a new
+role — `.md` and `.txt` have always had it, from their extension — it just could
+not be *stated*, so a `.json` asset looked exactly like a `.json` nobody had
+declared yet:
+
+```tsv
+fileName:filepath    typeName:type_spec    superType:super_type    baseType:boolean    loadOrder:number    description:text
+ui/theme.json        asset_file                                    false               200                 UI theme (not data)
+```
+
+**A declaration beats the extension — for every extension.** `asset_file` is not a
+`.json`/`.xml` workaround; it applies to `.tsv` and `.csv` too:
+
+```tsv
+Lookup.tsv           asset_file                                    false               210                 hand-aligned, ships as-is
+```
+
+`Lookup.tsv` is then **not** parsed (no schema, no validators, no `loadEnv.files`
+entry), **not** reformatted in place, and copied to the export unchanged under its
+own name — a `--file=json` run will not re-serialize it into `Lookup.json`. That is
+the only way to ask for a `.tsv` whose exact bytes matter (a hand-formatted lookup
+table, a fixture shipped for another tool) to survive the pipeline untouched.
+
+The rule, stated once: *a file is a table because something **said** it is — a
+`typeName`, a `transcoder`, or (for `.tsv`/`.csv`/`.eav`) the extension in the
+absence of any contrary declaration. Never because of its extension alone.*
+
+Note that an `.md` cannot become a table by declaration alone: there is no
+transcoder for it. And the plain name **`Asset` remains free for your own types** —
+a table of *metadata about* your assets (`Asset.tsv`) is a perfectly good table type
+called `Asset`, and does not collide with the `asset_file` role.
+
+**Marking your own types.** `asset_file` is a member of the built-in `AssetFile`
+tag (ancestor `table`), so — exactly as with `IgnoredFile` — any file type can opt
+in through its `tags` field:
+
+```tsv
+# Types.tsv (extends custom_type_def)
+name:name    parent:type_spec|nil    tags:name|{name}|nil
+IconSheet    {}                      AssetFile
+```
 
 ## Self-Referencing Field Types
 

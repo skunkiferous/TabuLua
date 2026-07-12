@@ -29,6 +29,7 @@ tutorial/
     WorldConfig.transposed.tsv       # Transposed: singleton config record
     LevelScale.tsv                   # COG code generation
     FireItems.tsv                    # COG view: filtered subset of Item.tsv
+    DraftItem.tsv                    # NOT in Files.tsv on purpose: warns, and is skipped
     libs/
       gameLib.lua                    # Code library for expressions
   expansion/                         # Package: tutorial.expansion (mod)
@@ -500,6 +501,42 @@ See [DATA_FORMAT_README §Pre-Processors](../DATA_FORMAT_README.md#pre-processor
 
 ---
 
+#### DraftItem.tsv (An Undeclared File — Warned and Skipped)
+
+The one file in this tutorial that is **deliberately not registered in `Files.tsv`**. It is
+here so you can see what happens when you forget to declare a data file. Every tutorial run
+prints:
+
+```text
+WARN  [manifest_loader]  Data file not listed in Files.tsv, so NOT loaded:
+      tutorial/core/DraftItem.tsv (add a row for it to Files.tsv, or remove the file)
+```
+
+`Files.tsv` is the manifest of what a package's data **is**, so a data file no row declares
+is **skipped entirely**: not parsed, not type-checked, not reformatted in place, and not
+exported. Nothing past `DraftItem.tsv`'s comment block is ever read — its header even
+declares a column type that does not exist (`sharpness:blade_edge`), and no error is
+reported for it, because the file never reaches the parser.
+
+That is the point of the warning. Were the file loaded anyway, it would enter the model with
+whatever its header happened to say and **none** of the wiring `Files.tsv` supplies — no
+registered type, no load order, no joins, validators, or pre-processors — so a stray copy, a
+half-finished draft, or a file you simply forgot to declare would be indistinguishable from
+real data.
+
+"Data" here means any file whose extension, *after* the content pipeline peels its decode
+layers, is `.tsv`, `.csv`, `.json`, `.xml`, or `.eav` — so `Item.tsv.gz` is data too.
+**Assets** (`.md`, `.txt`, `.lua`, `.zip`) are not data: they need no declaration and load as
+they always did. Note also that a row matches a file by its **exact path**: `DraftItem.tsv`
+is not covered by the `Item.tsv` row just because its name ends the same way.
+
+To silence the warning, either delete the file or add a row for it to `Files.tsv`.
+
+*Rationale:* The cost of a typo'd or forgotten declaration should be a loud, one-line
+warning naming the file — not data that silently loads with the wrong (or no) schema.
+
+---
+
 #### libs/gameLib.lua (Code Library)
 
 A Lua module providing functions available in expressions and COG blocks:
@@ -927,6 +964,7 @@ Quick lookup: which file demonstrates which feature.
 | In-place doc refresh (`--cog-docs`) | SkillTree.md |
 | Strip COG on export (`--strip-cog`) | SkillTree.md |
 | Reversible gzip data file (`.tsv.gz`) | Constant.tsv.gz |
+| Undeclared data file (warned + skipped) | DraftItem.tsv |
 | TSV preamble (comments before header) | FireItems.tsv |
 | Code libraries | gameLib.lua, bossLib.lua, skillDoc.lua |
 | TSV comments | All files (lines starting with `#`) |

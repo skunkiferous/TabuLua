@@ -148,15 +148,16 @@ describe("manifest_loader", function()
       assert.same({}, result.packages)
     end)
 
-    it("should handle directories with no manifest files", function()
-      -- Create a directory with no manifest file
-      local pkg_dir = path_join(temp_dir, "nomanifest")
+    it("should reject an input directory with no Files.tsv", function()
+      -- Every input directory must be a package directory: one with a Files.tsv
+      -- declaring its data files. A directory without one (here, an empty one)
+      -- is a load error rather than a silent no-op — passing it is a mistake
+      -- (a typo'd path, or the parent of the real packages) worth hearing about.
+      local pkg_dir = path_join(temp_dir, "nofilestsv")
       assert(lfs.mkdir(pkg_dir))
 
-      local result = manifest_loader.processFiles({pkg_dir}, badVal)
-      -- Returns an empty result since no packages were found
-      assert.is_not_nil(result)
-      assert.same({}, result.package_order)
+      -- The load aborts: processFiles returns nil, which every caller checks.
+      assert.is_nil(manifest_loader.processFiles({pkg_dir}, badVal))
     end)
 
     it("should process a simple package with one data file", function()
@@ -905,6 +906,12 @@ description:markdown	Package with bad version
 ]]
 
       assert.is_true(file_util.writeFile(path_join(pkg_dir, MANIFEST_FILENAME), BAD_MANIFEST))
+      -- A Files.tsv, so the package-directory check passes and the load reaches
+      -- the bad version — the error this test is actually about.
+      assert.is_true(file_util.writeFile(path_join(pkg_dir, "Files.tsv"),
+        "fileName:filepath\ttypeName:type_spec\tsuperType:super_type\t"
+        .. "baseType:boolean\tloadOrder:number\tdescription:text\n"
+        .. "Files.tsv\tFiles\t\ttrue\t0\tThis file\n"))
 
       -- Reset error count and log messages before the test
       local initial_errors = badVal.errors or 0
