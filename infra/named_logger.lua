@@ -13,7 +13,7 @@ local logging = require("logging")
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 30, 0)
+local VERSION = semver(0, 31, 0)
 
 -- Module name
 local NAME = "named_logger"

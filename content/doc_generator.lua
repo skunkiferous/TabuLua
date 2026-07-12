@@ -5,7 +5,7 @@ local NAME = "doc_generator"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 30, 0)
+local VERSION = semver(0, 31, 0)
 
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly

@@ -12,7 +12,7 @@ local logger = require( "infra.named_logger").getLogger(NAME)
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 30, 0)
+local VERSION = semver(0, 31, 0)
 
 -- Returns the module version
 local function getVersion()

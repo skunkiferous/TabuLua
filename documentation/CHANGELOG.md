@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.31.0] - 2026-07-12
+
+### Added
+
 - **`--list-columns`: find out what you could be declaring but aren't.** An
   **optional** `Files.tsv` column or manifest field is, by construction,
   undiscoverable: nothing warns when one is absent, and nothing can — most
@@ -383,8 +393,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   "contains files but no Manifest or Files.tsv directly" check with one rule and a
   clearer message, and still catches its case: the parent of your packages
   (`tutorial/` instead of `tutorial/core/`) has no `Files.tsv` of its own.
-
-### Removed
 
 ### Fixed
 
