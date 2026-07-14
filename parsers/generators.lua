@@ -107,6 +107,19 @@ end
 -- Perform one update to "types parameters"
 local function doTypeParamsUpdate(type_name)
     local parent_type_name = state.EXTENDS[type_name]
+    -- "Never a table" is inherited: restricting or extending a type cannot turn a
+    -- scalar into a table. Without this, a user-defined type derived from `string`
+    -- (or any scalar) is absent from NEVER_TABLE, and so is refused as a map KEY
+    -- type with the flatly untrue "map key_type can never be a table" -- which made
+    -- every custom type unusable as a map key, while built-ins and enums (which set
+    -- the flag directly) worked.
+    if state.NEVER_TABLE[type_name] == nil then
+        local parentNeverTable = state.NEVER_TABLE[parent_type_name]
+        if parentNeverTable == nil then
+            parentNeverTable = state.NEVER_TABLE[utils.resolve(parent_type_name)]
+        end
+        state.NEVER_TABLE[type_name] = parentNeverTable
+    end
     if state.refs.extendsOrRestrict(type_name, 'string') then
         if state.STR_MIN_LEN[type_name] == nil then
             state.STR_MIN_LEN[type_name] = state.STR_MIN_LEN[parent_type_name]
@@ -246,6 +259,19 @@ function M.get_map_parser(key_type, value_type, key_parser, value_parser)
                 if badVal.errors == before then
                     -- if key or value is nil, then no point if "storing" the pair
                     if parsed_k ~= nil and parsed_v ~= nil then
+                        -- Two DIFFERENT raw keys can parse to the SAME key, once a key
+                        -- type normalizes its text (a shaped key: `["1,2"]` and
+                        -- `["1, 2"]` are the same point). Silently keeping one of them
+                        -- would lose data, and pairs() would decide WHICH one -- so the
+                        -- same file could load differently between runs. Reject it, as
+                        -- the record parser already rejects a duplicate field. Keys
+                        -- that are literally identical never reach here: the cell
+                        -- reader collapses them while building the table.
+                        if parsed_copy[parsed_k] ~= nil then
+                            utils.log(badVal, 'map', value,
+                                "Duplicate key: " .. tostring(parsed_k))
+                            return nil, str
+                        end
                         parsed_copy[parsed_k] = parsed_v
                     end
                     local ref_key = utils.quoteIfNeeded(parsed_k, reformatted_k,
@@ -297,8 +323,21 @@ function M.get_tuple_parser(types, fields_parsers, self_refs)
                 if has_self_refs and self_refs[i] then
                     raw_values[i] = v
                 else
-                    local parsed_v, reformatted_v = M.callParser(fields_parsers[i], badVal,
-                        v, 'parsed')
+                    local fp = fields_parsers[i]
+                    if fp == nil then
+                        -- The cell has more elements than the tuple type has fields.
+                        -- This used to index past the end of fields_parsers and take
+                        -- down the whole load from inside callParser ("parser is
+                        -- nil") -- a crash on bad input, where every other container
+                        -- reports the bad cell and carries on. The record parser
+                        -- already rejects an unknown field; this is the tuple's
+                        -- equivalent.
+                        utils.log(badVal, 'tuple', value, "too many elements: expected "
+                            .. #fields_parsers .. ", got " .. #parsed)
+                        fail = true
+                        break
+                    end
+                    local parsed_v, reformatted_v = M.callParser(fp, badVal, v, 'parsed')
                     if badVal.errors == before then
                         parsed_copy[i] = parsed_v
                         ref_copy[i] = utils.quoteIfNeeded(parsed_v, reformatted_v,

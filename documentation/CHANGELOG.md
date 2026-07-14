@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **Shaped string types: a string whose text is validated — and canonicalized — as a table
+  type.** A new `shape` field on `custom_type_def` (`Coord | string | {integer,integer}`)
+  declares a type whose cells are written `1,2` and whose values stay **strings**. The point
+  is that a shaped type **can be a map key**, which a table never can (see the entry above,
+  and `TODO/tables_as_keys.md`): `{Coord:Item}` is a legal column type and the cell
+  `["1,2"]=Sword` round-trips through every format, because to every reader it is just a
+  string key. Canonicalization is what makes it behave *by value*: the stored value is the
+  shape's own reformatted text, so `1, 2` and `1,2` become the same string — and Lua compares
+  strings by content and interns them, so two spellings of a point **are** the same key. That
+  is the value-semantics `tables_as_keys.md` called impossible for a table key, obtained from
+  Lua's own string interning rather than an interning layer of ours. It is that doc's Option B
+  (canonical-string keys), but confined to a declared type, so the type core, `ltcn`, the JSON
+  layouts, the XML form, the SQL export and the serializers needed **no change at all**.
+  Shapes are validated strictly (an incomplete `Coord` of `1` is rejected, though optional
+  elements may be absent) and any table type may be a shape: tuple, record, array or map.
+  **No type-spec grammar change**: a shape is a `type_spec` in a *cell*, as `parent` already
+  was, never in a column header. See `TODO/string_shaped_types.md`.
+
 ### Changed
 
 - **A table used as a map key is now refused when writing, instead of silently
@@ -58,6 +76,42 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Removed
 
 ### Fixed
+
+- **No user-defined type could be used as a map key.** `NEVER_TABLE` — the registry that
+  answers "can this type ever parse to a table?", and therefore gates what may be a map *key*
+  type — was populated for the built-ins and for enums, but no `restrict*` function ever set
+  it, and `doTypeParamsUpdate` propagated a parent's string bounds to a derived type without
+  propagating this. So a custom type derived from `string` was simply absent from it, and
+  `{Code:integer}` was refused with the flatly untrue *"map key_type can never be a table"* —
+  about a type that is a string. "Never a table" is now **inherited**: restricting or
+  extending a scalar cannot yield a table. Found while building shaped string types, which
+  are useless if they cannot key a map.
+
+- **A tuple cell with too many elements crashed the load.** The tuple parser looped over the
+  elements found in the *cell* and indexed `fields_parsers[i]` without checking it existed, so
+  a `1,2,3` in a `{integer,integer}` column ran off the end and died inside `callParser` with
+  `parser is nil` — a hard crash on bad input, where every other container reports the bad
+  cell and carries on. It is now an ordinary bad value ("too many elements: expected 2, got
+  3"), like the record parser's existing unknown-field rejection. (A tuple or record cell that
+  is *missing* a required element is still silently accepted — a separate, older gap, left
+  alone here; shaped types check their own completeness strictly rather than rely on it.)
+
+- **A `pattern`-only custom string type could not be registered at all.** `restrictString`
+  explicitly permits a regex with no length bounds — its guard rejects only "min, max **and**
+  regex all nil" — but it then asked `rangeToIdentifier(min, max)` for the generated parser
+  name unconditionally, and that function refuses `(nil, nil)` by design, because it names a
+  *number* range. The result was that `{name="Sku", parent="string", pattern="^%a%d+$"}`
+  failed with *"min and max cannot both be nil"*, complaining about numbers the author had
+  never written. The range is now only named when there is one.
+
+- **A map cell whose keys collide after parsing silently kept one of them, at random.** Two
+  *different* raw keys can parse to the *same* key once a key type normalizes its text — an
+  enum matches labels case-insensitively, so `Fire=1,fire=2` is one key twice; and a shaped
+  key makes `["1,2"]` and `["1, 2"]` the same point. The map parser overwrote, so one value
+  was silently lost, and `pairs()` decided **which** — meaning the same file could load
+  differently between runs. It is now a `Duplicate key` error, exactly as the record parser
+  already rejects a duplicate field. Keys that are *literally* identical never reach the
+  parser: the cell reader collapses them while building the table.
 
 - **The error reporter could itself throw while rendering the bad value it was about to
   report.** `badVal` serialized a table value with the plain serializer, which

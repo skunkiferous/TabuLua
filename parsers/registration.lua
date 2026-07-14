@@ -397,11 +397,22 @@ function M.restrictString(badVal, strType, min, max, regex, newName)
         return nil
     end
 
-    -- Generate unique parser name based on constraints
-    local newParserName = rangeToIdentifier(badVal, min, max)
-    if not newParserName then
-        -- Error already logged
-        return nil
+    -- Generate unique parser name based on constraints.
+    -- A regex with no length bounds is legal (the guard above says so), but
+    -- rangeToIdentifier refuses (nil, nil) by design -- it names a NUMBER range. So
+    -- ask it for a name only when there is a range to name; otherwise the regex,
+    -- appended below, is what makes the name unique. Calling it unconditionally made
+    -- a pattern-only type impossible to register, and said so with the baffling
+    -- "min and max cannot both be nil" -- about numbers the author never wrote.
+    local newParserName
+    if min ~= nil or max ~= nil then
+        newParserName = rangeToIdentifier(badVal, min, max)
+        if not newParserName then
+            -- Error already logged
+            return nil
+        end
+    else
+        newParserName = "_R_ANY"  -- any length; the regex alone restricts
     end
     newParserName = "_RS" .. newParserName -- 'RS' for Restricted String
     if regex and #regex > 0 then
@@ -754,6 +765,121 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
     return newParser
 end
 
+-- Builds the completeness check for a shape, once, at registration time.
+--
+-- The container parsers accept a cell that is MISSING a required element or field
+-- (`1` parses happily as a `{integer,integer}`) -- a lax-arity hole that predates
+-- shapes and affects every tuple and record column. We do not relax it here, but a
+-- shaped value is destined to be a KEY, and a partial key is poison: `1` and `1,2`
+-- would be two different keys naming the same point, and the first would canonicalize
+-- to text that no longer describes a Coord at all. So a shape is checked strictly,
+-- whatever its container does. Optional (`|nil`) elements may still be absent.
+--
+-- Returns a function(parsedTable) -> error string or nil, or nil if the shape has no
+-- fixed arity (an array or a map may hold any number of entries).
+local function shapeCompletenessChecker(shapeSpec)
+    local kind = introspection.getTypeKind(shapeSpec)
+    if kind == "tuple" then
+        local types = introspection.tupleFieldTypes(shapeSpec)
+        if not types then
+            return nil
+        end
+        return function(t)
+            for i, ts in ipairs(types) do
+                if t[i] == nil and not introspection.isNullable(ts) then
+                    return "missing element " .. i .. " of " .. #types
+                end
+            end
+            return nil
+        end
+    elseif kind == "record" then
+        local names = introspection.recordFieldNames(shapeSpec)
+        if not names then
+            return nil
+        end
+        local optional = {}
+        for _, n in ipairs(introspection.recordOptionalFieldNames(shapeSpec) or {}) do
+            optional[n] = true
+        end
+        return function(t)
+            for _, n in ipairs(names) do
+                if t[n] == nil and not optional[n] then
+                    return "missing field '" .. n .. "'"
+                end
+            end
+            return nil
+        end
+    end
+    return nil
+end
+
+-- Restricts a STRING type to text that must parse as a given table type (its "shape").
+--
+-- The parsed value stays a STRING -- specifically the shape's own canonical
+-- (reformatted) text -- so a shaped type sorts, exports and, above all, works as a
+-- MAP KEY, which a real table never can (see TODO/tables_as_keys.md).
+--
+-- Canonicalizing is the point, not a detail: Lua compares tables by identity but
+-- strings by value, so once "1, 2" and "1,2" both become the string "1,2" they are
+-- the SAME key. That is the value-semantics a table key cannot have, and we get it
+-- from Lua's own string interning rather than a layer of our own.
+--
+-- Returns the parser function if successful, nil otherwise.
+function M.restrictWithShape(badVal, parentName, newParserName, shapeSpec)
+    if not introspection.typeSameOrExtends(parentName, "string") then
+        utils.log(badVal, 'type', parentName,
+            'shape constraint requires a type that extends string')
+        return nil
+    end
+    if introspection.unionTypes(parentName) then
+        utils.log(badVal, 'type', parentName,
+            'shape constraint cannot be applied to union types')
+        return nil
+    end
+    -- A scalar shape would validate nothing a plain string does not already allow,
+    -- so it is a typo, not a no-op.
+    if introspection.isNeverTable(shapeSpec) then
+        utils.log(badVal, 'type', shapeSpec,
+            'shape must be a table type (array, map, tuple or record)')
+        return nil
+    end
+    local shapeParser = parseType(badVal, shapeSpec)
+    if not shapeParser then
+        -- parseType already reported the unusable spec
+        return nil
+    end
+    local isComplete = shapeCompletenessChecker(shapeSpec)
+
+    return M.extendParser(badVal, parentName, newParserName,
+        function(badVal2, parsed, reformatted, _context)
+            -- Trial-parse the TEXT against the shape, silently. A failed trial must
+            -- not pollute the real error count, and the shape parser's own
+            -- complaints ("Bad integer ...") are noise next to one clear "does not
+            -- match shape". Same idiom as the union parser (get_union_parser).
+            local savedErrors = nullBadVal.errors
+            nullBadVal.source_name = badVal2.source_name
+            nullBadVal.line_no = badVal2.line_no
+            local shaped, canonical = generators.callParser(shapeParser, nullBadVal,
+                parsed, 'tsv')
+            local failed = shaped == nil or nullBadVal.errors ~= savedErrors
+            nullBadVal.errors = savedErrors
+            if failed then
+                utils.log(badVal2, newParserName, parsed,
+                    'does not match shape ' .. shapeSpec)
+                return nil, reformatted
+            end
+            -- Strictly complete, even where the container itself is lax
+            local incomplete = isComplete and isComplete(shaped)
+            if incomplete then
+                utils.log(badVal2, newParserName, parsed,
+                    'does not match shape ' .. shapeSpec .. ': ' .. incomplete)
+                return nil, reformatted
+            end
+            -- The shape's canonical text IS the value -- see the note above.
+            return canonical, canonical
+        end)
+end
+
 -- Extracts the ancestor type name from a parent spec.
 -- Handles both "{extends,X}" / "{extends:X}" forms and plain type names.
 local function extractTagAncestor(parent)
@@ -954,6 +1080,8 @@ end
 --   minLen: integer|nil - minimum string length (for string types)
 --   maxLen: integer|nil - maximum string length (for string types)
 --   pattern: string|nil - regex pattern (for string types)
+--   shape: type_spec|nil - table type the value's TEXT must parse as (for string types);
+--                          the value stays a string, canonicalized to the shape's own form
 --   tags: name|{name}|nil - type tag(s) to add this type to as a member
 --   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
 --   values: {string}|nil - allowed values (for enum types)
@@ -981,6 +1109,7 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             local hasEnumConstraints = spec.values ~= nil
             local hasExpressionConstraint = spec.validate ~= nil
             local hasTagMembers = spec.members ~= nil
+            local hasShapeConstraint = spec.shape ~= nil
 
             -- Count how many constraint types are specified
             local constraintCount = 0
@@ -989,6 +1118,7 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
             if hasEnumConstraints then constraintCount = constraintCount + 1 end
             if hasExpressionConstraint then constraintCount = constraintCount + 1 end
             if hasTagMembers then constraintCount = constraintCount + 1 end
+            if hasShapeConstraint then constraintCount = constraintCount + 1 end
 
             local registered = false
             if constraintCount == 0 then
@@ -996,7 +1126,10 @@ function M.registerTypesFromSpec(badVal, typeSpecs)
                 registered = M.registerAlias(badVal, name, parent)
             elseif constraintCount > 1 then
                 utils.log(badVal, 'spec', name,
-                    'cannot mix constraint types (numeric, string, enum, expression, members) in the same type definition')
+                    'cannot mix constraint types (numeric, string, enum, expression, shape, members) in the same type definition')
+            elseif hasShapeConstraint then
+                -- String whose TEXT must parse as a table type, and is canonicalized
+                registered = M.restrictWithShape(badVal, parent, name, spec.shape) ~= nil
             elseif hasTagMembers then
                 -- Type tag with explicit member list
                 registered = registerTypeTag(badVal, name, parent, spec.members)

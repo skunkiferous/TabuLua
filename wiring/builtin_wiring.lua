@@ -104,7 +104,7 @@ end
 -- The fields of custom_type_def extracted from each row for type registration.
 local CUSTOM_TYPE_DEF_FIELDS = {
     'name', 'parent', 'min', 'max', 'minLen', 'maxLen',
-    'members', 'pattern', 'tags', 'validate', 'values'
+    'members', 'pattern', 'shape', 'tags', 'validate', 'values'
 }
 
 

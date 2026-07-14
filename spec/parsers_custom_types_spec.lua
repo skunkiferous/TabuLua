@@ -952,4 +952,55 @@ describe("parsers - registerTypesFromSpec", function()
     end)
   end)
 
+  describe("pattern without a length range", function()
+    -- restrictString's own guard allows a regex with no minLen/maxLen, but it then
+    -- asked rangeToIdentifier -- which names a NUMBER range and refuses (nil, nil) --
+    -- for the parser name, so a pattern-only type could not be registered at all, and
+    -- said so with "min and max cannot both be nil", about numbers nobody wrote.
+    it("should register a pattern-only string type", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctSku", parent = "string", pattern = "^%a%d+$" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs),
+        table.concat(log_messages, " | "))
+      assert.equals(0, badVal.errors, table.concat(log_messages, " | "))
+
+      local parser = parsers.parseType(badVal, "ctSku")
+      assert.is_not_nil(parser)
+      assert.equals("a1", parser(badVal, "a1"))
+      assert.is_nil(parser(badVal, "nope"))
+      assert.equals(1, badVal.errors)
+    end)
+  end)
+
+  describe("map key eligibility", function()
+    -- "Never a table" is inherited: restricting a scalar cannot yield a table. Without
+    -- that, a user-defined type was absent from NEVER_TABLE and so was refused as a map
+    -- KEY type with the flatly untrue "map key_type can never be a table" -- which made
+    -- every custom type unusable as a map key, while built-ins and enums worked.
+    it("should allow a custom string type as a map key type", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctKeyCode", parent = "string", maxLen = 8 }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs),
+        table.concat(log_messages, " | "))
+      assert.is_true(introspection.isNeverTable("ctKeyCode"))
+
+      local mapParser = parsers.parseType(badVal, "{ctKeyCode:integer}")
+      assert.is_not_nil(mapParser, table.concat(log_messages, " | "))
+      assert.same({ab = 1, cd = 2}, mapParser(badVal, "ab=1,cd=2"))
+      assert.equals(0, badVal.errors, table.concat(log_messages, " | "))
+    end)
+
+    it("should allow a custom number type as a map key type", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local specs = {{ name = "ctEven", parent = "integer", validate = "value % 2 == 0" }}
+      assert.is_true(parsers.registerTypesFromSpec(badVal, specs))
+      assert.is_true(introspection.isNeverTable("ctEven"))
+      assert.is_not_nil(parsers.parseType(badVal, "{ctEven:string}"))
+      assert.equals(0, badVal.errors, table.concat(log_messages, " | "))
+    end)
+  end)
+
 end)

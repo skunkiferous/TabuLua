@@ -796,6 +796,10 @@ table keys by *identity*, not content — so a key rebuilt on load could never m
 one that was written. Previously such a value was written out anyway, producing a file
 the engine could not re-parse. See `TODO/tables_as_keys.md`.
 
+**What to do instead:** if you need to key a map by a composite value, declare a
+[shaped string type](#shaped-string-types) — a string whose text is validated (and
+canonicalized) as a table type. `{Coord:Item}` then works, and behaves by value.
+
 ### Quoting Rules for Container Values
 
 - **Single values** in arrays can be unquoted: `Fire` is valid for type `{Element}`.
@@ -1712,21 +1716,59 @@ Each custom type is defined as a record with the following fields:
 | `maxLen` | `integer\|nil` | Maximum string length (for string types) |
 | `members` | `{name}\|nil` | Type tag members (see [Type Tags](#type-tags-named-type-groups)) |
 | `pattern` | `string\|nil` | Lua pattern that strings must match (for string types) |
+| `shape` | `type_spec\|nil` | Table type the string's **text** must parse as (see below) |
 | `tags` | `{name}\|nil` | Type tag(s) to add this type to as a member (see [Tag Assignment](#tag-assignment)) |
 | `validate` | `string\|nil` | Expression-based validator (see below) |
 | `values` | `{string}\|nil` | Allowed values (for enum types) |
 
 #### Constraint Types
 
-Custom types support five categories of constraints, which are **mutually exclusive** (cannot be mixed):
+Custom types support six categories of constraints, which are **mutually exclusive** (cannot be mixed):
 
 1. **Numeric constraints** (`min`, `max`): For types extending `number` or `integer`
 2. **String constraints** (`minLen`, `maxLen`, `pattern`): For types extending `string`
 3. **Enum constraints** (`values`): For types extending an enum type
 4. **Expression constraints** (`validate`): For any parent type, using a Lua expression
-5. **Type tag constraints** (`members`): For grouping registered types under a named tag (see [Type Tags](#type-tags-named-type-groups))
+5. **Shape constraints** (`shape`): For types extending `string` (see below)
+6. **Type tag constraints** (`members`): For grouping registered types under a named tag (see [Type Tags](#type-tags-named-type-groups))
 
 If no constraints are specified, the custom type becomes a simple alias to the parent type.
+
+To apply two constraints to one type, declare a second type whose `parent` is the first.
+
+#### Shaped String Types
+
+A **shaped** type is a string whose *text* must parse as a given table type:
+
+<!-- markdownlint-disable MD010 -->
+```text
+name:name	parent:type_spec|nil	shape:type_spec|nil
+Coord	string	{integer,integer}
+Rect	string	{x:integer,y:integer,w:integer,h:integer}
+```
+<!-- markdownlint-enable MD010 -->
+
+A `Coord` cell is written `1,2` — the ordinary container cell form, without braces. The
+value stays a **string**; `1,2` is not turned into a table. What the shape buys you is:
+
+- **It can be a map key.** `{Coord:Item}` is a legal column type, and the cell
+  `["1,2"]=Sword` round-trips through every format. A table can never be a key (see
+  [Tables Are Not Valid Map Keys](#tables-are-not-valid-map-keys)); this is how you key
+  a map by a composite value.
+- **Values are canonicalized.** The stored value is the shape's own reformatted text,
+  so `1,2`, `1, 2` and any other spacing all become the string `1,2`. That is what makes a
+  shaped key behave *by value*: Lua compares strings by content, so two spellings of
+  the same point are the same key. (Two of them in one map cell are therefore a
+  **duplicate key**, and rejected as such.)
+- **The text is validated.** A cell that does not parse as the shape is a bad value, and
+  so is one that is *incomplete* — a `Coord` of `1`, or a `Rect` missing `y`. Optional
+  (`|nil`) elements and fields may be absent. An array or map shape has no fixed size.
+
+The shape may be any table type: tuple, record, array or map. It is a `type_spec` in a
+*cell*, not in a column header, so it never appears in the header grammar.
+
+Ordering is the string comparator's: shaped values sort **lexicographically**, so
+`"10,2"` sorts before `"9,1"`. It is deterministic, but it is not numeric order.
 
 #### Expression-Based Validators
 
@@ -1837,7 +1879,7 @@ nonEmptyStr  string                                                       predic
 
 After this file is loaded, `positiveInt`, `percentage`, and `nonEmptyStr` are registered types and can be used as column types in all subsequently loaded files.
 
-Only the standard `custom_type_def` fields (`name`, `parent`, `min`, `max`, `minLen`, `maxLen`, `members`, `pattern`, `tags`, `validate`, `values`) feed into type registration. Extra columns in a sub-type file (e.g., a `gameCategory:string` annotation column) are parsed and stored but ignored during registration.
+Only the standard `custom_type_def` fields (`name`, `parent`, `min`, `max`, `minLen`, `maxLen`, `members`, `pattern`, `shape`, `tags`, `validate`, `values`) feed into type registration. Extra columns in a sub-type file (e.g., a `gameCategory:string` annotation column) are parsed and stored but ignored during registration.
 
 **Load ordering:** A custom type definition file must have a lower `loadOrder` than any file that uses the types it defines. The recommended convention is `loadOrder=1` (or another low value). Defining a type after it is referenced produces an "unknown type" parse error. A custom type definition file may itself reference types from an earlier custom type definition file (by `loadOrder`), enabling cascaded type hierarchies.
 

@@ -784,11 +784,13 @@ function M.registerDerivedParsers()
     --   name: name - the name of the custom type
     --   parent: type_spec|nil - the parent type to extend/restrict (required ancestor for tags)
     --   pattern: string|nil - regex pattern (for string types)
+    --   shape: type_spec|nil - table type the value's TEXT must parse as (for string types);
+    --                          the value stays a string, canonicalized to the shape's own form
     --   tags: name|{name}|nil - type tag(s) to add this type to as a member
     --   validate: string|nil - expression-based validator (mutually exclusive with other constraints)
     --   values: {string}|nil - allowed values (for enum types)
     registration.registerAlias(ownBadVal, 'custom_type_def',
-        '{max:number|nil,maxLen:integer|nil,members:{name}|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,tags:{name}|nil,validate:string|nil,values:{string}|nil}')
+        '{max:number|nil,maxLen:integer|nil,members:{name}|nil,min:number|nil,minLen:integer|nil,name:name,parent:type_spec|nil,pattern:string|nil,shape:type_spec|nil,tags:{name}|nil,validate:string|nil,values:{string}|nil}')
 
     -- ============================================================
     -- Validator Types for Row, File, and Package Validators

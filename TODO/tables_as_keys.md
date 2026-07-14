@@ -200,6 +200,15 @@ limitation in `DATA_FORMAT_README.md` alongside the existing JSON-layout notes.
 
 ## Related
 
+- [string_shaped_types.md](string_shaped_types.md) — **Option B, done in the one place
+  it is cheap.** A `shape` field on `custom_type_def` declares a *string* whose text is
+  validated and canonicalized as a table type. That is this doc's canonical-string key
+  encoding, but confined to a declared type instead of retrofitted onto every table —
+  so the type core, `ltcn`, the JSON layouts, XML, SQL and the serializers need no
+  change, and it *does* fix natural JSON (a shaped key is just a string object key).
+  It even answers reason 3: Lua compares strings by value and interns them, so two
+  structurally-equal canonical keys **are** the same key, with no interning layer of
+  ours. Option A (this doc) is what makes it the only way to key a map by a composite.
 - [json_complex_values.md](json_complex_values.md) — D4 + Limitations reach the
   same `ltcn`-can't-read-a-table-key conclusion from the JSON-transcoder side.
 - [lua55_compatibility.md](lua55_compatibility.md) — other `ltcn` constraints.

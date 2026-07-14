@@ -109,6 +109,24 @@ describe("parsers - map types", function()
 
       assert.same({}, log_messages)
     end)
+
+    -- Two DIFFERENT raw keys can parse to the SAME key once a key type normalizes its
+    -- text. Keeping one silently would lose data and let pairs() pick which -- so the
+    -- same file could load differently between runs. (Literally identical keys never
+    -- reach the parser: the cell reader collapses them while building the table.)
+    it("should reject two raw keys that parse to the same key", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+
+      -- An enum key type matches labels case-insensitively, so both keys are 'Fire'
+      parsers.registerEnumParser(badVal, {"Fire", "Ice"}, "mapDupElement")
+      local parser = parsers.parseType(badVal, "{mapDupElement:integer}")
+      assert.is.not_nil(parser)
+
+      assert.is_nil(parser(badVal, "Fire=1,fire=2"))
+      assert.equals(1, badVal.errors)
+      assert.matches("Duplicate key: Fire", log_messages[#log_messages], 1, true)
+    end)
   end)
 
   describe("mapKVType", function()

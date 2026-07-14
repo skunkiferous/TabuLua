@@ -330,5 +330,21 @@ describe("parsers - tuple types", function()
       assert.is_nil(parser)
       assert.matches("Cannot parse type specification", log_messages[#log_messages])
     end)
+
+    -- A cell with more elements than the tuple type has fields used to index past the
+    -- end of fields_parsers and CRASH the load from inside callParser ("parser is
+    -- nil"), where every other container reports the bad cell and carries on.
+    it("should report, not crash on, a cell with too many elements", function()
+      local parser = parsers.parseType(badVal, "{integer,integer}")
+      assert.is_not_nil(parser)
+      clearSeq(log_messages)
+      local before = badVal.errors
+
+      local ok, parsed = pcall(parser, badVal, "1,2,3")
+      assert.is_true(ok, "parsing a too-long tuple cell must not raise")
+      assert.is_nil(parsed)
+      assert.equals(before + 1, badVal.errors)
+      assert.matches("too many elements", log_messages[#log_messages], 1, true)
+    end)
   end)
 end)
