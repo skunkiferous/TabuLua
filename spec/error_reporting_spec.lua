@@ -24,6 +24,21 @@ describe("error_reporting", function()
       assert.are.equal(1, #log_messages)
       assert.are.equal("test on line 1: 'bad value'", log_messages[1])
     end)
+
+    -- The serializer refuses a table used as a map key (TODO/tables_as_keys.md), but
+    -- reporting one is exactly how the user learns their value is bad, so badVal must
+    -- report it rather than throw the serializer's error in the reporter's own face.
+    it("should report, not throw on, a value the serializer refuses", function()
+      local log_messages = {}
+      local log = function(self, msg) table.insert(log_messages, msg) end
+      local badVal = error_reporting.badValGen(log)
+      badVal.source_name = "test"
+      badVal.line_no = 1
+      badVal({[{1, 2}] = "v"})
+      assert.are.equal(1, #log_messages)
+      assert.matches("unserializable table", log_messages[1], 1, true)
+      assert.matches("table used as a map key", log_messages[1], 1, true)
+    end)
   end)
 
   describe("nullLogger", function()

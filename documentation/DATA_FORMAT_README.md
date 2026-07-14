@@ -778,6 +778,24 @@ For optional types (unions ending in `|nil`), an **empty cell** (no content betw
 - **Tuple** — Comma-separated values (positional): `-20.0,50.0,10.0`
 - **Record** — Comma-separated field=value pairs: `attack=80,defense=40,speed=30`
 
+### Tables Are Not Valid Map Keys
+
+A **map key is always a scalar** — a string, number or boolean. A *table* used as a
+key is rejected, in two places:
+
+- **As a column type.** `{ {int,int} : Foo }` is not a valid type; the type parser
+  refuses a table as a map's key type.
+- **As a value**, inside an untyped `table` / `raw` column. Such a value cannot be
+  written from a data file (the cell reader has no syntax for it), but it *can* be
+  built by an `=expr` cell or a pre-processor. Serializing one is now an error —
+  reported like any other bad value, naming the file, row and column.
+
+The reason is that nothing could read the value back: our cell reader allows a table
+as a value but never as a key, a JSON object key is always a string, and Lua compares
+table keys by *identity*, not content — so a key rebuilt on load could never match the
+one that was written. Previously such a value was written out anyway, producing a file
+the engine could not re-parse. See `TODO/tables_as_keys.md`.
+
 ### Quoting Rules for Container Values
 
 - **Single values** in arrays can be unquoted: `Fire` is valid for type `{Element}`.
@@ -1431,7 +1449,9 @@ with `typeName` `{name:identifier,skills:{string},stats:{string:integer}}` loads
   the rest of the file still loads, so every offending value is flagged in one
   pass. (`NaN` / `Infinity` are not valid JSON tokens in the first place.)
 - A map whose **key type is itself a table** is not a valid column type (the type
-  parser rejects it), so it cannot occur here.
+  parser rejects it), so it cannot occur here. A table-*valued* key inside an
+  untyped `table` column is refused by the serializers too — see
+  [Tables Are Not Valid Map Keys](#tables-are-not-valid-map-keys).
 
 **Typed variants (`json:objects:typed` / `json:rows:typed` / `json:columns:typed`).**
 The same three row layouts, but cell values use TabuLua's **typed** JSON encoding —

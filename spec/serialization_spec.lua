@@ -931,11 +931,12 @@ describe("serialization", function()
       assert.is_not_nil(result:match('"INF"'))
     end)
 
-    it("should stringify table keys", function()
-      local key = {a = 1}
-      local result = serialization.serializeTableNaturalJSON({[key] = "value"})
-      -- Table key becomes stringified JSON
-      assert.is_not_nil(result:match('%{"'))
+    it("should refuse table keys", function()
+      -- Was: stringified the key, producing an object key nothing could rebuild
+      -- the table from. See "table keys are refused" below and TODO/tables_as_keys.md.
+      assert.has_error(function()
+        serialization.serializeTableNaturalJSON({[{a = 1}] = "value"})
+      end)
     end)
 
     it("should produce valid JSON without trailing commas", function()
@@ -1052,6 +1053,77 @@ describe("serialization", function()
         assert.is_string(str)
         assert.matches("^serialization version %d+%.%d+%.%d+$", str)
       end)
+    end)
+  end)
+
+  -- TODO/tables_as_keys.md, Option A. Every reader in the pipeline refuses a table
+  -- key (ltcn's grammar has no table in the Key rule; JSON object keys are strings),
+  -- so a serializer that writes one emits a file it cannot read back. The four
+  -- serializers now refuse it at write time, symmetrically with the read side.
+  describe("table keys are refused", function()
+    local tableKey = {1, 2}
+
+    it("serializeTable (native Lua cell)", function()
+      assert.has_error(function()
+        serialization.serializeTable({[tableKey] = "v"})
+      end)
+    end)
+
+    it("serializeTableJSON (typed JSON)", function()
+      assert.has_error(function()
+        serialization.serializeTableJSON({[tableKey] = "v"})
+      end)
+    end)
+
+    it("serializeTableNaturalJSON (natural JSON)", function()
+      assert.has_error(function()
+        serialization.serializeTableNaturalJSON({[tableKey] = "v"})
+      end)
+    end)
+
+    it("serializeTableXML", function()
+      assert.has_error(function()
+        serialization.serializeTableXML({[tableKey] = "v"})
+      end)
+    end)
+
+    it("serializeSQL, which encodes a cell through one of them", function()
+      assert.has_error(function()
+        serialization.serializeSQL({[tableKey] = "v"})
+      end)
+    end)
+
+    it("names the key, not the value, as the problem", function()
+      local ok, err = pcall(serialization.serializeTable, {[tableKey] = "v"})
+      assert.is_false(ok)
+      assert.matches("table used as a map key", err, 1, true)
+      assert.matches("tables_as_keys", err, 1, true)
+    end)
+
+    it("still allows a table as a VALUE, which reads back fine", function()
+      assert.are.equal('{k={1,2}}', serialization.serializeTable({k = tableKey}))
+    end)
+
+    it("still allows a nested table INSIDE a table value", function()
+      assert.are.equal('{{1,2}}', serialization.serializeTable({tableKey}))
+    end)
+
+    -- The map parser wraps every non-string key in unquotedStr to carry its
+    -- reformatted text, so `[3]=v` / `[true]=v` reach serializeTable with a table
+    -- (an UNQUOTED_MT wrapper) in the key position. That is raw Lua text, not a
+    -- table value, and must keep working — it is how integer- and boolean-keyed
+    -- maps are written at all.
+    it("still allows an unquotedStr key (the reformatted-text carrier)", function()
+      local t = {[serialization.unquotedStr("3")] = "v"}
+      assert.are.equal('{[3]="v"}', serialization.serializeTable(t))
+    end)
+
+    -- The reporting path must survive what the serializer refuses: it is what
+    -- tells the user which value is wrong.
+    it("degrades, rather than throwing, in serializeInSandbox (diagnostics)", function()
+      local str = serialization.serializeInSandbox({[tableKey] = "v"})
+      assert.is_string(str)
+      assert.matches("table used as a map key", str, 1, true)
     end)
   end)
 end)

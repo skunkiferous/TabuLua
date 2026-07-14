@@ -59,6 +59,36 @@ end
 -- Maximum table depth for serializeTable
 local MAX_TABLE_DEPTH = 10
 
+-- A table in the KEY position is refused by every serializer below, because
+-- nothing in the pipeline can read one back: ltcn's grammar makes a table a legal
+-- value but never a legal key, JSON object keys are always strings, and the typed
+-- JSON / XML forms lower back to native cell text, so they hit ltcn too. On top of
+-- that, Lua compares table keys by identity, so a freshly parsed key could never
+-- match the original anyway. Writing one produces a file we cannot re-parse, so we
+-- fail here (loudly, at write time) instead of emitting it. Mirrors the read-side
+-- contract in util/table_parsing.lua. See TODO/tables_as_keys.md.
+--
+-- An UNQUOTED_MT value is exempt: it is raw Lua *text* in a wrapper, not a table
+-- value (serialize() already treats it as a string). The map parser wraps every
+-- non-string key that way to carry its reformatted text — `[3]`, `[true]` — so
+-- every integer- or boolean-keyed map has such "table" keys in its reference copy.
+-- It can never carry a genuine table key: a table is not a legal map KEY type
+-- (parsers/type_parsing.lua rejects it via NEVER_TABLE), so the wrapped key is
+-- always a scalar's text.
+local function rejectTableKey(k, reason)
+    if type(k) == "table" and getmetatable(k) ~= UNQUOTED_MT then
+        error("table used as a map key: nothing can read that back (" .. reason
+            .. "). See TODO/tables_as_keys.md", 0)
+    end
+end
+
+-- The two reasons, shared by the four serializers below. The typed-JSON and XML
+-- forms can encode a table key, but both lower back to native cell text on import,
+-- so they end up at ltcn all the same.
+local NO_TABLE_KEY_NATIVE = "ltcn, our cell reader, allows a table as a value but never as a key"
+local NO_TABLE_KEY_LOWERED = "it is re-imported through a native Lua cell, and " .. NO_TABLE_KEY_NATIVE
+local NO_TABLE_KEY_JSON = "a JSON object key is always a string, so the table could not be rebuilt"
+
 -- True if k is an integer sequence index in 1..maxLen. Used to tell a table's
 -- "sequence prefix" keys from its "map" keys without relying on pairs() order.
 local function isSeqIndex(k, maxLen)
@@ -177,6 +207,7 @@ local function serializeTable(t, nil_as_empty_str, in_process, depth)
     if sparseSize == nil then
         for k, v in pairs(t) do
             if not isSeqIndex(k, seqLen) then
+                rejectTableKey(k, NO_TABLE_KEY_NATIVE)
                 -- Identifier keys use syntactic sugar (k=v); the rest use [k]=v.
                 if type(k) == "string" and k:match("^[%a_][%w_]*$") then
                     tmp[1] = k
@@ -359,6 +390,7 @@ local function serializeTableJSON(t, nil_as_empty_str, in_process, depth)
     if sparseSize == nil then
         for k, v in pairs(t) do
             if not isSeqIndex(k, seqLen) then
+                rejectTableKey(k, NO_TABLE_KEY_LOWERED)
                 tmp[1] = '['
                 tmp[2] = serializeJSON(k, nil_as_empty_str, in_process, depth)
                 tmp[3] = ','
@@ -427,11 +459,12 @@ end
 
 --- Converts a non-string key to a string for use as a JSON object key.
 --- @param k any The key to stringify
---- @param nil_as_empty_str boolean|nil If true, nil values become empty string
---- @param in_process table|nil Internal: tracks tables being processed
---- @param depth number|nil Internal: current recursion depth
 --- @return string The stringified key
-local function keyToString(k, nil_as_empty_str, in_process, depth)
+--- @error Throws if k is a table (see rejectTableKey)
+local function keyToString(k)
+    -- Stringifying a table key would be irreversible: on read we only ever see a
+    -- string, with nothing left to rebuild the table from.
+    rejectTableKey(k, NO_TABLE_KEY_JSON)
     local t = type(k)
     if t == "string" then
         return k
@@ -453,9 +486,6 @@ local function keyToString(k, nil_as_empty_str, in_process, depth)
         return "null"
     elseif t == "function" then
         return "<FUNCTION>"
-    elseif t == "table" then
-        -- For table keys, we recursively serialize to natural JSON (without outer quotes)
-        return serializeTableNaturalJSONRef(k, nil_as_empty_str, in_process, depth)
     else
         return "<" .. t:upper() .. ">"
     end
@@ -518,7 +548,7 @@ local function serializeTableNaturalJSON(t, nil_as_empty_str, in_process, depth)
         local keyed = {}
         local tmp = {}
         for k, v in pairs(t) do
-            local keyStr = keyToString(k, nil_as_empty_str, in_process, depth)
+            local keyStr = keyToString(k)
             tmp[1] = dkjson.encode(keyStr)
             tmp[2] = ":"
             tmp[3] = serializeNaturalJSON(v, nil_as_empty_str, in_process, depth)
@@ -681,6 +711,7 @@ local function serializeTableXML(t, nil_as_empty_str, in_process, depth)
     if sparseSize == nil then
         for k, v in pairs(t) do
             if not isSeqIndex(k, seqLen) then
+                rejectTableKey(k, NO_TABLE_KEY_LOWERED)
                 tmp[1] = '<key_value>'
                 tmp[2] = serializeXML(k, nil_as_empty_str, in_process, depth)
                 tmp[3] = serializeXML(v, nil_as_empty_str, in_process, depth)

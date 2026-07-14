@@ -56,6 +56,24 @@ function M.serializeTableWithoutCB(t)
     return serializeTable(t):sub(2, -2)
 end
 
+-- Serializes an already-parsed table to its cell text, REPORTING (rather than
+-- raising) the values the serializer legitimately refuses: a table used as a map
+-- key, a recursive table, one nested deeper than MAX_TABLE_DEPTH. None of those can
+-- be read back (see TODO/tables_as_keys.md), so the cell is bad — but a bad cell is
+-- what badVal is for, and a raised error would abort the whole load without naming
+-- the file, row or column the value came from. Such a value can only arrive from an
+-- '=expr' cell, a pre-processor or a transcoder, never from parsed file text.
+-- Returns (value, cell_text) on success and (nil, text) on refusal, like a parser.
+function M.serializeParsedTable(badVal, table_type, value)
+    local ok, str = pcall(M.serializeTableWithoutCB, value)
+    if not ok then
+        -- badVal renders the value with the reason, so it needs no error argument.
+        M.log(badVal, table_type, value)
+        return nil, tostring(value)
+    end
+    return value, str
+end
+
 -- Log a bad value, with its type, and an optional error message.
 function M.log(badVal, badType, value, error)
     assert(type(badVal) == 'table', "wrong badVal: " .. type(badVal))
@@ -73,8 +91,7 @@ function M.table_parser(badVal, table_type, value)
     local parsed, str
     local vt = type(value)
     if vt == 'table' then
-        str = M.serializeTableWithoutCB(value)
-        parsed = value
+        return M.serializeParsedTable(badVal, table_type, value)
     elseif vt == 'string' then
         str = value
         -- Users skip the surrounding {}, as part of the specification

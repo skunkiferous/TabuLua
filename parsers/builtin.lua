@@ -167,7 +167,7 @@ state.PARSERS.table = function (badVal, value, context)
             "context was 'parsed', was expecting a table")
         return nil, tostring(value)
     end
-    return value, utils.serializeTableWithoutCB(value)
+    return utils.serializeParsedTable(badVal, 'table', value)
 end
 state.COMPARATORS.table = function (a, b)
     return state.COMPARATORS.string(serializeTable(a), serializeTable(b))

@@ -1,5 +1,38 @@
 # Tables-as-Keys — why they are unsupported, and what it would take
 
+## Status
+
+**Option A landed (2026-07-14).** The asymmetry below is closed: all four serializers
+now refuse a table key, so what we write, we can read. B and C remain future work,
+behind a concrete use case. What was actually built:
+
+- `rejectTableKey` in [serde/serialization.lua](../serde/serialization.lua), called from the key
+  position of `serializeTable`, `serializeTableJSON`, `serializeTableXML` and (via
+  `keyToString`) `serializeTableNaturalJSON`. `serializeSQL` inherits it, encoding
+  its cells through those.
+- **Reported, not raised.** A hard `error()` would abort the load with a traceback
+  and no idea *which* cell was at fault. Such a value can only arrive from an
+  `=expr` cell, a pre-processor or a transcoder — never from parsed file text
+  (`ltcn` already rejects it) — and every one of those paths holds a `badVal`, so
+  the refusal is funnelled through `utils.serializeParsedTable`
+  ([parsers/utils.lua](../parsers/utils.lua)) and comes out as an ordinary bad-value
+  report naming file, row and column. The four serializers still raise, for any
+  caller that is not a parser.
+- **Two things the plan below did not anticipate:**
+  1. **`UNQUOTED_MT` keys had to stay legal.** `quoteIfNeeded` wraps every
+     *non-string* value in `unquotedStr()` — a table carrying raw Lua text — and the
+     map parser uses it for **keys** too. So every integer- or boolean-keyed map
+     (`[3]=v`, `[true]=v`) reaches `serializeTable` with a "table" in the key
+     position. A naive `type(k) == "table"` check broke four legitimate map
+     round-trips. The wrapper is exempt; it can never carry a genuine table key,
+     because a table is not a legal map *key type* in the first place.
+  2. **`badVal` rendered its bad value with the very serializer being made strict**,
+     unprotected — so the error reporter would have thrown while reporting. It now
+     degrades to `<unserializable table: reason>`. That was a *pre-existing* latent
+     bug: a recursive or too-deep table would already have crashed the reporter.
+- Documented in `DATA_FORMAT_README.md` ("Tables Are Not Valid Map Keys"), CHANGELOG
+  under Changed + Fixed. Full gate green (3200 tests, 38/38 bad-input fixtures).
+
 ## Summary
 
 TabuLua does **not** support a *table* used as a **map key** — neither as a
@@ -17,7 +50,7 @@ it back**. So a naive enable would produce output that fails its own round-trip.
 ### 1. `ltcn` — our native Lua-literal reader — cannot parse a table key
 
 We read native cell text (the brace-form Lua-literal cells) with the `ltcn` safe
-parser, not `load`/`eval` ([table_parsing.lua:82](../table_parsing.lua#L82)). Its
+parser, not `load`/`eval` ([table_parsing.lua:82](../util/table_parsing.lua#L82)). Its
 PEG grammar makes a table a legal **value** but **never a legal key**
 ([ltcn.lua], the installed rock — `C:\lua\systree\share\lua\5.4\ltcn.lua`):
 
@@ -30,7 +63,7 @@ IndexedField = Cg(symb"[" * V"Key" * symb"]" * symb"=" * V"Value");
 So `[{1,2}]=x` cannot re-parse: `[` expects a `Key`, and `Key` excludes tables.
 This is already called out in the parser's own contract:
 
-> [table_parsing.lua:72](../table_parsing.lua#L72) — *"Does not support: tables
+> [table_parsing.lua:72](../util/table_parsing.lua#L72) — *"Does not support: tables
 > as keys, nil values (use '' instead)."*
 
 This is **not** an `ltcn` oversight we could fix by swapping in a fork: upstream
@@ -52,7 +85,7 @@ add the capability on **our** parser path, not via `ltcn`.
 **The asymmetry.** The *serializer* has no such guard. `serializeTable` emits any
 non-identifier key via `[ serialize(k) ]= …`, and `serialize` recurses into a
 table key, so it will happily produce `[{1,2}]=v`
-([serialization.lua:186-191](../serialization.lua#L186-L191)). That string is then
+([serialization.lua:186-191](../serde/serialization.lua#L186-L191)). That string is then
 unreadable by `ltcn` — write succeeds, read fails. A table key is therefore not
 "rejected early"; it silently breaks the round-trip.
 
@@ -61,8 +94,8 @@ unreadable by `ltcn` — write succeeds, read fails. A table key is therefore no
 JSON object keys are **always strings**. `serializeTableNaturalJSON` stringifies a
 non-string key (a table key is recursively serialized to a JSON-ish string and
 then `dkjson.encode`d as the object key —
-[serialization.lua:456-458](../serialization.lua#L456-L458),
-[serialization.lua:520-522](../serialization.lua#L520-L522)). On read,
+[serialization.lua:456-458](../serde/serialization.lua#L456-L458),
+[serialization.lua:520-522](../serde/serialization.lua#L520-L522)). On read,
 `deserializeNaturalJSON` only ever sees a *string* key; there is no information to
 rebuild the original table, and even a convention couldn't reconstruct one
 losslessly. Natural JSON is the format we expect to be **commonly used as an
@@ -101,13 +134,13 @@ custom equality layer.
 Ordered roughly by cost. None is free; (3) is the only one that yields *usable*
 semantics.
 
-### Option A — Fail loud instead of failing silently (cheapest; recommended now)
+### Option A — Fail loud instead of failing silently (cheapest; ✅ **done**, see Status)
 
 Don't *support* table keys, but stop the asymmetric trap: make the serializer
 **refuse** a table key the same way `ltcn` refuses to read one, so the failure is
 immediate and symmetric.
 
-- **Where:** `serializeTable` ([serialization.lua:186-191](../serialization.lua#L186-L191))
+- **Where:** `serializeTable` ([serialization.lua:186-191](../serde/serialization.lua#L186-L191))
   and its JSON/XML siblings (`serializeTableNaturalJSON`, `serializeTableJSON`,
   `serializeTableXML`) — detect `type(k) == "table"` in the key position and
   `error(...)` (or route through the active `badVal`) with a message pointing here.
@@ -115,7 +148,7 @@ immediate and symmetric.
   actually un-round-trippable) becomes a hard error — that's the point, but it is
   technically a behaviour change; gate behind a version bump.
 - This is the natural complement to the existing read-side contract at
-  [table_parsing.lua:72](../table_parsing.lua#L72).
+  [table_parsing.lua:72](../util/table_parsing.lua#L72).
 
 ### Option B — Canonical-string key encoding (round-trippable, but lossy semantics)
 
@@ -125,13 +158,13 @@ paths only.
 
 - **Where:**
   - native write: key branch of `serializeTable`
-    ([serialization.lua:181-191](../serialization.lua#L181-L191));
+    ([serialization.lua:181-191](../serde/serialization.lua#L181-L191));
   - native read: extend the cell grammar — but **not by editing `ltcn`** (vendored
     rock). Either pre/post-process the cell text in
     [table_parsing.lua](../table_parsing.lua) or move table-typed cells onto our
     own `parsers/lpeg_parser.lua` path, which we control;
   - typed JSON: `processTypedValue` / reconstruction in
-    [deserialization.lua](../deserialization.lua);
+    [deserialization.lua](../serde/deserialization.lua);
   - type system: relax `NEVER_TABLE` for map keys in
     [parsers/type_parsing.lua:464](../parsers/type_parsing.lua#L464) and
     [parsers/builtin.lua](../parsers/builtin.lua) so `{ {int,int} : Foo }` can register;
@@ -162,6 +195,8 @@ value lookup.
 Adopt **Option A now** (turn the silent round-trip break into a symmetric, loud
 error) and keep B/C as future work behind a concrete use case. Document the
 limitation in `DATA_FORMAT_README.md` alongside the existing JSON-layout notes.
+
+*Done — see [Status](#status). B and C stay parked; nothing has asked for them.*
 
 ## Related
 

@@ -23,6 +23,18 @@ local function getVersion()
     return tostring(VERSION)
 end
 
+-- Renders a table for a log message. The serializer legitimately refuses some
+-- tables (a table used as a map key, a recursive table, one nested too deep), but
+-- the reporting path must never itself throw: it is what tells the user what is
+-- wrong with the value. So we degrade to the reason instead of propagating it.
+local function renderTable(t)
+    local ok, str = pcall(serialization.serializeTable, t, false, {}, 0)
+    if ok then
+        return str
+    end
+    return "<unserializable table: " .. tostring(str) .. ">"
+end
+
 -- Meta-table for badVal callable table. We want some complex logic, to log when values are bad
 -- But we don't want to repeat logic everywhere, where we check values. We use a table,
 -- so we can set directly, the parameters that are required for logging. And we make it callable
@@ -46,7 +58,7 @@ local badValMT = {
         if ct ~= nil and ct ~= "" then
             if type(ct) == "table" then
                 -- If the expected type of a value is a table, we must turn it into a string.
-                ct = serialization.serializeTable(ct, false, {}, 0)
+                ct = renderTable(ct)
             end
             prefix = "Bad " .. ct .. " "
         end
@@ -78,7 +90,7 @@ local badValMT = {
         -- We must now convert the value to a string
         local tv = type(value)
         if tv == "table" then
-            value = serialization.serializeTable(value, false, {}, 0)
+            value = renderTable(value)
         elseif tv == "function" then
             value = "function"
         else
@@ -89,7 +101,7 @@ local badValMT = {
         if #error > 0 then
             -- If error is a table, we must also turn it into a string
             if type(error) == "table" then
-                error = serialization.serializeTable(error, false, {}, 0)
+                error = renderTable(error)
             end
             -- The "custom error" message, comes at the end
             error = " (" .. error .. ")"

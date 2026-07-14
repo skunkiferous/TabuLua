@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **A table used as a map key is now refused when writing, instead of silently
+  breaking the round-trip.** The serializers would happily write `[{1,2}]=v` into a
+  cell, but **nothing in the pipeline can read that back**: `ltcn`, our cell reader,
+  allows a table as a *value* but never as a *key*; a JSON object key is always a
+  string; and the typed-JSON and XML forms are re-imported through a native cell, so
+  they end up at `ltcn` all the same. (Even if they could be read, Lua compares table
+  keys by identity, not content, so a key rebuilt on load could never match the one
+  written.) So the engine could emit a file it could not re-parse, with no warning.
+  All four serializers (`serializeTable`, `serializeTableJSON`,
+  `serializeTableNaturalJSON`, `serializeTableXML`, and therefore the SQL export,
+  which encodes cells through them) now reject a table key, mirroring the read side.
+  Such a value can only come from an `=expr` cell, a pre-processor or a transcoder —
+  never from parsed file text — so it is **reported as a bad value**, naming the file,
+  row and column, rather than raised as an error that would abort the load. A table
+  as a *value* is unaffected. Note this is technically a behaviour change: a write
+  that "worked" before now fails, which is the point. See `TODO/tables_as_keys.md`.
+
 - **Lua 5.5 now passes the full suite, at parity with 5.4.** It previously failed 22
   tests outright. The blocker was the `ltcn` rock (our Lua-literal cell parser): Lua 5.5
   makes a generic `for ... in` **control variable read-only** (implicitly `<const>`), and
@@ -41,6 +58,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Removed
 
 ### Fixed
+
+- **The error reporter could itself throw while rendering the bad value it was about to
+  report.** `badVal` serialized a table value with the plain serializer, which
+  legitimately refuses some tables — a recursive one, one nested deeper than
+  `MAX_TABLE_DEPTH`, and now one using a table as a map key. Reporting such a value is
+  exactly how the user learns it is bad, so the reporting path must never fail on it:
+  it now degrades to `<unserializable table: reason>` instead of raising the
+  serializer's error in the reporter's own face.
 
 - **A graph file with a bad reference reported "Quota exceeded" instead of the actual
   error.** When `graphRefsExist` rejects a row it appends a `didYouMean` suggestion, and
