@@ -1,13 +1,17 @@
 Fix Lua 5.5 incompatibility in ltcn's tokenset_to_list()
 
 Lua 5.5 makes the control variable of a generic `for ... in` loop read-only
-(implicitly <const>), so ltcn's `tokenset_to_list` dies with
+(implicitly <const>), and ltcn's `tokenset_to_list` assigns to it:
 
-    attempt to assign to const variable 's'
+    ./ltcn.lua:61: attempt to assign to const variable 's'
 
-the moment it builds the expected-token list for an error message. Every
-TabuLua table-parsing test hits this: 22 failures on Lua 5.5.0, while Lua 5.3
-and 5.4 are unaffected.
+Assigning to a const is a *compile-time* error, so this is not confined to the
+error-reporting path that tokenset_to_list serves: the chunk never compiles and
+`require("ltcn")` itself fails. ltcn is entirely unusable on Lua 5.5. Every
+TabuLua table-parsing test hits this: 22 failures on Lua 5.5.0, while Lua 5.1
+through 5.4 are unaffected.
+
+ltcn's own test suite reproduces it: stock `make check` dies on its first test.
 
 The fix copies the loop variable into a fresh local before rewriting it. It is
 behaviour-preserving (verified on Lua 5.4: identical sorted token list for the

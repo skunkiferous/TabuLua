@@ -9,7 +9,7 @@ bugs; all four are fixed and verified in the working tree, NOT yet committed.**
 
 | # | Problem | Fix | Where |
 | --- | --- | --- | --- |
-| 1 | **ltcn**: Lua 5.5 makes a `for...in` control variable `<const>`; `tokenset_to_list` reassigns it. 22 tests dead. | Patch the installed rock in the 5.5 image (see below). | [Docker/ltcn-lua55.patch](../Docker/ltcn-lua55.patch), [Docker/Dockerfile.lua55](../Docker/Dockerfile.lua55) |
+| 1 | **ltcn**: Lua 5.5 makes a `for...in` control variable `<const>`; `tokenset_to_list` reassigns it. Assigning to a const is a *compile-time* error, so `require("ltcn")` itself fails — the rock is entirely unloadable on 5.5, not merely broken on its error path. 22 tests dead. | Patch the installed rock in the 5.5 image (see below). | [Docker/ltcn-lua55.patch](../Docker/ltcn-lua55.patch), [Docker/Dockerfile.lua55](../Docker/Dockerfile.lua55) |
 | 2 | **semver**: the rock defines `__lt` but **not** `__le`. Lua ≤5.4 emulated `a <= b` as `not (b < a)` (`LUA_COMPAT_LT_LE`); 5.5 removed that emulation, so `>=`/`<=` on a version object raised *"attempt to compare two table values"* — 11 errors, incl. all of `package_preprocessor_spec`. | Express both comparisons through `<` alone. Equivalent for a total order, works on every Lua. | [loader/manifest_info.lua:200-204](../loader/manifest_info.lua#L200-L204) |
 | 3 | **`#` over a table with a hole** (ours, not upstream): `rawTSVToString` explicitly supports a nil cell, but read the row width with `#line`. That is a *border* — undefined for a holed table. 5.4 answered 3 for `{nil,false,3.14}`, 5.5 answers 0, and the row **serialized as empty**. A latent data-corruption bug that 5.5 merely exposed. | Take the largest integer key instead of `#`. | [tsv/raw_tsv.lua:68](../tsv/raw_tsv.lua#L68) |
 | 4 | **libdeflate required by the wrong name** (ours; **nothing to do with 5.5**): the rock installs `LibDeflate.lua`, the code did `require("libdeflate")`. Windows' case-insensitive FS resolves it; **Linux/macOS do not** — so gzip *and* zip support reported *"libdeflate rock is not installed"* on every case-sensitive host **even when installed**, and silently degraded. This is a real user-facing bug on the two platforms we don't develop on. | Shared `compression.requireLibDeflate()` tries `LibDeflate` first, lowercase as fallback; zip provider reuses it; 4 specs corrected. | [content/compression.lua](../content/compression.lua#L175-L189), [content/archive_formats.lua:411](../content/archive_formats.lua#L411) |
@@ -47,8 +47,10 @@ is why the container baselines had ~48 pre-existing failures on *both* 5.4 and 5
   Docker images, interpreter probe; Fixed: libdeflate case-sensitivity, the holed-row
   serialization, the semver comparison).
 - ⬜ **Not committed** — the user commits.
-- ⬜ Optional: file the ltcn issue upstream (nobody has, in 20 months) and a 5.5 rockspec
-  request for libdeflate. Neither blocks us.
+- ✅ Optional: file the ltcn issue upstream (nobody has, in 20 months) and a 5.5 rockspec
+  request for libdeflate. Neither blocks us. The ltcn issue is **written and ready to paste**:
+  [TODO/ltcn_upstream_issue.md](ltcn_upstream_issue.md) — it reproduces the failure with ltcn's
+  *own* `make check` and shows the patch passing on Lua 5.1–5.5.
 
 ### The ltcn route we took
 
