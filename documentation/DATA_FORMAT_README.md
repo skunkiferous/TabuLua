@@ -2146,9 +2146,15 @@ The following helper functions are available in file and package validator expre
 | Validator Type | Operation Quota |
 |----------------|-----------------|
 | Row validators | 1,000 operations per row |
-| File validators | 10,000 operations per file |
+| File validators | 10,000 operations per file, plus 10,000 per data row |
 | Package validators | 100,000 operations per package |
-| Pre-processors | 50,000 operations per file |
+| Pre-processors | 50,000 operations per file, plus 10,000 per data row |
+
+The per-row terms let a validator or processor that legitimately touches every
+row (the auto-wired graph validators, for instance) scale with file size. They
+are sized for the *failure* path: reporting an unknown reference appends a
+"did you mean ...?" suggestion, which edit-distances the offending name against
+every name in the file and costs far more than the scan that found the error.
 
 Row validators run per-row, so complex validators will slow parsing. File and package validators run once, allowing more intensive checks.
 

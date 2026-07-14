@@ -42,6 +42,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- **A graph file with a bad reference reported "Quota exceeded" instead of the actual
+  error.** When `graphRefsExist` rejects a row it appends a `didYouMean` suggestion, and
+  that suggestion edit-distances the offending name against *every* name in the file —
+  work that dwarfs the scan that found the error. On a 164-row file it cost ~850k
+  operations against a 174k file-validator quota, so the sandbox aborted the validator
+  *while it was building the message*, and the user was told their data had blown an
+  operation quota rather than that row `X` references an unknown node. Two changes, either
+  of which fixes the case, together making the diagnostic path affordable:
+  `string_utils.closestMatch` now skips any candidate whose **length** differs from the
+  value by at least the current best distance (edit distance is never below the length
+  difference, so those candidates cannot win — same result, a fraction of the matrices),
+  and `FILE_VALIDATOR_QUOTA_PER_ROW` rises from 1,000 to 10,000, sizing the quota for the
+  failure path rather than the success path. A runaway file validator still aborts.
+
 - **gzip and zip support was silently unavailable on Linux and macOS.** The `libdeflate`
   rock installs its module as `LibDeflate.lua`, but we asked for it as
   `require("libdeflate")`. That resolves on a **case-insensitive** filesystem (Windows) and

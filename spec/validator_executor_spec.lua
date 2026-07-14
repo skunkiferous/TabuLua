@@ -384,6 +384,32 @@ describe("validator_executor", function()
       assert.are.equal(1, badVal.errors)
     end)
 
+    it("should report a bad graph reference on a large file, not a quota error", function()
+      -- Regression: reporting an unknown node appends a didYouMean suggestion,
+      -- which edit-distances the bad name against every name in the file. That
+      -- diagnostic used to cost more than the whole file-validator quota, so the
+      -- sandbox aborted while building the message and the real cause ("row X
+      -- references unknown node Y") was replaced by "Quota exceeded".
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local rows = {}
+      for i = 1, 200 do
+        rows[i] = makeRow({name = "Skill" .. i, graphParents = {}, graphChildren = {}})
+      end
+      -- A long bad name: worst case for the suggestion scan.
+      rows[1].graphParents = {"Strength,Constitution,Dexterity"}
+
+      local success = validator_executor.runFileValidators(
+        {"graphRefsExist(rows, 'directed')"}, rows, "test.tsv", badVal)
+
+      assert.is_false(success)
+      assert.are.equal(1, #log_messages)
+      assert.is_truthy(log_messages[1]:match("references unknown node"),
+        "expected the real error, got: " .. log_messages[1])
+      assert.is_falsy(log_messages[1]:lower():match("quota"),
+        "the diagnostic path must fit in the quota, got: " .. log_messages[1])
+    end)
+
     it("should collect warnings from warn-level file validator", function()
       local log_messages = {}
       local badVal = mockBadVal(log_messages)

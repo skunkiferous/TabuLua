@@ -281,6 +281,16 @@ describe("string_utils", function()
       assert.equals("core", closestMatch("care", {"core"}, 1))
     end)
 
+    it("still finds a candidate whose distance IS its length difference", function()
+      -- The scan skips candidates whose length is too far off to win. A pure
+      -- insertion/deletion sits exactly on that boundary, so it must survive.
+      assert.equals("firestarting", closestMatch("firestartin", {"firestarting"}))
+      assert.equals("firestartin", closestMatch("firestarting", {"firestartin"}))
+      local match, dist = closestMatch("abcdefgh", {"abcdefghij"}, 2)
+      assert.equals("abcdefghij", match)
+      assert.equals(2, dist)
+    end)
+
     it("errors on bad input", function()
       assert.has_error(function() closestMatch(nil, {}) end)
       assert.has_error(function() closestMatch("a", "not a table") end)

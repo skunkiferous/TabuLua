@@ -150,8 +150,14 @@ local PACKAGE_VALIDATOR_QUOTA = 100000
 -- Extra quota granted per row, so file validators that legitimately scan
 -- every row (e.g. the auto-wired graph validators) scale with file size
 -- instead of failing on large files, while runaway expressions still hit
--- a bound proportional to the work they were given
-local FILE_VALIDATOR_QUOTA_PER_ROW = 1000
+-- a bound proportional to the work they were given.
+-- Sized for the FAILURE path, not the success path: a graph validator that
+-- rejects a row appends a `didYouMean` suggestion, which edit-distances the
+-- bad name against every row name in the file. That diagnostic costs far more
+-- than the scan that found the error, and running out of quota there would
+-- replace the real message ("references unknown node 'X'") with a misleading
+-- "Quota exceeded".
+local FILE_VALIDATOR_QUOTA_PER_ROW = 10000
 
 --- Normalizes a validator_spec into a consistent record format.
 --- @param spec string|table Either a simple expression string or {expr, level} record

@@ -233,7 +233,7 @@ all(rows, function(r) return r.price > 0 end) or 'all prices must be positive'
 filter(rows, function(r) return r.level > 10 end)
 ```
 
-**Operation quota:** 10,000 operations per file.
+**Operation quota:** 10,000 operations per file, plus 10,000 per data row — a validator that legitimately scans every row (and reports a failure with a "did you mean ...?" suggestion, which is by far the most expensive thing a validator does) scales with file size instead of tripping the quota on a large file.
 
 ## Context: Package Validators
 

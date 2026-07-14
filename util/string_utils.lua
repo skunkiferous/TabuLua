@@ -207,13 +207,24 @@ local function closestMatch(value, candidates, opt_maxDistance)
     local maxDistance = opt_maxDistance or math.min(3, math.floor(#value / 4) + 1)
     local best = nil
     local bestDist = maxDistance + 1
+    local vLen = #value
     for _, candidate in ipairs(candidates) do
-        local d = editDistance(value, candidate)
-        if d < bestDist then
-            best = candidate
-            bestDist = d
-            if d == 0 then
-                break
+        -- editDistance is never smaller than the length difference, so a
+        -- candidate that far off cannot beat bestDist. Skipping it avoids the
+        -- O(#value * #candidate) matrix — the whole scan is O(#candidates)
+        -- edit-distance runs, and callers pass every known name (see
+        -- error_reporting.didYouMean), so this bound keeps a suggestion on a
+        -- large file affordable within a sandbox quota.
+        local lenDiff = vLen - #candidate
+        if lenDiff < 0 then lenDiff = -lenDiff end
+        if lenDiff < bestDist then
+            local d = editDistance(value, candidate)
+            if d < bestDist then
+                best = candidate
+                bestDist = d
+                if d == 0 then
+                    break
+                end
             end
         end
     end
