@@ -123,6 +123,11 @@ M.BUILT_IN = {}
 -- Maps expression-validated type names to their definitions: name -> {parent, expr}
 M.EXPR_VALIDATORS = {}
 
+-- Maps shaped-string type names to their definitions: name -> {parent, shape}.
+-- Lets an identical re-registration be a no-op, like EXPR_VALIDATORS, rather than
+-- failing on the reused name (every other custom-type kind tolerates this).
+M.SHAPE_TYPES = {}
+
 -- Maps type tag names to their member sets: tag_name -> {member1=true, member2=true, ...}
 M.TAG_MEMBERS = {}
 
@@ -142,7 +147,7 @@ local MUTABLE_TABLES = {
     "STR_MIN_LEN", "STR_MAX_LEN", "STR_REGEX",
     "TYPES_PARAMS_TODO", "ARRAY_PARSERS", "MAP_PARSERS",
     "TUPLE_PARSERS", "UNION_PARSERS", "UNION_FIRST_TYPE",
-    "RECORD_PARSERS", "EXPR_VALIDATORS", "TAG_MEMBERS", "TAG_ANCESTOR",
+    "RECORD_PARSERS", "EXPR_VALIDATORS", "SHAPE_TYPES", "TAG_MEMBERS", "TAG_ANCESTOR",
 }
 
 local snapshot = nil

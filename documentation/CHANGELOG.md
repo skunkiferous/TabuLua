@@ -77,6 +77,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- **A shaped string type could not be re-registered, even identically.** Every other
+  custom-type kind treats an identical re-declaration as a no-op — expression types via
+  `EXPR_VALIDATORS`, length/pattern types via their generated-name cache, plain aliases
+  directly — but `restrictWithShape` registered the type's name straight through
+  `extendParser`, which rejects a name already in use. So loading a package that declares a
+  shaped type twice in one process (load, then reload) failed on the second pass with
+  *"Parser name 'Coord' is already in use"*. A new `SHAPE_TYPES` registry mirrors
+  `EXPR_VALIDATORS`: identical re-registration returns the existing parser, a conflicting
+  one is a clear error. (Found writing the round-trip tests, which load then reload.)
+
 - **No user-defined type could be used as a map key.** `NEVER_TABLE` — the registry that
   answers "can this type ever parse to a table?", and therefore gates what may be a map *key*
   type — was populated for the built-ins and for enums, but no `restrict*` function ever set

@@ -826,6 +826,22 @@ end
 --
 -- Returns the parser function if successful, nil otherwise.
 function M.restrictWithShape(badVal, parentName, newParserName, shapeSpec)
+    -- Identical re-registration is a no-op, not an error -- mirroring every other
+    -- custom-type kind (restrictWithExpression via EXPR_VALIDATORS, restrictString via
+    -- its generated-name cache, registerAlias directly). Without this, loading a
+    -- package that declares a shaped type twice in one process (e.g. load then reload)
+    -- fails on the reused name, where a plain alias would not.
+    local existing = state.SHAPE_TYPES[newParserName]
+    if existing then
+        if existing.parent == parentName and existing.shape == shapeSpec then
+            return state.PARSERS[newParserName]
+        end
+        utils.log(badVal, newParserName, shapeSpec,
+            "shaped type '" .. newParserName
+            .. "' is already registered with a different definition (parent='"
+            .. existing.parent .. "', shape='" .. existing.shape .. "')")
+        return nil
+    end
     if not introspection.typeSameOrExtends(parentName, "string") then
         utils.log(badVal, 'type', parentName,
             'shape constraint requires a type that extends string')
@@ -850,7 +866,7 @@ function M.restrictWithShape(badVal, parentName, newParserName, shapeSpec)
     end
     local isComplete = shapeCompletenessChecker(shapeSpec)
 
-    return M.extendParser(badVal, parentName, newParserName,
+    local parser = M.extendParser(badVal, parentName, newParserName,
         function(badVal2, parsed, reformatted, _context)
             -- Trial-parse the TEXT against the shape, silently. A failed trial must
             -- not pollute the real error count, and the shape parser's own
@@ -878,6 +894,10 @@ function M.restrictWithShape(badVal, parentName, newParserName, shapeSpec)
             -- The shape's canonical text IS the value -- see the note above.
             return canonical, canonical
         end)
+    if parser then
+        state.SHAPE_TYPES[newParserName] = {parent = parentName, shape = shapeSpec}
+    end
+    return parser
 end
 
 -- Extracts the ancestor type name from a parent spec.

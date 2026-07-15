@@ -2,8 +2,36 @@
 
 ## Status
 
-**Phase 1 landed (2026-07-14), with three prerequisite bug fixes it flushed out.**
-Phases 2–4 open. Gate green: 3221 tests, 38/38 bad-input fixtures.
+**Phases 1, 3 & 4 landed (2026-07-14). Phase 2 (the read-back sandbox helper) is the
+only one open.** Gate green: 3233 tests, 38/38 bad-input fixtures.
+
+Phase 1 flushed out three prerequisite bugs (below). Phase 3 — the round-trip proof —
+flushed out a fourth, smaller one and confirmed the core claim held:
+
+- **The claim survived.** A `{Coord:string}` map round-trips through **every** format:
+  native TSV (ltcn reads `["1,2"]=v` straight back), typed JSON, natural JSON, XML and
+  SQL, plus the full `manifest_loader` → `reformatter` → reload cycle, which also
+  canonicalizes a non-canonical `["1, 2"]` to `["1,2"]` in the file and is stable on a
+  second pass. All because a shaped key is only ever a **string** to the serializers.
+  Covered in `spec/shaped_types_round_trip_spec.lua`.
+- **Bug 4 (fixed): shaped types were not idempotent on re-registration.** Every other
+  custom-type kind tolerates an identical re-declaration (expression types via
+  `EXPR_VALIDATORS`, string/number types via their generated-name cache, aliases
+  directly), but `restrictWithShape` registered the user name straight through
+  `extendParser`, which rejects a reused name. So loading a package that declares a
+  shaped type *twice in one process* (load, then reload — exactly what a round-trip test
+  does) failed on the second pass. Fixed with a `SHAPE_TYPES` registry mirroring
+  `EXPR_VALIDATORS`: identical re-registration is a no-op, a conflicting one is a clear
+  error. (Added to `MUTABLE_TABLES`, so the global-reset snapshot covers it.)
+- **A natural-JSON limitation, documented not fixed.** Natural JSON has no key type, so
+  a foreign reader coerces a numeric-looking object key back to a number. A `Coord` key
+  (`"1,2"`) is never numeric-looking, so it survives; but a *single-scalar* shape whose
+  canonical form is a bare number (e.g. `{integer}` → `"5"`) would be read back as `5`
+  by a naive consumer. TabuLua's own type-directed reimport keeps it exact (it knows the
+  key is a `Coord`); this is the same known natural-JSON key issue as
+  `json_complex_values.md`, not a shaped-types bug.
+
+### The three prerequisite bugs Phase 1 flushed out
 
 The feature itself went in as designed — `shape` field, `restrictWithShape`,
 canonicalization, one new dispatch branch, no grammar change. What it *cost* was
@@ -142,22 +170,27 @@ One thing worth knowing: a shaped type validates *strictly* — missing elements
 fields are rejected — while the containers it delegates to do **not**. That is
 deliberate (see Decisions), not an inconsistency to "fix" by loosening the shape.
 
-### Phase 2 — reaching the table from an expression
+### Phase 2 — reaching the table from an expression (the one open phase)
 
-The value is a string by construction, so `=expr` cells, validators and pre-processors
-need a way back to the structured form: a sandbox helper (working name `asShape(v)`,
-or `shapeOf(v)`) registered through the type-wiring registry's `sandboxHelpers`. Reads
-the column's declared shape, parses, returns the table. Read-only; writing back means
-writing the canonical string.
+The value is a string by construction, so an `=expr` cell, a validator or a
+pre-processor that wants the structured form needs a way back: a sandbox helper (working
+name `asShape(v)` / `shapeOf(v)`) registered through the type-wiring registry's
+`sandboxHelpers`. It reads the column's declared shape, parses the string, returns the
+table. Read-only — writing back means writing the canonical string. Deferred until a
+concrete use case, like every other `sandboxHelpers` addition. Until then the value is
+usable as a *key* and as opaque text, which is the headline use case; only *computing on
+its parts inside an expression* needs this.
 
-### Phase 3 — the payoff, as tests
+### Phase 3 — the payoff, as tests ✅ **done**
 
-`{Coord:Item}` as a column type is covered at the parser level (Phase 1), including the
-duplicate-key decision. What is **not** proven yet is the *round trip*: a shaped-key map
-exported to, and re-imported from, each format — native TSV, natural JSON, typed JSON,
-XML, SQL. The claim is that they all already work *because a shaped key is only ever a
-string to them*, and that claim is precisely what a test should confirm or demolish. No
-sample package uses a shaped type, so the gate's export checks never touch one.
+`spec/shaped_types_round_trip_spec.lua`, two layers: value-level serialize→deserialize
+for native / typed JSON / natural JSON / XML (+ SQL embedding), and a full
+`manifest_loader` → `reformatter` → reload cycle on a `{Coord:string}` column. Proves
+the string key survives every format, that a non-canonical key is rewritten canonical in
+the file, and that reload is clean and reformat-stable. Findings folded into Status:
+the idempotency fix (bug 4) and the documented natural-JSON coercion edge. One testing
+gotcha worth knowing: a loaded cell is a **read-only proxy**, reachable by key but not
+by `next`/`pairs`, so key-type assertions must `unwrap` first.
 
 ### Phase 4 — docs ✅ **done**
 
@@ -178,6 +211,9 @@ the feature under Added and the three bugs (plus the duplicate-key change) under
   open — it affects every tuple and record column, and deserves its own decision, since
   closing it would turn data that "passed" for years into errors.
 - **A key collision is an error** (2026-07-14, forced by a test). See Status.
+- **Identical re-registration is a no-op** (2026-07-14, forced by a Phase 3 test). Bug 4
+  in Status: shaped types now match every other custom-type kind, which already tolerated
+  it.
 
 ## Open questions
 
