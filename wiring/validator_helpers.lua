@@ -5,7 +5,7 @@ local NAME = "validator_helpers"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 31, 0)
+local VERSION = semver(0, 32, 0)
 
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly

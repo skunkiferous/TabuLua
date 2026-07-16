@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.32.0] - 2026-07-16
+
+### Added
+
 - **SVG graph readability: source-node edge colouring, vertical edge routing, and a
   taller default layout** (`TODO/graph_svg_export.md`, follow-up). Edges no longer run
   centre-to-centre through node boxes: `svg_render` routes each edge out of the source
@@ -88,8 +98,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   (`sh: lua54: not found`), so seven tests could only ever pass in one environment. They now
   probe `lua54`, `lua5.4`, `lua` in order — the same candidates, in the same order, as
   `bad_input/run_bad_input_tests.sh`.
-
-### Removed
 
 ### Fixed
 
