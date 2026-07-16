@@ -468,4 +468,14 @@ describe("reformatter SVG colour policy", function()
       end
     end
   end)
+
+  it("exposes a non-empty default edge palette of valid colours", function()
+    local pal = reformatter.SVG_EDGE_PALETTE
+    assert.is_table(pal)
+    assert.is_true(#pal >= 2, "palette needs >= 2 colours to distinguish neighbours")
+    for _, c in ipairs(pal) do
+      assert.is_truthy(c:match("^#%x%x%x%x%x%x$") or c:match("^#%x%x%x$"),
+        "not a hex colour: " .. tostring(c))
+    end
+  end)
 end)

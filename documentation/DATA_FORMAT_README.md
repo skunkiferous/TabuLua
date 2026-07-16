@@ -1622,15 +1622,26 @@ deterministic** — identical input data produces an identical diagram on every 
 and platform, so the output diffs cleanly. Open it in any browser or embed it in
 generated Markdown docs.
 
-Colours are configurable per drawable type. `--svg-color-scheme=<name>` selects a
-base palette (`default`, `dark`, `mono`, `colorblind`), and `--svg-color=<key>=<color>`
-(repeatable) overrides an individual colour on top of it — `node`, `root`, `leaf`,
-`isolated` (a node with no edges at all), `border`, `label`, `edge-directed`,
-`edge-undirected`, `edge-label`, or `background`, where the value is a `#rgb` /
-`#rrggbb` hex, a CSS colour name, or `none` for a transparent canvas. Directed and
-undirected links carry separate colours. The canvas is transparent by default (so
-the diagram adapts to whatever it is embedded in) except under the `dark` scheme.
-There is no built-in title or frame — wrap the `<svg>` yourself for a caption. See
+By default, **edges are coloured by their source node** — every edge leaving a
+node shares one colour, cycling a built-in 8-colour palette so that horizontally
+adjacent sources always differ. This lets you trace a fan of edges back to the
+node it came from, which a single link colour cannot (a few nodes pointing into a
+wide next layer produce a dense, otherwise-untraceable bundle). The palette is a
+purely local wayfinding cue (there is no legend), so it cycles for graphs with
+many nodes; the ordering is CVD-safe on adjacent pairs. Override the colours with
+`--svg-edge-palette=<c1,c2,…>`, or turn it off with `--no-svg-edge-palette` to
+colour every edge a single `edge-directed` / `edge-undirected` colour instead.
+
+Other colours are configurable per drawable type. `--svg-color-scheme=<name>`
+selects a base palette (`default`, `dark`, `mono`, `colorblind`), and
+`--svg-color=<key>=<color>` (repeatable) overrides an individual colour on top of
+it — `node`, `root`, `leaf`, `isolated` (a node with no edges at all), `border`,
+`label`, `edge-directed`, `edge-undirected` (both only when the edge palette is
+off), `edge-label`, or `background`, where the value is a `#rgb` / `#rrggbb` hex, a
+CSS colour name, or `none` for a transparent canvas. The canvas is transparent by
+default (so the diagram adapts to whatever it is embedded in) except under the
+`dark` scheme. There is no built-in title or frame — wrap the `<svg>` yourself for
+a caption. See
 [REFORMATTER.md](REFORMATTER.md#svg-tuning-flags-only-affect---filesvg) for the full
 flag list.
 

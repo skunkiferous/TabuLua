@@ -44,7 +44,12 @@ end
 local DEFAULTS = {
     sweeps       = 8,    -- crossing-reduction passes (exportParams.svgSweeps)
     nodeSpacing  = 140,  -- horizontal gap between node centres in a layer
-    layerSpacing = 90,   -- vertical gap between layer centre-lines
+    -- Vertical gap between layer centre-lines. Kept generous (well above the
+    -- node height) so the box-free strip between two rows is tall enough for
+    -- edges to route through without crowding — a flat layout (small gap)
+    -- forces near-horizontal edges that skim across boxes. Overridable via
+    -- exportParams.svgLayerSpacing.
+    layerSpacing = 140,
     nodeWidth    = 100,  -- nominal node box width  (for canvas sizing)
     nodeHeight   = 40,   -- nominal node box height (for canvas sizing)
     margin       = 20,   -- blank border around the whole drawing

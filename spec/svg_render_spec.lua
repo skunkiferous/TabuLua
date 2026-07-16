@@ -104,11 +104,106 @@ describe("svg_render.render — arrowheads", function()
         assert.is_nil(svg:find("marker-end", 1, true))
     end)
 
-    it("clips a directed edge end to the target box border", function()
-        -- The vertical A->B edge (centres 100,40 -> 100,130) must stop at the
-        -- box top (130 - halfHeight - gap = 107), not run to the centre.
+    it("routes a directed edge between the two box borders", function()
+        -- The vertical A->B edge (centres 100,40 -> 100,130) leaves A's bottom
+        -- border (40 + halfHeight = 60) and lands on B's top border, minus the
+        -- arrow gap (130 - halfHeight - gap = 107) — never running through a
+        -- box centre.
         local svg = svg_render.render(directedLayout(), {directed = true})
-        assert.is_truthy(svg:find('points="100,40 100,107"', 1, true))
+        assert.is_truthy(svg:find('points="100,60 100,107"', 1, true))
+    end)
+end)
+
+-- ============================================================
+-- Edge palette (colour edges by source node)
+-- ============================================================
+
+-- Two sources (A left, B right) in layer 0 both pointing at C in layer 1.
+local function twoSourceLayout()
+    return {
+        nodes = {
+            A = {x = 60,  y = 40,  layer = 0},
+            B = {x = 200, y = 40,  layer = 0},
+            C = {x = 130, y = 130, layer = 1},
+        },
+        edges = {
+            {from = "A", to = "C", points = {{x = 60,  y = 40}, {x = 130, y = 130}}},
+            {from = "B", to = "C", points = {{x = 200, y = 40}, {x = 130, y = 130}}},
+        },
+        width = 260, height = 190, crossings = 0,
+    }
+end
+
+describe("svg_render.render — edge palette", function()
+    local PAL = {"#111111", "#222222"}
+
+    it("colours edges by their source node", function()
+        local svg = svg_render.render(twoSourceLayout(),
+            {directed = true, edgePalette = PAL})
+        -- A is the left node in layer 0 (slot 1), B the right (slot 2).
+        assert.is_truthy(svg:find('stroke="#111111"', 1, true))  -- A's edge
+        assert.is_truthy(svg:find('stroke="#222222"', 1, true))  -- B's edge
+    end)
+
+    it("gives adjacent sources different colours", function()
+        local svg = svg_render.render(twoSourceLayout(),
+            {directed = true, edgePalette = PAL})
+        -- Neither of the two single-colour link defaults is used.
+        assert.is_nil(svg:find('stroke="#888888"', 1, true))
+    end)
+
+    it("defines one arrow marker per palette colour and matches edges to it",
+    function()
+        local svg = svg_render.render(twoSourceLayout(),
+            {directed = true, edgePalette = PAL})
+        assert.is_truthy(svg:find('id="arrow1"', 1, true))
+        assert.is_truthy(svg:find('id="arrow2"', 1, true))
+        assert.is_nil(svg:find('id="arrow"', 1, true))  -- no single generic marker
+        assert.is_truthy(svg:find('marker-end="url(#arrow1)"', 1, true))
+        assert.is_truthy(svg:find('marker-end="url(#arrow2)"', 1, true))
+    end)
+
+    it("cycles the palette when a layer has more sources than colours", function()
+        local laid = {
+            nodes = {
+                A = {x = 60,  y = 40, layer = 0},
+                B = {x = 200, y = 40, layer = 0},
+                D = {x = 340, y = 40, layer = 0},  -- third source, wraps to slot 1
+                C = {x = 200, y = 130, layer = 1},
+            },
+            edges = {
+                {from = "A", to = "C", points = {{x = 60,  y = 40}, {x = 200, y = 130}}},
+                {from = "B", to = "C", points = {{x = 200, y = 40}, {x = 200, y = 130}}},
+                {from = "D", to = "C", points = {{x = 340, y = 40}, {x = 200, y = 130}}},
+            },
+            width = 400, height = 190, crossings = 0,
+        }
+        local svg = svg_render.render(laid, {directed = true, edgePalette = PAL})
+        -- A and D both land on slot 1 (#111111); B on slot 2 (#222222).
+        assert.equal(2, countOccur(svg, 'stroke="#111111"'))
+        assert.equal(1, countOccur(svg, 'stroke="#222222"'))
+    end)
+
+    it("colours undirected edges by source but adds no markers", function()
+        local svg = svg_render.render(twoSourceLayout(), {edgePalette = PAL})
+        assert.is_truthy(svg:find('stroke="#111111"', 1, true))
+        assert.is_truthy(svg:find('stroke="#222222"', 1, true))
+        assert.is_nil(svg:find("<marker ", 1, true))
+        assert.is_nil(svg:find("marker-end", 1, true))
+    end)
+
+    it("falls back to the single link colour with no palette", function()
+        local svg = svg_render.render(twoSourceLayout(), {directed = true})
+        assert.is_truthy(svg:find('stroke="#888888"', 1, true))
+        assert.is_truthy(svg:find('id="arrow"', 1, true))
+    end)
+
+    it("is byte-identical across runs with a palette", function()
+        local a = svg_render.render(twoSourceLayout(),
+            {directed = true, edgePalette = PAL})
+        local b = svg_render.render(twoSourceLayout(),
+            {directed = true, edgePalette = PAL})
+        assert.equal(a, b)
     end)
 end)
 
@@ -214,7 +309,7 @@ describe("svg_render.render — determinism", function()
             '<defs>',
             '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#888888"/></marker>',
             '</defs>',
-            '<polyline points="100,40 100,107" fill="none" stroke="#888888" stroke-width="1" marker-end="url(#arrow)"/>',
+            '<polyline points="100,60 100,107" fill="none" stroke="#888888" stroke-width="1" marker-end="url(#arrow)"/>',
             '<rect x="50" y="20" width="100" height="40" rx="6" ry="6" fill="#d7f0d7" stroke="#4a5a7a" stroke-width="1"/>',
             '<text x="100" y="40" text-anchor="middle" dominant-baseline="central" font-size="13" fill="#1a1a2e">A</text>',
             '<rect x="50" y="110" width="100" height="40" rx="6" ry="6" fill="#f7e0d7" stroke="#4a5a7a" stroke-width="1"/>',

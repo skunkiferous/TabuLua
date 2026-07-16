@@ -77,11 +77,13 @@ for the layout and determinism details.
 |------|--------|
 | `--svg-sweeps=<N>` | Crossing-reduction passes (default 8) |
 | `--svg-node-spacing=<N>` | Horizontal gap between nodes, px (default 140) |
-| `--svg-layer-spacing=<N>` | Vertical gap between layers, px (default 90) |
+| `--svg-layer-spacing=<N>` | Vertical gap between layers, px (default 140) |
 | `--svg-color-scheme=<name>` | Base palette: `default`, `dark`, `mono`, `colorblind` |
 | `--svg-color=<key>=<color>` | Override one palette colour (repeatable) — see below |
 | `--svg-label-column=<col>` | Edge-file column used to label edges (default: first non-comment scalar) |
 | `--no-svg-edge-labels` | Do not label edges from the attached `edgesFor` edge file |
+| `--svg-edge-palette=<list>` | Comma-separated colours; edges are coloured by source node cycling this list (default: a built-in 8-colour palette) |
+| `--no-svg-edge-palette` | Colour every edge one colour (`edge-directed` / `edge-undirected`) instead of by source node |
 
 `--svg-color` overrides an individual colour on top of the chosen base scheme,
 one colour per drawable type. It is repeatable. The `<key>` names the type and
@@ -95,8 +97,8 @@ one colour per drawable type. It is repeatable. The `<key>` names the type and
 | `isolated` | Isolated-node fill (no parents and no children — no edges at all) |
 | `border` | Node box outline |
 | `label` | Node label text |
-| `edge-directed` | Directed links + arrowheads |
-| `edge-undirected` | Undirected links |
+| `edge-directed` | Directed links + arrowheads (only with `--no-svg-edge-palette`) |
+| `edge-undirected` | Undirected links (only with `--no-svg-edge-palette`) |
 | `edge-label` | Edge annotation text |
 | `background` | Canvas background (`none` = transparent, the default for all schemes except `dark`) |
 

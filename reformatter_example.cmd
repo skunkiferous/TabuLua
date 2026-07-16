@@ -57,6 +57,13 @@ REM ============================================================================
 REM  END OF CONFIGURATION -- no changes needed below this line
 REM ============================================================================
 
-if not defined LUA_PATH set LUA_PATH=;;
+REM  Lua 5.4 consults the version-specific LUA_PATH_5_4 *before* the generic
+REM  LUA_PATH, and ignores LUA_PATH entirely when LUA_PATH_5_4 is defined --
+REM  which LuaRocks sets on many Windows installs. So prepend TabuLua's
+REM  directories to BOTH, otherwise require() of TabuLua's own modules fails
+REM  ("module 'infra.named_logger' not found") when run from a data directory.
+if not defined LUA_PATH     set LUA_PATH=;;
+if not defined LUA_PATH_5_4 set LUA_PATH_5_4=;;
 set LUA_PATH=%TABULUA_DIR%\?.lua;%TABULUA_DIR%\parsers\?.lua;%LUA_PATH%
+set LUA_PATH_5_4=%TABULUA_DIR%\?.lua;%TABULUA_DIR%\parsers\?.lua;%LUA_PATH_5_4%
 %LUA% "%TABULUA_DIR%\reformatter.lua" %*

@@ -115,6 +115,25 @@ describe("--file=svg export (graph_svg_export Phase 3)", function()
         end
     end)
 
+    it("colours edges by source node when an edge palette is given", function()
+        local pkg_dir = makePkg()
+        local export_dir = path_join(temp_dir, "pal")
+        reformatter.processFiles({pkg_dir},
+            {{fn = exporter.exportSVG, subdir = "svg-svg"}},
+            {exportDir = export_dir, svgEdgePalette = {"#111111", "#222222"}})
+
+        local svg = file_util.readFile(path_join(export_dir, "svg-svg", "Skill.svg"))
+        assert.is_not_nil(svg)
+        -- Roots a and b are different sources → different palette colours,
+        -- each with its own matching arrowhead marker; the single-colour
+        -- default is not used.
+        assert.is_truthy(svg:find('stroke="#111111"', 1, true))
+        assert.is_truthy(svg:find('stroke="#222222"', 1, true))
+        assert.is_truthy(svg:find('id="arrow1"', 1, true))
+        assert.is_truthy(svg:find('id="arrow2"', 1, true))
+        assert.is_nil(svg:find('stroke="#888888"', 1, true))
+    end)
+
     it("draws an undirected (basic_graph_node) file without arrowheads", function()
         -- A basic graph with a triangle cycle (a-b-c) and a disconnected
         -- component (x-y) — both legal for basic graphs.

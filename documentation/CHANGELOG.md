@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **SVG graph readability: source-node edge colouring, vertical edge routing, and a
+  taller default layout** (`TODO/graph_svg_export.md`, follow-up). Edges no longer run
+  centre-to-centre through node boxes: `svg_render` routes each edge out of the source
+  box's bottom border and into the target's top border (dummy bend points routed through
+  their own box-free column too), so every segment stays in the gap between layer rows —
+  on a real 164-node graph this cut edge/box overlaps from 177 of 181 segments to 0. The
+  default layer spacing rose `90 → 140` px (a flat, ribbon-like graph is much less
+  readable). And **edges are now coloured by their source node** by default, cycling a
+  built-in 8-colour palette (the data-viz reference categorical hues, CVD-safe on
+  adjacent pairs) so a fan of edges leaving one node reads as one colour and neighbouring
+  sources always differ — making a dense bundle into a wide layer traceable to its origin.
+  New flags `--svg-edge-palette=<c1,c2,…>` (override the palette) and
+  `--no-svg-edge-palette` (revert to a single link colour). Output stays byte-deterministic.
+  Covered by new cases in `spec/svg_render_spec.lua`, `spec/svg_export_integration_spec.lua`,
+  and `spec/reformatter_spec.lua`.
+
 - **Shaped string types: a string whose text is validated — and canonicalized — as a table
   type.** A new `shape` field on `custom_type_def` (`Coord | string | {integer,integer}`)
   declares a type whose cells are written `1,2` and whose values stay **strings**. The point

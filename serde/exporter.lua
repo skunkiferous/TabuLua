@@ -1304,6 +1304,7 @@ local function exportSVG(process_files, exportParams)
             local svg = svg_render.render(laidOut, {
                 directed = directed,
                 colors = exportParams.svgColors,
+                edgePalette = exportParams.svgEdgePalette,
             })
 
             local out_name = changeExtension(pathJoin(exportDir, relative_name), "svg")

@@ -172,14 +172,37 @@ deliberate (see Decisions), not an inconsistency to "fix" by loosening the shape
 
 ### Phase 2 — reaching the table from an expression (the one open phase)
 
-The value is a string by construction, so an `=expr` cell, a validator or a
-pre-processor that wants the structured form needs a way back: a sandbox helper (working
-name `asShape(v)` / `shapeOf(v)`) registered through the type-wiring registry's
-`sandboxHelpers`. It reads the column's declared shape, parses the string, returns the
-table. Read-only — writing back means writing the canonical string. Deferred until a
-concrete use case, like every other `sandboxHelpers` addition. Until then the value is
-usable as a *key* and as opaque text, which is the headline use case; only *computing on
-its parts inside an expression* needs this.
+A shaped value is a **string in canonical form**, so an `=expr` cell, a validator or a
+pre-processor that wants its *parts* needs to parse that string. The first draft of this
+phase tied the helper to "the column's declared shape" — but that only serves the case
+where the shaped type is the key of a top-level map. A shaped type can sit **anywhere**
+in a column's type: an element of a `{Coord}` array, a value in a nested
+`{name:{Coord:string}}`, a record field. A column-shape-aware helper is blind to all of
+those, and too narrow to be worth building.
+
+The right primitive is **value-level and column-agnostic**:
+
+```lua
+parseAs(value, typeSpec)   -- parseAs("1,2", "{integer,integer}") -> {1, 2}
+```
+
+It takes the string and the type to read it as, and returns the parsed Lua value (or nil
+on mismatch). It never inspects the column, so it works wherever the string sits, at any
+depth. Note the subtlety: you parse as the **shape** (`{integer,integer}`), not the
+shaped type *name* (`Coord`), since `Coord` is a string type and would just hand the
+string back. A `shapeOf("Coord") -> "{integer,integer}"` lookup (from `SHAPE_TYPES`) is
+optional sugar on top.
+
+This is **not shaped-types-specific** — it is "interpret cell text as a type" for
+expressions, of which reading a shaped value's parts is one use. That breadth is the
+argument for building it as a clean general primitive; the argument against is the usual
+one for `sandboxHelpers` (permanent expression-surface API, best shaped by a real
+consumer), so it stays deferred. Implementation is small: resolve `typeSpec` to a parser
+via `parsers.parseType`, run it against a throwaway `badVal` with the sandbox quota,
+return the parsed value or nil — the same re-run-the-parser move the natural-JSON import
+path already makes. Until it exists, a shaped value is fully usable as a **key** and as
+**opaque canonical text** (the headline uses); only computing on its parts inside an
+expression waits.
 
 ### Phase 3 — the payoff, as tests ✅ **done**
 

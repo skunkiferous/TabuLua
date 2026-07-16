@@ -108,6 +108,20 @@ local SVG_SCHEMES = {
     },
 }
 
+-- Default edge palette: edges are coloured by their source node, cycling this
+-- list, so a bundle of edges leaving one node reads as one colour and
+-- neighbouring sources are told apart (see svg_render.assignEdgeColorIndex).
+-- These are the eight categorical hues from the data-viz reference palette,
+-- ordered so that adjacent slots are the most distinct (CVD-safe on the
+-- adjacent pairlist: worst adjacent ΔE ~9 — which is exactly the neighbouring-
+-- node case). Mid-toned, so they read on both light and dark backgrounds.
+-- On by default; disable with --no-svg-edge-palette, override with
+-- --svg-edge-palette=<c1,c2,...>.
+local SVG_EDGE_PALETTE = {
+    "#2a78d6", "#008300", "#e87ba4", "#eda100",
+    "#1baf7a", "#eb6834", "#4a3aa7", "#e34948",
+}
+
 -- Friendly CLI colour name (--svg-color=<key>=<value>) -> svg_render colour slot.
 local SVG_COLOR_KEYS = {
     ["node"]            = "nodeFill",
@@ -359,9 +373,10 @@ local KNOWN_OPTIONS = {
     "--check-conflicts", "--clean", "--cog-docs", "--collapse-exploded",
     "--data", "--explain-patch", "--export-dir", "--export-merged",
     "--file", "--list-columns", "--log-level", "--no-number-warn",
-    "--no-svg-edge-labels", "--no-unquoted-warn", "--strip-cog", "--svg-color",
-    "--svg-color-scheme", "--svg-label-column", "--svg-layer-spacing",
-    "--svg-node-spacing", "--svg-sweeps", "--variant",
+    "--no-svg-edge-labels", "--no-svg-edge-palette", "--no-unquoted-warn",
+    "--strip-cog", "--svg-color", "--svg-color-scheme", "--svg-edge-palette",
+    "--svg-label-column", "--svg-layer-spacing", "--svg-node-spacing",
+    "--svg-sweeps", "--variant",
 }
 
 --- Generates the usage help text dynamically from the format configuration.
@@ -452,7 +467,7 @@ local function generateUsage()
         "  SVG diagram tuning (only affect --file=svg):",
         "  --svg-sweeps=<N>          Crossing-reduction passes (default 8)",
         "  --svg-node-spacing=<N>    Horizontal gap between nodes in px (default 140)",
-        "  --svg-layer-spacing=<N>   Vertical gap between layers in px (default 90)",
+        "  --svg-layer-spacing=<N>   Vertical gap between layers in px (default 140)",
         "  --svg-color-scheme=<name> Base colour palette: default, dark, mono, colorblind",
         "  --svg-color=<key>=<color> Override one palette colour (repeatable). Keys:",
         "                            node, root, leaf, isolated, border, label,",
@@ -463,6 +478,11 @@ local function generateUsage()
         "  --svg-label-column=<col>  Edge-file column to label edges with",
         "                            (default: first non-comment scalar column)",
         "  --no-svg-edge-labels      Do not label edges from the attached edge file",
+        "  --svg-edge-palette=<list> Comma-separated colours to colour edges by source",
+        "                            node (default: a built-in 8-colour palette), so",
+        "                            edge bundles are traceable to their origin.",
+        "  --no-svg-edge-palette     Colour all edges one colour (edge-directed/",
+        "                            edge-undirected) instead of by source node.",
         "",
         "FILE FORMATS:",
     }
@@ -1153,6 +1173,8 @@ if isMainScript then
         local variants = {}             -- --variant=<name> values
         local svgSchemeName = nil       -- --svg-color-scheme=<name> (nil = default)
         local svgColorOverrides = {}    -- --svg-color=<key>=<v> (slot -> colour)
+        local svgEdgePaletteOff = false -- --no-svg-edge-palette (single-colour edges)
+        local svgEdgePalette = nil      -- --svg-edge-palette=<c,..> (nil = default)
         local pendingFile = nil  -- Pending --file= waiting for optional --data=
         local pendingData = nil  -- Pending --data= waiting for --file=
         local hasError = false
@@ -1316,6 +1338,29 @@ if isMainScript then
                 exportParams.svgLabelColumn = arg_i:match("^%-%-svg%-label%-column=(.+)$")
             elseif arg_i == "--no-svg-edge-labels" then
                 exportParams.svgLabelEdges = false
+            elseif arg_i == "--no-svg-edge-palette" then
+                svgEdgePaletteOff = true
+            elseif arg_i:match("^%-%-svg%-edge%-palette=") then
+                -- Comma-separated colour list overriding the default palette.
+                local spec = arg_i:match("^%-%-svg%-edge%-palette=(.+)$")
+                local colors, bad = {}, nil
+                for c in (spec or ""):gmatch("[^,]+") do
+                    c = c:match("^%s*(.-)%s*$")  -- trim
+                    if isSvgColor(c) then colors[#colors + 1] = c
+                    else bad = c end
+                end
+                if bad then
+                    logger:error("Invalid colour '" .. tostring(bad)
+                        .. "' in --svg-edge-palette="
+                        .. " (expected #rgb, #rrggbb, or a CSS colour name)")
+                    hasError = true
+                elseif #colors == 0 then
+                    logger:error("--svg-edge-palette= expects one or more"
+                        .. " comma-separated colours")
+                    hasError = true
+                else
+                    svgEdgePalette = colors
+                end
             elseif arg_i:match("^%-%-") then
                 local flag = arg_i:match("^(%-%-[%w%-]+)") or arg_i
                 logger:error("Unknown option: " .. arg_i
@@ -1373,6 +1418,14 @@ if isMainScript then
             -- override table for the (scheme-agnostic) renderer. nil when neither
             -- was given, so the renderer keeps its own defaults.
             exportParams.svgColors = resolveSvgColors(svgSchemeName, svgColorOverrides)
+            -- Edge palette (colour edges by source node): on by default with the
+            -- built-in palette, replaced by an explicit --svg-edge-palette list,
+            -- or turned off (single-colour edges) by --no-svg-edge-palette.
+            if svgEdgePaletteOff then
+                exportParams.svgEdgePalette = nil
+            else
+                exportParams.svgEdgePalette = svgEdgePalette or SVG_EDGE_PALETTE
+            end
             -- Set exportExploded=false when --collapse-exploded is specified
             if collapseExploded then
                 exportParams.exportExploded = false
@@ -1425,6 +1478,7 @@ local API = {
     resolveSvgColors = resolveSvgColors,
     SVG_SCHEMES = SVG_SCHEMES,
     SVG_COLOR_KEYS = SVG_COLOR_KEYS,
+    SVG_EDGE_PALETTE = SVG_EDGE_PALETTE,
 }
 
 -- Enables the module to be called as a function

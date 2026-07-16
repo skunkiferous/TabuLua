@@ -105,29 +105,42 @@ local function fillFor(scheme, role)
     return scheme.nodeFill
 end
 
--- Clip the final segment of an edge to the target node's box border (plus a
--- small gap), so a directed arrowhead lands on the box edge instead of being
--- hidden under the box. `from` is the previous polyline point, `centre` the
--- target node centre. Returns the clipped end point (integer coords).
-local function clipToBox(from, centre, halfW, halfH, gap)
-    local ux, uy = from.x - centre.x, from.y - centre.y
-    if ux == 0 and uy == 0 then
-        return {x = round(centre.x), y = round(centre.y)}
+-- Assigns each node a 1-based colour index into a palette of `paletteSize`
+-- entries. Edges are coloured by their *source* node, so every edge leaving a
+-- node shares one colour and the reader can trace a bundle back to where it
+-- came from. Within a layer, nodes are indexed left-to-right (by x, ties by
+-- name), so horizontally adjacent nodes always land on consecutive — hence
+-- different — palette entries: neighbouring sources are never the same colour.
+-- Purely a local wayfinding cue (no legend), so cycling the palette is fine.
+-- Deterministic: the result depends only on each node's within-layer position.
+local function assignEdgeColorIndex(nodes, paletteSize)
+    local byLayer = {}
+    for name, n in pairs(nodes) do
+        local L = n.layer or 0
+        byLayer[L] = byLayer[L] or {}
+        byLayer[L][#byLayer[L] + 1] = name
     end
-    local ax, ay = math.abs(ux), math.abs(uy)
-    -- Scale from centre toward `from`; the box border is the first of the
-    -- vertical/horizontal edges the ray meets (an axis with no travel never
-    -- limits, so its scale is +inf).
-    local sx = ax > 0 and (halfW + gap) / ax or math.huge
-    local sy = ay > 0 and (halfH + gap) / ay or math.huge
-    local s = math.min(sx, sy)
-    return {x = round(centre.x + s * ux), y = round(centre.y + s * uy)}
+    local idx = {}
+    for _, names in pairs(byLayer) do
+        table.sort(names, function(a, b)
+            local na, nb = nodes[a], nodes[b]
+            if na.x ~= nb.x then return na.x < nb.x end
+            return a < b
+        end)
+        for i, name in ipairs(names) do
+            idx[name] = (i - 1) % paletteSize + 1
+        end
+    end
+    return idx
 end
 
 --- Renders a laid-out graph to an SVG document string.
 --- @param laidOut table Result of graph_layout.layout (plus optional per-node
 ---   `label`/`role` and per-edge `label`/`directed`).
---- @param opts table|nil Render options (see DEFAULTS); all optional.
+--- @param opts table|nil Render options (see DEFAULTS); all optional. When
+---   `opts.edgePalette` is a non-empty list of colours, edges are coloured by
+---   source node cycling that palette (with a matching per-colour arrowhead);
+---   otherwise the single edgeDirected/edgeUndirected colour is used.
 --- @return string A complete, self-contained `<svg>` document.
 -- Resolves the effective colours: the built-in DEFAULT_COLORS with any
 -- per-field overrides from opts.colors merged over them. Override keys are the
@@ -156,6 +169,13 @@ local function render(laidOut, opts)
     local endGap = optOr(opts, "endGap")
     local directed = optOr(opts, "directed")
 
+    -- Edge palette: colour edges by source node cycling this list, so bundles
+    -- are traceable. Off (single colour) when no palette is supplied.
+    local palette = opts.edgePalette
+    local usePalette = type(palette) == "table" and #palette > 0
+    local edgeColorIdx = usePalette
+        and assignEdgeColorIndex(laidOut.nodes or {}, #palette) or nil
+
     local width  = laidOut.width or 0
     local height = laidOut.height or 0
 
@@ -179,14 +199,24 @@ local function render(laidOut, opts)
             width, height, bg))
     end
 
-    -- Arrowhead marker, defined once, only when the graph is directed.
+    -- Arrowhead marker(s), only when the graph is directed. With an edge
+    -- palette, one marker per palette colour (arrow1..arrowN) so each
+    -- arrowhead matches its edge; otherwise a single reusable "arrow".
+    local function markerDef(id, fill)
+        return string.format(
+            '<marker id="%s" viewBox="0 0 10 10" refX="9" refY="5" '
+            .. 'markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+            .. '<path d="M0,0 L10,5 L0,10 z" fill="%s"/></marker>', id, fill)
+    end
     if directed then
         emit('<defs>')
-        emit(string.format(
-            '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" '
-            .. 'markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
-            .. '<path d="M0,0 L10,5 L0,10 z" fill="%s"/></marker>',
-            scheme.edgeDirected))
+        if usePalette then
+            for i = 1, #palette do
+                emit(markerDef("arrow" .. i, palette[i]))
+            end
+        else
+            emit(markerDef("arrow", scheme.edgeDirected))
+        end
         emit('</defs>')
     end
 
@@ -195,36 +225,86 @@ local function render(laidOut, opts)
         local pts = edge.points
         local n = #pts
         if n >= 2 then
+            local source = laidOut.nodes[edge.from]
             local target = laidOut.nodes[edge.to]
+            -- Route each edge through vertical *ports*: it leaves the source box
+            -- through the border facing the target (the bottom when the target
+            -- is below, the top when above) and enters the target box through
+            -- the opposite border. Because both ends sit on a box edge — not the
+            -- centre — every segment lives in the box-free gap between two layer
+            -- bands and can no longer skim across the boxes of a row. That is the
+            -- readability win over centre-to-centre edges: a near-horizontal edge
+            -- between two distant nodes in adjacent layers now travels *inside*
+            -- the gap instead of slicing through the text of everything between
+            -- them.
+            local sy = source and source.y or pts[1].y
+            local ty = target and target.y or pts[n].y
+            local down = ty >= sy
             local coords = {}
-            for i = 1, n - 1 do
-                coords[i] = {x = round(pts[i].x), y = round(pts[i].y)}
+            local function push(x, y)
+                coords[#coords + 1] = {x = round(x), y = round(y)}
             end
-            -- Clip the last point to the target box border for a clean end.
-            coords[n] = clipToBox(pts[n - 1],
-                target and {x = target.x, y = target.y} or pts[n],
-                halfW, halfH, endGap)
+            -- Source port, on the source box border facing the target.
+            if source then
+                push(source.x, source.y + (down and halfH or -halfH))
+            else
+                push(pts[1].x, pts[1].y)
+            end
+            -- Interior points are dummy-node bend points, each sitting at a layer
+            -- centre. Rather than aim the diagonal straight at that centre (which
+            -- would re-enter the layer's box band), enter the dummy's own
+            -- box-free column at the near border and leave at the far one: the
+            -- diagonal approach then stays in the inter-layer gap and only a
+            -- short vertical run passes through the band, in a slot with no box.
+            for i = 2, n - 1 do
+                local dx, dy = pts[i].x, pts[i].y
+                if down then
+                    push(dx, dy - halfH); push(dx, dy + halfH)
+                else
+                    push(dx, dy + halfH); push(dx, dy - halfH)
+                end
+            end
+            -- Target port, on the target box border, minus the arrow gap so a
+            -- directed arrowhead lands on the border instead of under the box.
+            if target then
+                push(target.x, target.y
+                    + (down and -(halfH + endGap) or (halfH + endGap)))
+            else
+                push(pts[n].x, pts[n].y)
+            end
 
+            local m = #coords
             local parts = {}
-            for i = 1, n do
+            for i = 1, m do
                 parts[i] = coords[i].x .. "," .. coords[i].y
             end
-            local edgeDirected = directed
-            if edge.directed ~= nil then edgeDirected = edge.directed end
-            local strokeColor = edgeDirected and scheme.edgeDirected
-                or scheme.edgeUndirected
+            local edgeIsDirected = directed
+            if edge.directed ~= nil then edgeIsDirected = edge.directed end
+            local cIdx = usePalette and (edgeColorIdx[edge.from] or 1) or nil
+            local strokeColor
+            if usePalette then
+                strokeColor = palette[cIdx]
+            else
+                strokeColor = edgeIsDirected and scheme.edgeDirected
+                    or scheme.edgeUndirected
+            end
+            local marker = ""
+            if edgeIsDirected then
+                marker = usePalette
+                    and string.format(' marker-end="url(#arrow%d)"', cIdx)
+                    or ' marker-end="url(#arrow)"'
+            end
             emit(string.format(
                 '<polyline points="%s" fill="none" stroke="%s" '
                 .. 'stroke-width="%d"%s/>',
-                table.concat(parts, " "), strokeColor, strokeWidth,
-                edgeDirected and ' marker-end="url(#arrow)"' or ""))
+                table.concat(parts, " "), strokeColor, strokeWidth, marker))
 
             -- Optional edge label at the polyline midpoint (Phase 5 fills
             -- these in; Phase 2 supports them if present).
             if edge.label ~= nil and edge.label ~= "" then
-                local midIdx = math.floor((n + 1) / 2)
+                local midIdx = math.floor((m + 1) / 2)
                 local a = coords[midIdx]
-                local b = coords[math.min(midIdx + 1, n)]
+                local b = coords[math.min(midIdx + 1, m)]
                 local mx, my = round((a.x + b.x) / 2), round((a.y + b.y) / 2)
                 emit(string.format(
                     '<text x="%d" y="%d" text-anchor="middle" '
