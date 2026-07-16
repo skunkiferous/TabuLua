@@ -514,7 +514,7 @@ end
 --- @return string|nil errorMessage Error/warning message if reported, else nil
 local function executeProcessor(expr, env, quota)
     local code = "return (" .. expr .. ")"
-    local opt = {quota = quota, env = env}
+    local opt = sandbox_env.protectOptions(quota, env)
     local ok, protected = pcall(sandbox.protect, code, opt)
     if not ok then
         return false, "failed to compile processor: " .. sanitizeSandboxError(protected)

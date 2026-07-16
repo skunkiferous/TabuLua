@@ -39,7 +39,10 @@ local REAL_GZIP_PLAIN = "id\tvalue\nitem1\t42\nitem2\t100\n"
 -- overrides the trailing ISIZE field, which lets a test forge a "bomb" whose
 -- declared size is huge while the actual payload stays tiny.
 local function le32(n)
-  return string.char(n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff)
+  -- arithmetic, not 5.3 bitwise operators: LuaJIT cannot parse those
+  n = n % 0x100000000
+  return string.char(n % 256, math.floor(n / 0x100) % 256,
+    math.floor(n / 0x10000) % 256, math.floor(n / 0x1000000) % 256)
 end
 local function makeGzip(data, opt_isize)
   local header = string.char(0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0x03)

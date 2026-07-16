@@ -297,6 +297,28 @@ describe("string_utils", function()
     end)
   end)
 
+  describe("formatInteger", function()
+    it("should format small integers like tostring", function()
+      assert.equals("0", string_utils.formatInteger(0))
+      assert.equals("42", string_utils.formatInteger(42))
+      assert.equals("-42", string_utils.formatInteger(-42))
+      assert.equals("1000000", string_utils.formatInteger(1000000))
+    end)
+
+    it("should never produce scientific notation for ±2^53", function()
+      -- On LuaJIT tostring(2^53) is "9.007199254741e+15" (scientific AND
+      -- rounded); formatInteger must give every digit on every Lua
+      assert.equals("9007199254740992", string_utils.formatInteger(2^53))
+      assert.equals("-9007199254740992", string_utils.formatInteger(-2^53))
+    end)
+
+    it("should round-trip through tonumber", function()
+      for _, n in ipairs({0, 1, -1, 2^31, 2^53, -2^53, 123456789012345}) do
+        assert.equals(n, tonumber(string_utils.formatInteger(n)))
+      end
+    end)
+  end)
+
   describe("module API", function()
     describe("getVersion", function()
       it("should return a version string", function()

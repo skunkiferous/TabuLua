@@ -121,6 +121,22 @@ local function stringToIdentifier(str)
     return table.concat(result)
 end
 
+--- Formats an integer-valued number as a plain digit string, on every Lua.
+--- tostring() is exact for Lua 5.3+ integers, but on LuaJIT every number is a
+--- double and tostring() formats with %.14g — an integer beyond 14 digits
+--- (e.g. 2^53) comes out as "9.007199254741e+15": scientific notation AND
+--- rounded. %.0f prints the exact integral value instead (doubles are exact
+--- through ±2^53, and %.0f shows every digit the double actually holds).
+--- @param num number An integer-valued number (assumed pre-validated)
+--- @return string The exact digit string, never scientific notation
+local function formatInteger(num)
+    local s = tostring(num)
+    if s:find("[eE.]") then
+        s = string.format("%.0f", num)
+    end
+    return s
+end
+
 --- Parses a semantic version string into a semver object.
 --- @param version string A version string in "major.minor.patch" format (e.g., "1.2.3")
 --- @return table|nil The semver object if valid, nil otherwise
@@ -244,6 +260,7 @@ local API = {
     closestMatch=closestMatch,
     editDistance=editDistance,
     escapeText=escapeText,
+    formatInteger=formatInteger,
     getVersion=getVersion,
     parseVersion=parseVersion,
     split=split,

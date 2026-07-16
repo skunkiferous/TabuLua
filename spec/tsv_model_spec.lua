@@ -5,6 +5,12 @@ local assert = require("luassert")
 
 local describe = busted.describe
 local it = busted.it
+local pending = busted.pending
+
+-- Quota-exceeded assertions need the sandbox instruction quota, which the
+-- sandbox library cannot enforce on LuaJIT (no debug count hooks) — there the
+-- expression just runs to completion and no quota error exists to assert on.
+local it_quota = require("sandbox").quota_supported and it or pending
 local before_each = busted.before_each
 
 local tsv_model = require("tsv.tsv_model")
@@ -744,7 +750,7 @@ describe("tsv_model", function()
     end)
 
     describe("very long expressions", function()
-        it("should fail when expression exceeds operation quota", function()
+        it_quota("should fail when expression exceeds operation quota", function()
             -- Create an expression that will exceed EXPRESSION_MAX_OPERATIONS (10000)
             -- A simple way is to create a deeply nested or looping computation
             local raw_tsv = {

@@ -28,6 +28,23 @@ local isBasic = predicates.isBasic
 local logger = require( "infra.named_logger").getLogger(NAME)
 
 local sandbox = require("sandbox")
+local sandbox_env = require("infra.sandbox_env")
+
+local formatInteger = require("util.string_utils").formatInteger
+
+--- Renders a number for serialized output. tostring, EXCEPT for an
+--- integer-valued number that tostring would render in scientific notation:
+--- on LuaJIT tostring(9007199254740991) is "9.007199254741e+15" — rounded! —
+--- which corrupts the value in every text format on the way back in.
+--- (Non-finite values never reach here: every caller handles them first.)
+--- @param v number The number to render
+--- @return string The exact text representation
+local function numberToText(v)
+    if v == math.floor(v) and tostring(v):find("[eE]") then
+        return formatInteger(v)
+    end
+    return tostring(v)
+end
 
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
@@ -141,9 +158,12 @@ local function serialize(v, nil_as_empty_str, in_process, depth)
         if t == "string" then
             -- Use %q for strings to properly escape special characters
             return string.format("%q", v)
+        elseif t == "number" then
+            -- Note: LuaJIT's %q quotes numbers which breaks round-trip
+            -- serialization, and its tostring rounds big integral values
+            return numberToText(v)
         else
-            -- For numbers, booleans, and nil, use tostring()
-            -- Note: LuaJIT's %q quotes numbers which breaks round-trip serialization
+            -- For booleans and nil, use tostring()
             return tostring(v)
         end
     end
@@ -318,7 +338,8 @@ local function serializeJSON(v, nil_as_empty_str, in_process, depth)
     if t == "number" then
         if math.type(v) == "integer" then
             -- Stoopid JSON doesn't support integers (well, it does, but most decoders do not, bc JavaScript does not)
-            return '{"int":"' .. tostring(v) .. '"}'
+            -- formatInteger, not tostring: LuaJIT's tostring rounds big integral values
+            return '{"int":"' .. formatInteger(v) .. '"}'
         end
         -- Handle special float values
         if v ~= v then
@@ -596,7 +617,7 @@ local function serializeSQL(v, tableSerializer)
     elseif t == "string" then
         return escapeSQLString(v)
     elseif t == "number" then
-        return tostring(v)
+        return numberToText(v)
     elseif t == "boolean" then
         return v and "1" or "0"
     elseif t == "table" then
@@ -638,7 +659,8 @@ local function serializeXML(v, nil_as_empty_str, in_process, depth)
     local t = type(v)
     if t == "number" then
         if math.type(v) == "integer" then
-            return "<integer>" .. tostring(v) .. "</integer>"
+            -- formatInteger, not tostring: LuaJIT's tostring rounds big integral values
+            return "<integer>" .. formatInteger(v) .. "</integer>"
         end
         -- Handle special float values
         if v ~= v then
@@ -793,7 +815,7 @@ local function serializeInSandbox(value)
     elseif t == "table" then
         -- Run serializeTable() in a sandbox to prevent infinite loops,
         -- excessive memory usage, or malicious __tostring metamethods
-        local opt = {quota = SERIALIZE_SANDBOX_QUOTA}
+        local opt = sandbox_env.protectOptions(SERIALIZE_SANDBOX_QUOTA, nil)
         local code = [[
             local serialize = ...
             return function(tbl)

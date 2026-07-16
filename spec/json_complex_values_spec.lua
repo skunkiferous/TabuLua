@@ -24,6 +24,11 @@ local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))
 end
 
+-- True only where integers and floats are distinct native types (Lua 5.3+).
+-- compat53 defines math.type on LuaJIT too, so probe with 1.0, which only a
+-- native runtime calls "float".
+local HAS_NATIVE_INTEGERS = math.type ~= nil and math.type(1.0) == "float"
+
 -- Builds a `json:objects:typed` document from a list of rows (field→Lua value),
 -- encoding every value in TabuLua's typed JSON form via serializeJSON (so an
 -- integer becomes {"int":"…"}, a map becomes [size,[k,v],…], etc.).
@@ -232,6 +237,13 @@ describe("JSON transcode - complex values (json-natural)", function()
     -- int64 as a NUMBER (e.g. JavaScript, capped at 2^53) emits it as a
     -- string-tagged integer {"int":"<digits>"}, which survives any JSON toolchain.
     it("`:typed` carries an int64 exactly via the {\"int\":\"...\"} string wrapper", function()
+        if not HAS_NATIVE_INTEGERS then
+            -- LuaJIT: every number is a double, so an int64 beyond ±2^53
+            -- cannot be held exactly at all — `long` is restricted to the
+            -- safe range there (see parsers/builtin.lua), and this value is
+            -- correctly REJECTED rather than silently rounded.
+            return
+        end
         local v = loadField("{id:identifier,big:long}", "json:objects:typed",
             '[{"id":"x","big":{"int":"9223372036854775807"}}]', "big")
         assert.equals(9223372036854775807, v)

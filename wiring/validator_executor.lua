@@ -238,7 +238,7 @@ local function executeValidator(expr, context, quota, extraEnv)
     local code = "return (" .. expr .. ")"
     local env = createValidatorEnv(context, extraEnv)
 
-    local opt = {quota = quota, env = env}
+    local opt = sandbox_env.protectOptions(quota, env)
     local ok, protected = pcall(sandbox.protect, code, opt)
     if not ok then
         return false, "failed to compile validator: " .. tostring(protected)
@@ -268,7 +268,7 @@ local function evaluateInValidatorEnv(expr, context, quota, extraEnv)
     local code = "return (" .. expr .. ")"
     local env = createValidatorEnv(context, extraEnv)
 
-    local opt = {quota = quota, env = env}
+    local opt = sandbox_env.protectOptions(quota, env)
     local compile_ok, protected = pcall(sandbox.protect, code, opt)
     if not compile_ok then
         return false, "failed to compile expression: " .. tostring(protected)

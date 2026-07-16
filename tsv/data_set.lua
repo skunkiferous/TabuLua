@@ -1352,10 +1352,7 @@ function DataSet:transformCells(fileName, columnName, expression)
         env.getRow = function(fn, k)
             return self:getRow(fn, k)
         end
-        local opt = {env = env}
-        if sandbox.quota_supported then
-            opt.quota = 10000
-        end
+        local opt = sandbox_env.protectOptions(10000, env)
         local ok, protected = pcall(sandbox.protect, code, opt)
         if not ok then
             return nil, "transformCells compile error: " .. tostring(protected)

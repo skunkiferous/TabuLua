@@ -2,8 +2,8 @@
 
 ## Status
 
-**Lua 5.5 now passes at full parity with Lua 5.4 (2026-07-12). ltcn was hiding three further
-bugs; all four are fixed and verified in the working tree, NOT yet committed.**
+**Lua 5.5 now passes at full parity with Lua 5.4 (2026-07-12, since committed). ltcn was
+hiding three further bugs; all four are fixed and verified.**
 
 ### What was actually wrong (ltcn was only the first layer)
 
@@ -46,7 +46,7 @@ is why the container baselines had ~48 pre-existing failures on *both* 5.4 and 5
 - ✅ `documentation/CHANGELOG.md` — entry written under `[Unreleased]` (Changed: 5.5 parity,
   Docker images, interpreter probe; Fixed: libdeflate case-sensitivity, the holed-row
   serialization, the semver comparison).
-- ⬜ **Not committed** — the user commits.
+- ✅ Committed.
 - ✅ Optional: file the ltcn issue upstream (nobody has, in 20 months) and a 5.5 rockspec
   request for libdeflate. Neither blocks us. The ltcn issue is **written and ready to paste**:
   [TODO/ltcn_upstream_issue.md](ltcn_upstream_issue.md) — it reproduces the failure with ltcn's

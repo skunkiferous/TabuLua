@@ -13,6 +13,7 @@ local string_utils = require("util.string_utils")
 local escapeText = string_utils.escapeText
 local unescapeText = string_utils.unescapeText
 local parseVersion = string_utils.parseVersion
+local formatInteger = string_utils.formatInteger
 
 local predicates = require("util.predicates")
 local isString = predicates.isString
@@ -601,7 +602,9 @@ function M.registerDerivedParsers()
         if math.type and math.type(num) ~= 'integer' then
             num = math.floor(num)
         end
-        return num, tostring(num)
+        -- formatInteger, not tostring: LuaJIT's tostring goes scientific
+        -- (and rounds!) past 14 digits, e.g. at ±2^53
+        return num, formatInteger(num)
     end)
 
     -- Helper to format a float with a decimal point (e.g., 5 -> "5.0")
@@ -770,7 +773,8 @@ function M.registerDerivedParsers()
                     "LuaJIT cannot precisely represent 64-bit integers outside ±2^53")
                 return nil, tostring(num)
             end
-            return math.floor(num), tostring(math.floor(num))
+            num = math.floor(num)
+            return num, formatInteger(num)
         end)
     end
 

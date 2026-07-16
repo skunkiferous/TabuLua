@@ -3,6 +3,22 @@ FROM nickblah/luajit:2.1-luarocks-alpine
 # Install build dependencies
 RUN apk add --no-cache build-base linux-headers git
 
+# Rebuild LuaJIT with LUA52COMPAT and install it over the stock one.
+# TabuLua's read-only layer wraps every table in an EMPTY proxy whose length,
+# iteration and equality come from __len / __pairs / __ipairs metamethods.
+# compat53 patches pairs()/ipairs() at the library level, but the # operator
+# cannot be patched by any library — LuaJIT only honors __len on tables when
+# compiled with -DLUAJIT_ENABLE_LUA52COMPAT (a build-time option; the stock
+# image build lacks it, so `#proxy` silently answers 0 and every table looks
+# empty). Same ABI/soname, so the C rocks installed below stay compatible.
+RUN git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git /tmp/luajit && \
+    cd /tmp/luajit && \
+    make amalg XCFLAGS=-DLUAJIT_ENABLE_LUA52COMPAT && \
+    make install && \
+    rm -rf /tmp/luajit && \
+    luajit -e 'local p = setmetatable({}, {__len = function() return 5 end}); \
+        assert(#p == 5, "LUA52COMPAT build did not take: __len is not honored")'
+
 # Install Lua dependencies
 # Note: compat53 provides Lua 5.3 compatibility (utf8, table.move, etc.)
 RUN luarocks install compat53 && \

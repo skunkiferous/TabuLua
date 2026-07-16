@@ -47,8 +47,9 @@ end
 -- archive_formats / file_util archive specs) ----
 local u32le = compression.u32le
 local function u16le(n)
-    n = n & 0xFFFF
-    return string.char(n & 0xFF, (n >> 8) & 0xFF)
+    -- arithmetic, not 5.3 bitwise operators: LuaJIT cannot parse those
+    n = n % 0x10000
+    return string.char(n % 256, math.floor(n / 256))
 end
 local LibDeflate = require("LibDeflate")
 

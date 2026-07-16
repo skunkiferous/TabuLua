@@ -469,8 +469,8 @@ local function loadCodeLibrary(badVal, package_path, library_name, library_path)
     -- tableUtils, equals). Code libraries need nothing site-specific.
     local lib_env = sandbox_env.new()
 
-    -- Execute in sandbox with quota
-    local opt = {quota = CODE_LIBRARY_MAX_OPERATIONS, env = lib_env}
+    -- Execute in sandbox with quota (where the runtime supports one)
+    local opt = sandbox_env.protectOptions(CODE_LIBRARY_MAX_OPERATIONS, lib_env)
     local success, protected_func = pcall(sandbox.protect, content, opt)
     if not success then
         badVal(library_path, "Failed to compile library '" .. library_name .. "': " .. tostring(protected_func))

@@ -1344,8 +1344,10 @@ if isMainScript then
                 -- Comma-separated colour list overriding the default palette.
                 local spec = arg_i:match("^%-%-svg%-edge%-palette=(.+)$")
                 local colors, bad = {}, nil
-                for c in (spec or ""):gmatch("[^,]+") do
-                    c = c:match("^%s*(.-)%s*$")  -- trim
+                for raw in (spec or ""):gmatch("[^,]+") do
+                    -- fresh local: a for-in control variable is <const> on
+                    -- Lua 5.5 and cannot be reassigned (the ltcn lesson)
+                    local c = raw:match("^%s*(.-)%s*$")  -- trim
                     if isSvgColor(c) then colors[#colors + 1] = c
                     else bad = c end
                 end

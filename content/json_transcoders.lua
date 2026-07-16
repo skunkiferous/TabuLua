@@ -8,6 +8,7 @@ local semver = require("semver")
 local VERSION = semver(0, 32, 0)
 
 local read_only = require("util.read_only")
+local formatInteger = require("util.string_utils").formatInteger
 local readOnly = read_only.readOnly
 
 -- dkjson parses the input; parsers gives the typed schema for the file's
@@ -246,6 +247,19 @@ local function reconstructNatural(v, typeSpec)
     return processNaturalValue(v)
 end
 
+-- Renders a scalar for the wide-TSV cell. Numbers normally pass through
+-- (rawTSVToString stringifies), but an INTEGRAL number that tostring() would
+-- render in scientific notation is written as its exact digit string instead:
+-- on LuaJIT tostring(9007199254740991) is "9.007199254741e+15" — rounded! —
+-- which would corrupt a {"int":"…"} wrapper on its way into the TSV.
+-- (Finite check is implicit: tostring of inf/nan has no exponent marker.)
+local function scalarToCell(v)
+    if type(v) == "number" and v == math.floor(v) and tostring(v):find("[eE]") then
+        return formatInteger(v)
+    end
+    return v
+end
+
 -- Converts one JSON value to a raw-TSV cell, guided by the column's `fieldType`.
 --   * missing/null            -> empty cell
 --   * JSON table              -> reconstruct, then native cell text (composite
@@ -275,7 +289,7 @@ local function valueToCell(v, fieldType, reconstruct, flag, where)
         end
         flagNonFinite(lv, flag, where)
         if type(lv) ~= "table" then
-            return lv   -- typed scalar wrapper unwrapped to a scalar
+            return scalarToCell(lv)   -- typed scalar wrapper unwrapped to a scalar
         end
         local serOk, txt = pcall(toCellText, lv)
         if not serOk then
@@ -287,7 +301,7 @@ local function valueToCell(v, fieldType, reconstruct, flag, where)
     if type(v) == "number" then
         flagNonFinite(v, flag, where)
     end
-    return v   -- string / number / boolean; rawTSVToString stringifies
+    return scalarToCell(v)   -- string / number / boolean; rawTSVToString stringifies
 end
 
 -- Decodes JSON content, requiring a top-level array. Returns (array) or (nil, errmsg).

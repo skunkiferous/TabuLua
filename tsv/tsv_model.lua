@@ -37,6 +37,7 @@ local transposeRawTSV = raw_tsv_module.transposeRawTSV
 local error_reporting = require("infra.error_reporting")
 
 local sandbox = require("sandbox")
+local sandbox_env = require("infra.sandbox_env")
 
 local parsers = require("parsers")
 
@@ -963,11 +964,7 @@ local function expressionEvaluatorGenerator(env, log)
         if type(expr) == "string" and expr:sub(1,1) == '=' then
             local code = "return (" .. expr:sub(2) .. ")"
             local expr_env = setmetatable({self = context}, mt)
-            -- Only use quota if supported (not supported on LuaJIT)
-            local opt = {env = expr_env}
-            if sandbox.quota_supported then
-                opt.quota = EXPRESSION_MAX_OPERATIONS
-            end
+            local opt = sandbox_env.protectOptions(EXPRESSION_MAX_OPERATIONS, expr_env)
             -- Wrap sandbox.protect in pcall to catch compilation errors (e.g., syntax errors)
             local protect_ok, protected = pcall(sandbox.protect, code, opt)
             if not protect_ok then

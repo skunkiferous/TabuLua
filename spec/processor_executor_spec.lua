@@ -5,6 +5,12 @@ local assert = require("luassert")
 
 local describe = busted.describe
 local it = busted.it
+local pending = busted.pending
+
+-- Quota-abort tests need the sandbox instruction quota, which the sandbox
+-- library cannot enforce on LuaJIT (no debug count hooks) — there the looping
+-- processor would genuinely hang, so they are pending rather than red.
+local it_quota = require("sandbox").quota_supported and it or pending
 
 local processor_executor = require("wiring.processor_executor")
 local tsv_model = require("tsv.tsv_model")
@@ -323,7 +329,7 @@ describe("processor_executor", function()
     -- Quota enforcement
     -- ============================================================
     describe("quota enforcement", function()
-        it("should abort cleanly when an infinite loop hits the quota", function()
+        it_quota("should abort cleanly when an infinite loop hits the quota", function()
             local dataset = buildDataset({
                 {"name:identifier"},
                 {"alice"},

@@ -11,9 +11,59 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **LuaJIT 2.1 now passes the full suite, at parity with Lua 5.3/5.4/5.5** — 3250 of
+  the same 3253 tests, the other 3 `pending` there by design (they assert sandbox
+  instruction-quota behaviour LuaJIT cannot provide). It previously lost ~30 whole spec
+  files at `require` time. Four root causes (see `TODO/luajit_compatibility.md` for the
+  full story):
+  1. *Bitwise operator syntax* — the zip/gzip code used Lua 5.3's `&`/`~`/`>>`, which
+     LuaJIT (5.1 syntax) cannot even parse, killing every loader-touching spec. New
+     `util/bit_ops.lua` provides `band`/`bor`/`bxor`/`lshift`/`rshift` on every Lua:
+     the 5.3+ implementation is compiled from a string (`load`), LuaJIT uses its `bit`
+     library with results normalized to unsigned 32-bit (raw `bit.*` returns signed
+     values, which would corrupt CRC-32 comparisons). Trivial flag tests and
+     little-endian byte encoders became plain arithmetic.
+  2. *Sandbox quotas raise on LuaJIT* (`debug.sethook` count hooks don't exist there):
+     seven newer modules passed `quota` unconditionally, so every validator, processor,
+     code library, COG block and `.lua` data file failed. One new helper —
+     `sandbox_env.protectOptions(quota, env)` — applies the quota only where the
+     sandbox library can enforce it; all ten call sites (including the two that already
+     guarded by hand) route through it. Consequence: on LuaJIT, sandboxed user code
+     runs without an operation limit — sandboxed for API surface, not instruction-counted.
+  3. *`#` on a read-only proxy answered 0* — the read-only layer's empty proxies need
+     the `__len` metamethod, which LuaJIT only honours when **built with
+     `-DLUAJIT_ENABLE_LUA52COMPAT`** (no library can patch the `#` operator; this was
+     401 of 402 remaining errors, via `processTSV` never processing a single row).
+     `Docker/Dockerfile.luajit` now rebuilds LuaJIT from source with the flag and
+     asserts it took. A LUA52COMPAT build is a hard requirement for TabuLua on LuaJIT.
+  4. *`tostring()` corrupts big integers on LuaJIT* (`%.14g`: `9007199254740991` →
+     `"9.007199254741e+15"`, scientific **and rounded**). New
+     `string_utils.formatInteger` renders integral values exactly on every Lua; used in
+     the integer/long parsers' reformatted strings, parser-name encoding
+     (`number_identifiers`), the typed-JSON `{"int":"…"}` wrapper, the XML `<integer>`
+     tag, SQL export, Lua-literal serialization, and the JSON→TSV transcode path.
+     Byte-identical output on Lua 5.3+ — native-integer `tostring` never goes
+     scientific — so only LuaJIT behaviour changed.
+
+  Genuine double-semantics differences remain by design and are asserted per-runtime in
+  the specs: `long` rejects values outside ±2^53 on LuaJIT instead of rounding; `1e6`
+  is indistinguishable from `1000000` (specs probe native integers via
+  `math.type(1.0) == "float"` — a bare `math.type ~= nil` check is wrong under
+  compat53, and one such stale gate in `parsers_simple_spec` was fixed); LuaJIT's
+  `string.format` renders subnormal doubles as garbage. The `migration_spec`
+  interpreter probe gained `luajit` as a final candidate.
+
 ### Removed
 
 ### Fixed
+
+- **`--svg-edge-palette=` parsing crashed the reformatter on Lua 5.5.** The colour-list
+  loop reassigned its `for ... in` control variable (the trim step), which Lua 5.5 makes
+  implicitly `<const>` — the very pattern that broke `ltcn` (see `TODO/lua55_compatibility.md`),
+  this time in our own code, and a compile-time error, so merely *loading* `reformatter`
+  failed and took the whole 5.5 suite's reformatter/XML-round-trip specs with it. The loop
+  now copies into a fresh local. (Introduced with the SVG edge-palette flags, after the 5.5
+  parity run.)
 
 ## [0.32.0] - 2026-07-16
 

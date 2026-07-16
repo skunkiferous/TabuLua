@@ -680,21 +680,23 @@ describe("migration", function()
 
     describe("CLI", function()
         -- The interpreter is named "lua54" on the dev box but plain "lua" in the Docker
-        -- test images, so hard-coding either name fails the CLI tests everywhere else
-        -- ("sh: lua54: not found"). Probe the same candidates, in the same order, as
-        -- bad_input/run_bad_input_tests.sh.
+        -- test images (and only "luajit" exists in the LuaJIT image), so hard-coding
+        -- any one name fails the CLI tests everywhere else ("sh: lua54: not found").
+        -- Probe the same candidates, in the same order, as
+        -- bad_input/run_bad_input_tests.sh, plus luajit last.
         local function findLua()
-            for _, candidate in ipairs({ "lua54", "lua5.4", "lua" }) do
+            for _, candidate in ipairs({ "lua54", "lua5.4", "lua", "luajit" }) do
                 local h = io.popen(candidate .. " -v 2>&1", "r")
                 if h then
                     local out = h:read("*a") or ""
                     local ok = h:close()
-                    if ok and out:match("^Lua %d") then
+                    -- "^Lua%a* %d" accepts both "Lua 5.4..." and "LuaJIT 2.1..."
+                    if ok and out:match("^Lua%a* %d") then
                         return candidate
                     end
                 end
             end
-            error("No Lua interpreter found (tried lua54, lua5.4, lua)")
+            error("No Lua interpreter found (tried lua54, lua5.4, lua, luajit)")
         end
 
         local LUA = findLua()

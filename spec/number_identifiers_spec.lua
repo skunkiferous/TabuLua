@@ -10,6 +10,16 @@ local it = busted.it
 
 local number_identifiers = require("util.number_identifiers")
 local error_reporting = require("infra.error_reporting")
+local formatInteger = require("util.string_utils").formatInteger
+
+-- True only where integers and floats are distinct native types (Lua 5.3+).
+-- compat53 defines math.type on LuaJIT too, but there every whole double
+-- reports "integer" — only a native runtime answers "float" for 1.0.
+local HAS_NATIVE_INTEGERS = math.type ~= nil and math.type(1.0) == "float"
+
+-- LuaJIT's string.format cannot render subnormal doubles ("%.17f" of 2^-1074
+-- yields garbage digits), so subnormal round-trip behavior differs there.
+local SUBNORMAL_FMT_OK = string.format("%.17f", 2^-1074):match("^0%.") ~= nil
 
 describe("number_identifiers", function()
   local nullBadVal = error_reporting.nullBadVal
@@ -35,7 +45,13 @@ describe("number_identifiers", function()
     end)
 
     it("should handle scientific notation correctly", function()
-      assert.equals("_F1000000_", number_identifiers.numberToIdentifier(nullBadVal, 1e6))
+      if HAS_NATIVE_INTEGERS then
+        assert.equals("_F1000000_", number_identifiers.numberToIdentifier(nullBadVal, 1e6))
+      else
+        -- All numbers are doubles (LuaJIT): 1e6 IS 1000000, so it encodes
+        -- as the integer it is indistinguishable from
+        assert.equals("_I1000000", number_identifiers.numberToIdentifier(nullBadVal, 1e6))
+      end
       assert.equals("_F0_000001", number_identifiers.numberToIdentifier(nullBadVal, 1e-6))
     end)
 
@@ -50,15 +66,16 @@ describe("number_identifiers", function()
       local maxint = math.maxinteger
       local minint = math.mininteger
 
-      -- Test max integer
+      -- Test max integer (formatInteger, not tostring: LuaJIT's tostring is
+      -- scientific for 16-digit values, the identifier never is)
       local id = number_identifiers.numberToIdentifier(nullBadVal, maxint)
       assert.is_not_nil(id)
-      assert.equals("_I" .. tostring(maxint), id)
+      assert.equals("_I" .. formatInteger(maxint), id)
 
       -- Test min integer
       id = number_identifiers.numberToIdentifier(nullBadVal, minint)
       assert.is_not_nil(id)
-      assert.equals("_I_" .. tostring(minint):sub(2), id)
+      assert.equals("_I_" .. formatInteger(minint):sub(2), id)
 
       -- Test values near the boundaries
       assert.is_not_nil(number_identifiers.numberToIdentifier(nullBadVal, maxint - 1))
@@ -179,6 +196,11 @@ describe("number_identifiers", function()
     end)
 
     it("should document that true subnormals lose precision", function()
+      if not SUBNORMAL_FMT_OK then
+        -- LuaJIT: string.format itself renders subnormals as garbage, so
+        -- there is no defined value to assert on
+        return
+      end
       -- True subnormals cannot round-trip due to fixed-point format limitations
       local smallest_subnormal = 2^-1074
       local id = number_identifiers.numberToIdentifier(nullBadVal, smallest_subnormal)

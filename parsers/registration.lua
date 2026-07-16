@@ -705,7 +705,7 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
     -- Validate that the expression compiles
     local code = "return (" .. exprString .. ")"
     local compile_env = sandbox_env.new({value = 0})  -- dummy value for the compile check
-    local compile_opt = {quota = 100, env = compile_env}
+    local compile_opt = sandbox_env.protectOptions(100, compile_env)
     local compile_ok, compile_result = pcall(sandbox.protect, code, compile_opt)
     if not compile_ok then
         utils.log(badVal, newParserName, exprString, "failed to compile validate expression: " .. tostring(compile_result))
@@ -719,7 +719,7 @@ function M.restrictWithExpression(badVal, parentName, newParserName, exprString)
 
         -- Create sandboxed environment with the parsed value
         local expr_env = sandbox_env.new({value = parsed})
-        local opt = {quota = VALIDATE_EXPR_MAX_OPERATIONS, env = expr_env}
+        local opt = sandbox_env.protectOptions(VALIDATE_EXPR_MAX_OPERATIONS, expr_env)
         local ok, protected_func = pcall(sandbox.protect, code, opt)
         if not ok then
             utils.log(badVal2, newParserName, value, "validate expression error: " .. tostring(protected_func))

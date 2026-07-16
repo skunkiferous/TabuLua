@@ -126,7 +126,8 @@ end
 -- exceeding the quota), or a non-table result all report a clear reason.
 local function loadLuaTable(content)
     local quota = math.max(QUOTA_FLOOR, #content * 16)
-    local ok, fn = pcall(sandbox.protect, content, {quota = quota, env = sandbox_env.new()})
+    local ok, fn = pcall(sandbox.protect, content,
+        sandbox_env.protectOptions(quota, sandbox_env.new()))
     if not ok then
         return nil, "cannot compile: " .. tostring(fn)
     end

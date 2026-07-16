@@ -10,6 +10,10 @@ local VERSION = semver(0, 32, 0)
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
+-- The kikito sandbox rock, needed only for its quota_supported capability
+-- flag (see protectOptions below).
+local sandbox = require("sandbox")
+
 local predicates = require("util.predicates")
 local string_utils = require("util.string_utils")
 local table_utils = require("util.table_utils")
@@ -164,6 +168,24 @@ local function cogGlobals()
     return new()
 end
 
+--- Builds the options table for `sandbox.protect`, applying the instruction
+--- quota only where the sandbox library can enforce one. kikito's sandbox
+--- implements quotas with `debug.sethook` count hooks, which LuaJIT does not
+--- support — passing `quota` there raises instead of protecting, so every
+--- call site that hard-codes `{quota = n, env = e}` is broken on LuaJIT.
+--- This is the single place allowed to know that; on LuaJIT the code runs
+--- sandboxed but without an operation limit.
+--- @param quota number Maximum operations allowed (ignored where unsupported)
+--- @param env table|nil The sandbox environment
+--- @return table Options for sandbox.protect
+local function protectOptions(quota, env)
+    local opt = {env = env}
+    if sandbox.quota_supported then
+        opt.quota = quota
+    end
+    return opt
+end
+
 -- Provides a tostring() function for the API
 local function apiToString()
     return NAME .. " version " .. tostring(VERSION)
@@ -174,6 +196,7 @@ local API = {
     getVersion = getVersion,
     new = new,
     cogGlobals = cogGlobals,
+    protectOptions = protectOptions,
 }
 
 -- Enables the module to be called as a function

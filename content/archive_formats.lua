@@ -289,7 +289,7 @@ local function parseCentralDirectory(s, opts)
                 and nameLen and extraLen and commentLen and offset) then
             return nil, ("corrupt zip (truncated central-directory header at entry %d)"):format(k)
         end
-        if (flag & 0x01) ~= 0 then
+        if flag % 2 ~= 0 then                        -- general-purpose bit 0
             return nil, "encrypted zip archives are not supported"
         end
         if compSize == U32_MAX or size == U32_MAX or offset == U32_MAX then

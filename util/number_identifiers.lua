@@ -17,6 +17,8 @@ end
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 local error_reporting = require("infra.error_reporting")
+local string_utils = require("util.string_utils")
+local formatInteger = string_utils.formatInteger
 
 --- Logs a bad value using the error reporting system.
 --- @param badVal function The badVal callback for logging errors
@@ -58,10 +60,13 @@ local function numberToIdentifier(badVal, num)
 
     local mt = math.type(num)
     if mt == "integer" then
+        -- formatInteger, not tostring: LuaJIT's tostring goes scientific
+        -- (and rounds!) past 14 digits — "_I9.007199254741e+15" is not even
+        -- a valid identifier, and does not round-trip
         if num < 0 then
-            return "_I_" .. tostring(num):sub(2)
+            return "_I_" .. formatInteger(num):sub(2)
         else
-            return "_I" .. num
+            return "_I" .. formatInteger(num)
         end
     else
         -- Format float with minimum precision needed for round-trip

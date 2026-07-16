@@ -10,6 +10,14 @@ local VERSION = semver(0, 32, 0)
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
+-- Bitwise ops via util.bit_ops, NOT the native 5.3 operators: LuaJIT (5.1
+-- syntax) cannot parse `&`/`~`/`>>`, so spelling them here would make this
+-- module — and everything that requires it — unloadable there.
+local bit_ops = require("util.bit_ops")
+local band = bit_ops.band
+local bxor = bit_ops.bxor
+local rshift = bit_ops.rshift
+
 local logger = require("infra.named_logger").getLogger(NAME)
 
 -- Returns the module version as a string.
@@ -147,20 +155,20 @@ local function gzipFraming(s)
     end
     local flg = s:byte(4)
     local pos = 11                                  -- past the 10-byte fixed header
-    if (flg & 0x04) ~= 0 then                       -- FEXTRA: 2-byte length + payload
+    if band(flg, 0x04) ~= 0 then                    -- FEXTRA: 2-byte length + payload
         if pos + 1 > #s then return nil, "truncated gzip FEXTRA field" end
         local xlen = s:byte(pos) + s:byte(pos + 1) * 256
         pos = pos + 2 + xlen
     end
-    if (flg & 0x08) ~= 0 then                        -- FNAME: NUL-terminated
+    if band(flg, 0x08) ~= 0 then                     -- FNAME: NUL-terminated
         while pos <= #s and s:byte(pos) ~= 0 do pos = pos + 1 end
         pos = pos + 1
     end
-    if (flg & 0x10) ~= 0 then                        -- FCOMMENT: NUL-terminated
+    if band(flg, 0x10) ~= 0 then                     -- FCOMMENT: NUL-terminated
         while pos <= #s and s:byte(pos) ~= 0 do pos = pos + 1 end
         pos = pos + 1
     end
-    if (flg & 0x02) ~= 0 then                        -- FHCRC: 2 bytes
+    if band(flg, 0x02) ~= 0 then                     -- FHCRC: 2 bytes
         pos = pos + 2
     end
     if pos > #s - 8 then
@@ -236,10 +244,10 @@ local function crc32(s)
         for i = 0, 255 do
             local c = i
             for _ = 1, 8 do
-                if (c & 1) ~= 0 then
-                    c = 0xEDB88320 ~ (c >> 1)
+                if band(c, 1) ~= 0 then
+                    c = bxor(0xEDB88320, rshift(c, 1))
                 else
-                    c = c >> 1
+                    c = rshift(c, 1)
                 end
             end
             t[i] = c
@@ -248,16 +256,17 @@ local function crc32(s)
     end
     local crc = 0xFFFFFFFF
     for i = 1, #s do
-        crc = (crc >> 8) ~ t[(crc ~ s:byte(i)) & 0xFF]
+        crc = bxor(rshift(crc, 8), t[band(bxor(crc, s:byte(i)), 0xFF)])
     end
-    return crc ~ 0xFFFFFFFF
+    return bxor(crc, 0xFFFFFFFF)
 end
 
 -- Encodes a number as 4 little-endian bytes — the format of the gzip trailer's
 -- CRC32 and ISIZE fields — taking it modulo 2^32 as the format requires.
 local function u32le(n)
-    n = n & 0xFFFFFFFF
-    return string.char(n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF)
+    n = n % 0x100000000
+    return string.char(n % 256, math.floor(n / 0x100) % 256,
+        math.floor(n / 0x10000) % 256, math.floor(n / 0x1000000) % 256)
 end
 
 -- The fixed 10-byte gzip header (RFC 1952): magic 1f 8b, CM=8 (deflate), FLG=0

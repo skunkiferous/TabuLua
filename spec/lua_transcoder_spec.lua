@@ -9,6 +9,12 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
+local pending = busted.pending
+
+-- The looping-file abort relies on the sandbox instruction quota, which the
+-- sandbox library cannot enforce on LuaJIT (no debug count hooks) — there the
+-- test would genuinely hang, so it is pending rather than red.
+local it_quota = require("sandbox").quota_supported and it or pending
 
 local error_reporting = require("infra.error_reporting")
 local lua_transcoder = require("content.lua_transcoder")
@@ -61,7 +67,7 @@ describe("lua_transcoder", function()
             assert.matches("lua transcoder", joined())
         end)
 
-        it("aborts (does not hang) on a file that loops instead of returning", function()
+        it_quota("aborts (does not hang) on a file that loops instead of returning", function()
             -- The instruction quota trips well before this could hang the load.
             local out = lua_transcoder.luaToTSV("evil.lua", "while true do end", {}, badVal)
             assert.is_nil(out)

@@ -19,6 +19,12 @@ local unwrap = read_only.unwrap
 
 local semver = require("semver")
 
+-- True only where integers and floats are distinct native types (Lua 5.3+).
+-- `math.type ~= nil` is NOT a valid probe: compat53 defines math.type on
+-- LuaJIT too, and there it calls every whole double an "integer" — only a
+-- native runtime answers "float" for 1.0.
+local HAS_NATIVE_INTEGERS = math.type ~= nil and math.type(1.0) == "float"
+
 -- Returns a "badVal" object that store errors in the given table
 local function mockBadVal(log_messages)
     local log = function(self, msg) table.insert(log_messages, msg) end
@@ -207,16 +213,31 @@ describe("parsers - simple types", function()
       assert_equals_2(nil, "1.23", integerParser(badVal, "1.23"))
       assert_equals_2(nil, "abc", integerParser(badVal, "abc"))
       assert_equals_2(nil, "", integerParser(badVal, ""))
-      -- Values outside safe integer range should be rejected
-      assert_equals_2(nil, "9007199254740993", integerParser(badVal, "9007199254740993"))
-      assert_equals_2(nil, "-9007199254740993", integerParser(badVal, "-9007199254740993"))
-      assert.same({
-        "Bad integer  in test on line 1: '1.23'",
-        "Bad integer  in test on line 1: 'abc'",
-        "Bad integer  in test on line 1: ''",
-        "Bad integer  in test on line 1: '9007199254740993' (value outside safe integer range (±2^53))",
-        "Bad integer  in test on line 1: '-9007199254740993' (value outside safe integer range (±2^53))",
-      }, log_messages)
+      if HAS_NATIVE_INTEGERS then
+        -- Values outside safe integer range should be rejected
+        assert_equals_2(nil, "9007199254740993", integerParser(badVal, "9007199254740993"))
+        assert_equals_2(nil, "-9007199254740993", integerParser(badVal, "-9007199254740993"))
+        assert.same({
+          "Bad integer  in test on line 1: '1.23'",
+          "Bad integer  in test on line 1: 'abc'",
+          "Bad integer  in test on line 1: ''",
+          "Bad integer  in test on line 1: '9007199254740993' (value outside safe integer range (±2^53))",
+          "Bad integer  in test on line 1: '-9007199254740993' (value outside safe integer range (±2^53))",
+        }, log_messages)
+      else
+        -- All numbers are doubles (LuaJIT): tonumber("9007199254740993")
+        -- ROUNDS to 2^53 before the parser ever sees it, so the value is
+        -- indistinguishable from valid input and is accepted at the rounded
+        -- value. This documents the boundary precision loss, it does not
+        -- endorse it.
+        assert_equals_2(9007199254740992, "9007199254740992",
+          integerParser(badVal, "9007199254740993"))
+        assert.same({
+          "Bad integer  in test on line 1: '1.23'",
+          "Bad integer  in test on line 1: 'abc'",
+          "Bad integer  in test on line 1: ''",
+        }, log_messages)
+      end
     end)
 
     it("should validate float", function()
@@ -254,8 +275,9 @@ describe("parsers - simple types", function()
       assert_equals_2(-456, "-456", longParser(badVal, "-456"))
       assert_equals_2(0, "0", longParser(badVal, "0"))
       -- Large values that exceed safe integer range (2^53) - valid on Lua 5.3+
-      -- On Lua 5.3+, long supports full 64-bit range
-      if math.type then
+      -- On Lua 5.3+, long supports full 64-bit range (NOT gated on `math.type`:
+      -- compat53 defines that on LuaJIT too, where these values don't fit a double)
+      if HAS_NATIVE_INTEGERS then
         assert_equals_2(9007199254740993, "9007199254740993", longParser(badVal, "9007199254740993"))
         assert_equals_2(9223372036854775807, "9223372036854775807", longParser(badVal, "9223372036854775807"))
         assert_equals_2(-9223372036854775808, "-9223372036854775808", longParser(badVal, "-9223372036854775808"))

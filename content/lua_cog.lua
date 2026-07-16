@@ -20,6 +20,7 @@ local function getVersion()
 end
 
 local sandbox = require("sandbox")
+local sandbox_env = require("infra.sandbox_env")
 
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
@@ -163,7 +164,7 @@ local function processLines(lines, env, errors)
                 inOutputBlock = true
 
                 -- Execute the code block, using th provided environment, "env"
-                local opt = {quota = 40000, env = env or {}}
+                local opt = sandbox_env.protectOptions(40000, env or {})
                 local success, protected_func = pcall(sandbox.protect, codeBuffer, opt)
                 local result
                 if success then
