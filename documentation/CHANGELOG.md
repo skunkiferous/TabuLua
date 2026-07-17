@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **New `int64` built-in type: exact 64-bit signed integers on EVERY Lua version,
+  including LuaJIT.** A true int64 cannot live in a LuaJIT number (doubles round
+  past ±2^53, and `tonumber()` rounds before any parser code can react), so the
+  parsed value is the **canonical decimal string** — never converted to a number,
+  therefore exact and byte-identical through parsing, sorting (numeric order via a
+  dedicated comparator, not lexical) and every export format, on every version.
+  Input is lenient (`042`, `+5`, `-0`), output canonical (`42`, `5`, `0`); the type
+  logically extends `string` (the `percent` precedent, in reverse). Unlike `long`,
+  an `int64` column loads with full 64-bit precision on LuaJIT too.
+- **New `util/int64.lua`: exact comparison and arithmetic on int64 strings.**
+  Plain Lua operators on int64 strings would silently coerce through doubles
+  (string→number coercion), losing exactly the precision the type protects, so the
+  module provides `of` (normalize a string or number to a canonical int64 string),
+  `compare`, `eq`/`lt`/`le`/`gt`/`ge`, `add`/`sub`/`neg`, and `MIN`/`MAX`. One pure-Lua
+  string-arithmetic code path — no FFI, no version probes in results — so answers are
+  identical on Lua 5.3/5.4/5.5 and LuaJIT. Every function returns `nil` plus an error
+  message for invalid input or int64 overflow (no wrapping). `of` accepts native
+  5.3+ integers through the full range, but rejects *doubles* beyond ±2^53 even
+  where they happen to be exact — accepting them would make the same expression
+  version-dependent ("pass the value as an int64 string instead").
+
 ### Changed
 
 - **LuaJIT 2.1 now passes the full suite, at parity with Lua 5.3/5.4/5.5** — 3250 of

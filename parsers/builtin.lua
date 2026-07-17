@@ -31,6 +31,8 @@ local regex_utils = require("util.regex_utils")
 
 local base64 = require("util.base64")
 
+local int64 = require("util.int64")
+
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
 local nullBadVal = error_reporting.nullBadVal
@@ -258,6 +260,63 @@ end
 -- but the "input" format does not match the number format
 generators.extendsOrRestrictsType('percent', 'number')
 state.COMPARATORS.percent = state.COMPARATORS.number
+
+-- "int64" is an exact 64-bit signed integer, carried as its canonical decimal
+-- STRING on EVERY Lua version. It exists because a true int64 cannot live in a
+-- LuaJIT number (doubles round past ±2^53, and tonumber() rounds before any
+-- parser code runs), and a per-version representation would make exports
+-- diverge — the string is the one carrier that is exact and byte-identical
+-- everywhere. Use util/int64.lua for comparison and add/sub arithmetic on
+-- these values; plain Lua operators on them either fail or silently coerce
+-- through doubles.
+state.PARSERS.int64 = function (badVal, value, context)
+    utils.expectTSV(context) -- Just for side-effects
+    local t = type(value)
+    if t == "number" then
+        -- Lua-defined content may hold numbers; int64.of converts exactly
+        -- (native integers fully, doubles only within ±2^53) or says why not
+        local canon, err = int64.of(value)
+        if canon == nil then
+            utils.log(badVal, 'int64', value, err)
+            return nil, tostring(value)
+        end
+        return canon, canon
+    end
+    if t ~= "string" then
+        utils.log(badVal, 'int64', value)
+        return nil, tostring(value)
+    end
+    -- Lenient on input (optional '+', leading zeros), canonical on output
+    local sign, digits = value:match("^([%-+]?)(%d+)$")
+    if digits == nil then
+        utils.log(badVal, 'int64', value)
+        return nil, value
+    end
+    digits = digits:gsub("^0+", "")
+    local canon
+    if digits == "" then
+        canon = "0"
+    elseif sign == "-" then
+        canon = "-" .. digits
+    else
+        canon = digits
+    end
+    local checked, err = int64.of(canon)
+    if checked == nil then
+        utils.log(badVal, 'int64', value, err)
+        return nil, value
+    end
+    return canon, canon
+end
+-- "int64" only logically extends "string", because its parsed value is a string
+-- (the canonical decimal text), but the input format is far narrower
+generators.extendsOrRestrictsType('int64', 'string')
+state.COMPARATORS.int64 = function (a, b)
+    -- Values reaching a comparator are already canonical, so int64.lt cannot
+    -- fail here; it orders numerically where the string comparator would
+    -- order lexically ("100" < "99")
+    return int64.lt(a, b)
+end
 
 -- A true value, useful only to create "sets" Note: 'true' is a keyword
 state.PARSERS["true"] = function (badVal, value, context)

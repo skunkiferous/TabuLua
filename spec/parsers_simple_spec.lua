@@ -291,6 +291,44 @@ describe("parsers - simple types", function()
       }, log_messages)
     end)
 
+    it("should validate int64 (exact 64-bit range on EVERY Lua version)", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local int64Parser = parsers.parseType(badVal, "int64")
+      assert.is.not_nil(int64Parser, "int64Parser is nil")
+      -- The parsed value IS the canonical decimal string, on every version
+      assert_equals_2("123", "123", int64Parser(badVal, "123"))
+      assert_equals_2("-456", "-456", int64Parser(badVal, "-456"))
+      assert_equals_2("0", "0", int64Parser(badVal, "0"))
+      -- Lenient input, canonical output
+      assert_equals_2("42", "42", int64Parser(badVal, "042"))
+      assert_equals_2("5", "5", int64Parser(badVal, "+5"))
+      assert_equals_2("0", "0", int64Parser(badVal, "-0"))
+      -- The full 64-bit range works UNGATED — including on LuaJIT, which is
+      -- the whole point of the type: the text never touches tonumber()
+      assert_equals_2("9007199254740993", "9007199254740993",
+        int64Parser(badVal, "9007199254740993"))
+      assert_equals_2("9223372036854775807", "9223372036854775807",
+        int64Parser(badVal, "9223372036854775807"))
+      assert_equals_2("-9223372036854775808", "-9223372036854775808",
+        int64Parser(badVal, "-9223372036854775808"))
+      -- Numbers (from Lua-defined content) convert exactly
+      assert_equals_2("123", "123", int64Parser(badVal, 123))
+      -- Invalid values
+      assert_equals_2(nil, "1.5", int64Parser(badVal, "1.5"))
+      assert_equals_2(nil, "abc", int64Parser(badVal, "abc"))
+      assert_equals_2(nil, "9223372036854775808", int64Parser(badVal, "9223372036854775808"))
+      assert_equals_2(nil, "1.5", int64Parser(badVal, 1.5))
+      assert.same({
+        "Bad int64  in test on line 1: '1.5'",
+        "Bad int64  in test on line 1: 'abc'",
+        "Bad int64  in test on line 1: '9223372036854775808' "
+          .. "('9223372036854775808' is outside the int64 range "
+          .. "[-9223372036854775808, 9223372036854775807])",
+        "Bad int64  in test on line 1: '1.5' ('1.5' has a fractional part)",
+      }, log_messages)
+    end)
+
     it("should validate percent", function()
       local log_messages = {}
       local badVal = mockBadVal(log_messages)

@@ -260,6 +260,7 @@ The following integer types with range restrictions are available:
 | `short` | -32,768 to 32,767 | Extends `integer` |
 | `int` | -2,147,483,648 to 2,147,483,647 | Extends `integer` |
 | `long` | Full 64-bit signed integer | **Extends `number` directly** |
+| `int64` | Full 64-bit signed integer, on **every** Lua version | **Logically extends `string`** — the parsed value is the canonical decimal string |
 
 #### The `integer` vs `long` Distinction
 
@@ -276,7 +277,34 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 - Snowflake IDs
 - Very large counters
 
-> **Platform Note:** On LuaJIT, `long` is limited to the safe integer range because LuaJIT cannot precisely represent 64-bit integers without using FFI.
+> **Platform Note:** On LuaJIT, `long` is limited to the safe integer range because LuaJIT cannot precisely represent 64-bit integers without using FFI. Data that must carry full 64-bit values on LuaJIT should use `int64` instead.
+
+#### The `int64` Type: Full 64-bit Range on Every Lua Version
+
+A true 64-bit integer cannot live in a LuaJIT number: every LuaJIT number is an
+IEEE 754 double, exact only through ±2^53, and `tonumber()` rounds larger
+literals before any validation can react. The `int64` type solves this by never
+converting the value to a number at all — the **parsed value is the canonical
+decimal string** (optional `-`, digits, no leading zeros), identical on every
+Lua version:
+
+- **Exact everywhere**: `9223372036854775807` round-trips byte-for-byte through
+  parsing, sorting, and every export format, on Lua 5.3+ *and* LuaJIT.
+- **Numeric ordering**: `int64` columns sort by numeric value, not lexically
+  (`99` sorts before `100`).
+- **Input is lenient, output canonical**: `042`, `+5`, and `-0` are accepted
+  and reformatted to `42`, `5`, and `0`.
+
+Because the value is a string, plain Lua arithmetic and comparison operators do
+not work on it reliably — Lua would silently coerce the string through a double,
+losing exactly the precision the type exists to protect. Use the `int64` utility
+module (`util/int64.lua`) instead: `of`, `compare`, `eq`/`lt`/`le`/`gt`/`ge`,
+`add`, `sub`, and `neg` operate exactly on int64 strings (and accept safe
+numbers), returning `nil` plus an error message on invalid input or overflow.
+
+Choose `long` when values stay processable as native numbers on Lua 5.3+ and
+LuaJIT support beyond ±2^53 is not required; choose `int64` when the data must
+load with full 64-bit precision on every Lua version.
 
 ### Container Types
 
