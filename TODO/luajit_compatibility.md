@@ -134,9 +134,18 @@ goes scientific), so this fixed LuaJIT without changing any other version's outp
 These are semantic limits of an all-doubles runtime, not bugs; the affected specs
 assert the LuaJIT-specific behaviour (or skip) behind explicit probes:
 
-- **No 64-bit integers.** `long` is restricted to ±2^53 on LuaJIT and *rejects*
-  (never silently rounds) values outside it — an int64 like `9223372036854775807`
-  in a `{"int":"…"}` wrapper is a load error there, exact on Lua 5.3+.
+- **No 64-bit *native* integers — use the `int64` type.** LuaJIT numbers are all
+  doubles, so no numeric column can hold a value past ±2^53 exactly. The
+  `int64` built-in type (added after this doc — see the CHANGELOG and
+  `documentation/DATA_FORMAT_README.md`) sidesteps
+  this entirely: it carries the value as a canonical decimal *string*, exact and
+  byte-identical on LuaJIT and Lua 5.3+ alike. The numeric `long` type, by contrast,
+  is **unusable for parsing data on LuaJIT** — it fails deterministically at type
+  resolution (before any cell is read) with an error naming `int64` as the fix, rather
+  than silently rounding or per-cell rejecting (whether a load succeeded would otherwise
+  depend on the data, since `tonumber()` rounds oversized text before any parser sees
+  it). The `long` type *name* stays known (its `extends number` relation survives for
+  tag membership and `number_type` references); it just refuses to parse a cell.
 - **The ±2^53 boundary itself is soft on input:** `tonumber("9007199254740993")`
   rounds to 2^53 *before any TabuLua code runs*, so the out-of-range rejection the
   integer parser performs on 5.3+ cannot happen — the rounded value is accepted.

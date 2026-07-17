@@ -19,5 +19,5 @@
 # To make this a real file, delete this comment block and add a row for it to
 # Files.tsv. To silence the warning without loading it, delete the file (or move
 # it outside the package directory).
-name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	sharpness:blade_edge
+name:name	catalogId:int64	code:itemCode	rarity:Rarity	price:gold	weight:float	sharpness:blade_edge
 mithrilDagger	5555555555555555	DGR-001	Rare	450	0.8	keen

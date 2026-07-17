@@ -20,7 +20,7 @@ tutorial/
     Element.tsv                      # Enum: elemental damage types
     Rarity.tsv                       # Enum: item rarity tiers
     Constant.tsv.gz                  # Published game constants (gzip-compressed source, v0.22.0)
-    Item.tsv                         # Items: long IDs, enums, arrays, unions
+    Item.tsv                         # Items: int64 IDs, enums, arrays, unions
     Item.en.tsv                      # Localization: file joining demo
     Icon.tsv                         # Icons: hexbytes + base64bytes binary types
     Creature.tsv                     # Creatures: all 4 exploded column types
@@ -241,7 +241,7 @@ Demonstrates the richest variety of column types in a single file.
 **Column highlights:**
 | Column | Type | Feature Demonstrated |
 |--------|------|---------------------|
-| `catalogId` | `long` | 64-bit integer IDs (note extreme values like `9223372036854775807`) |
+| `catalogId` | `int64` | Exact 64-bit integer IDs on every Lua version incl. LuaJIT (note extreme values like `9223372036854775807`); value is a canonical decimal string, sorts numerically |
 | `code` | `itemCode` | Custom type with regex pattern validation (`^[A-Z]{3}%-[0-9]+$`) |
 | `rarity` | `Rarity` | Enum reference (defined in Rarity.tsv) |
 | `price` | `gold` | Custom type alias for `uint` |
@@ -954,7 +954,7 @@ Quick lookup: which file demonstrates which feature.
 | integer | Spell.tsv (`manaCost`), Creature.tsv (stats) |
 | float | Item.tsv (`weight`), Spell.tsv (`baseDamage`) |
 | string | WorldConfig.transposed.tsv (`biome`) |
-| long | Item.tsv (`catalogId`) |
+| int64 | Item.tsv (`catalogId`) |
 | ubyte | via custom type `level` |
 | ushort | Recipe.tsv (`craftTime`) |
 | uint | via custom type `gold` |

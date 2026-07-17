@@ -944,7 +944,11 @@ local function registerTypeTag(badVal, name, parent, members)
             -- Trick to have members non-empty, but still contain no types to mark
             goto continue
         end
-        if not parseType(nullBadVal, member, false) then
+        -- A type UNSUPPORTED on this runtime (e.g. 'long' on LuaJIT) is still
+        -- a KNOWN name: listing it as a tag member declares membership, it
+        -- does not parse data, so the declaration must load everywhere
+        if not parseType(nullBadVal, member, false)
+                and not state.UNSUPPORTED[utils.resolve(member)] then
             utils.log(badVal, 'type', member,
                 "type tag '" .. name .. "': member '" .. member .. "' is not a registered type")
             return false

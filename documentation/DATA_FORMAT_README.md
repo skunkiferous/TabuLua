@@ -277,7 +277,16 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 - Snowflake IDs
 - Very large counters
 
-> **Platform Note:** On LuaJIT, `long` is limited to the safe integer range because LuaJIT cannot precisely represent 64-bit integers without using FFI. Data that must carry full 64-bit values on LuaJIT should use `int64` instead.
+> **Platform Note:** On LuaJIT, `long` **cannot be used to parse data at all** — it
+> fails *deterministically at type resolution*, before any data value is seen, with an
+> error naming `int64` as the replacement. LuaJIT numbers are doubles (exact only to
+> ±2^53), and `tonumber()` silently rounds larger text before validation can react, so a
+> range-limited `long` would make a load succeed or fail depending on the data. Failing at
+> resolution means a manifest with a `long` column fails the same way whether its tables
+> are empty or full. The `long` type *name* stays known there (its logical `extends number`
+> relation survives, so type-tag membership and `number_type` references keep resolving) —
+> it just refuses to parse a cell. Data that must carry full 64-bit values on LuaJIT should
+> use `int64` instead.
 
 #### The `int64` Type: Full 64-bit Range on Every Lua Version
 
@@ -302,9 +311,10 @@ module (`util/int64.lua`) instead: `of`, `compare`, `eq`/`lt`/`le`/`gt`/`ge`,
 `add`, `sub`, and `neg` operate exactly on int64 strings (and accept safe
 numbers), returning `nil` plus an error message on invalid input or overflow.
 
-Choose `long` when values stay processable as native numbers on Lua 5.3+ and
-LuaJIT support beyond ±2^53 is not required; choose `int64` when the data must
-load with full 64-bit precision on every Lua version.
+Choose `long` when the data will only ever load on Lua 5.3+ and values should stay
+processable as native numbers (on LuaJIT a `long` column will not load at all); choose
+`int64` when the data must load with full 64-bit precision on every Lua version, LuaJIT
+included.
 
 ### Container Types
 

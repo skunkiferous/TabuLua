@@ -47,8 +47,11 @@ local M = {}
 local SAFE_INTEGER_MIN = -9007199254740992  -- -(2^53)
 local SAFE_INTEGER_MAX = 9007199254740992   -- 2^53
 
--- Detect if we have native 64-bit integers (Lua 5.3+)
-local HAS_NATIVE_INTEGERS = (math.type ~= nil and math.type(1) == "integer")
+-- Detect if we have native 64-bit integers (Lua 5.3+).
+-- `math.type(1) == "integer"` is NOT a valid probe: compat53 defines
+-- math.type on LuaJIT too, and there it calls every whole double an
+-- "integer" — only a native runtime answers "float" for 1.0.
+local HAS_NATIVE_INTEGERS = (math.type ~= nil and math.type(1.0) == "float")
 
 -- badVal used during registration of "default parsers" within this module
 local ownBadVal = badValGen()
@@ -819,22 +822,21 @@ function M.registerDerivedParsers()
             return num, tostring(num)
         end)
     else
-        -- LuaJIT: "long" is limited to safe integer range
-        -- Full 64-bit support would require FFI int64_t, which is out of scope
-        registration.extendParser(ownBadVal, 'number', 'long',
-        function (badVal, num, _reformatted, _context)
-            if not isIntegerValue(num) then
-                utils.log(badVal, 'long', num)
-                return nil, tostring(num)
-            end
-            if num < SAFE_INTEGER_MIN or num > SAFE_INTEGER_MAX then
-                utils.log(badVal, 'long', num,
-                    "LuaJIT cannot precisely represent 64-bit integers outside ±2^53")
-                return nil, tostring(num)
-            end
-            num = math.floor(num)
-            return num, formatInteger(num)
-        end)
+        -- LuaJIT: 'long' is NOT usable for parsing data — deterministically,
+        -- independent of the values. A true int64 cannot live in a LuaJIT
+        -- number (doubles are exact only to ±2^53, and tonumber() silently
+        -- ROUNDS bigger text before any parser code can react), so a
+        -- range-limited 'long' would make loading succeed or fail depending
+        -- on the data. Failing at type RESOLUTION instead means a manifest
+        -- with a long column fails the same way whether its tables are empty
+        -- or full. The logical relation stays registered so tag membership
+        -- and number_type references to 'long' keep working everywhere.
+        generators.extendsOrRestrictsType('long', 'number')
+        state.UNSUPPORTED.long =
+            "the 'long' type cannot parse data on LuaJIT (numbers are doubles,"
+            .. " exact only to +/-2^53, and bigger values are silently rounded"
+            .. " before validation can see them); use 'int64' instead, which is"
+            .. " exact on every Lua version"
     end
 
     -- Define the custom type definition record type used in manifest custom_types field.

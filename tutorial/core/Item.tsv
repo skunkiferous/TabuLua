@@ -1,6 +1,9 @@
-name:name	catalogId:long	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:Element|nil	tags:{name}	devNotes:comment|nil
+name:name	catalogId:int64	code:itemCode	rarity:Rarity	price:gold	weight:float	stackable:boolean	element:Element|nil	tags:{name}	devNotes:comment|nil
 # ^ name: primary key using 'name' type (dotted identifier)
-# ^ catalogId: 'long' type for 64-bit IDs (note extreme values to test range)
+# ^ catalogId: 'int64' type for exact 64-bit IDs on EVERY Lua version, incl. LuaJIT
+#   (note extreme values to test range). The value is a canonical decimal string, so
+#   it sorts numerically but exports as a string. Prefer int64 over 'long' for IDs:
+#   'long' is a native number, exact only to +/-2^53, and cannot load at all on LuaJIT.
 # ^ code: custom type 'itemCode' validated with pattern ^[A-Z][A-Z][A-Z]%-[0-9]+$
 # ^ rarity: references the Rarity enum (defined in Rarity.tsv, registered via superType=enum)
 # ^ price: custom type 'gold' (alias for uint, unsigned 32-bit integer)

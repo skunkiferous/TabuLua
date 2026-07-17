@@ -9,6 +9,7 @@ local assert = require("luassert")
 local describe = busted.describe
 local it = busted.it
 local before_each = busted.before_each
+local pending = busted.pending
 
 local parsers = require("parsers")
 local error_reporting = require("infra.error_reporting")
@@ -24,6 +25,11 @@ local semver = require("semver")
 -- LuaJIT too, and there it calls every whole double an "integer" — only a
 -- native runtime answers "float" for 1.0.
 local HAS_NATIVE_INTEGERS = math.type ~= nil and math.type(1.0) == "float"
+
+-- Version-specific tests: 'long' has native-integer semantics on Lua 5.3+,
+-- and is deterministically rejected at type resolution on LuaJIT
+local it_native = HAS_NATIVE_INTEGERS and it or pending
+local it_luajit = HAS_NATIVE_INTEGERS and pending or it
 
 -- Returns a "badVal" object that store errors in the given table
 local function mockBadVal(log_messages)
@@ -265,7 +271,7 @@ describe("parsers - simple types", function()
       }, log_messages)
     end)
 
-    it("should validate long (full 64-bit range on Lua 5.3+)", function()
+    it_native("should validate long (full 64-bit range on Lua 5.3+)", function()
       local log_messages = {}
       local badVal = mockBadVal(log_messages)
       local longParser = parsers.parseType(badVal, "long")
@@ -275,13 +281,9 @@ describe("parsers - simple types", function()
       assert_equals_2(-456, "-456", longParser(badVal, "-456"))
       assert_equals_2(0, "0", longParser(badVal, "0"))
       -- Large values that exceed safe integer range (2^53) - valid on Lua 5.3+
-      -- On Lua 5.3+, long supports full 64-bit range (NOT gated on `math.type`:
-      -- compat53 defines that on LuaJIT too, where these values don't fit a double)
-      if HAS_NATIVE_INTEGERS then
-        assert_equals_2(9007199254740993, "9007199254740993", longParser(badVal, "9007199254740993"))
-        assert_equals_2(9223372036854775807, "9223372036854775807", longParser(badVal, "9223372036854775807"))
-        assert_equals_2(-9223372036854775808, "-9223372036854775808", longParser(badVal, "-9223372036854775808"))
-      end
+      assert_equals_2(9007199254740993, "9007199254740993", longParser(badVal, "9007199254740993"))
+      assert_equals_2(9223372036854775807, "9223372036854775807", longParser(badVal, "9223372036854775807"))
+      assert_equals_2(-9223372036854775808, "-9223372036854775808", longParser(badVal, "-9223372036854775808"))
       -- Invalid longs (non-integer values)
       assert_equals_2(nil, "1.23", longParser(badVal, "1.23"))
       assert_equals_2(nil, "abc", longParser(badVal, "abc"))
@@ -289,6 +291,24 @@ describe("parsers - simple types", function()
         "Bad long  in test on line 1: '1.23'",
         "Bad long  in test on line 1: 'abc'",
       }, log_messages)
+    end)
+
+    it_luajit("should reject the long TYPE at resolution time on LuaJIT", function()
+      -- 'long' fails DETERMINISTICALLY on LuaJIT — at type resolution, before
+      -- any data value is seen — so a manifest with a long column fails the
+      -- same way whether its tables are empty or full (a range-limited parser
+      -- would make loading depend on the values in the data)
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      assert.is_nil(parsers.parseType(badVal, "long"))
+      assert.matches("use 'int64' instead", log_messages[1])
+      -- The failure reaches long wherever it hides in a composite spec
+      assert.is_nil(parsers.parseType(badVal, "long|nil"))
+      assert.is_nil(parsers.parseType(badVal, "{long}"))
+      -- But the type name itself stays KNOWN: the logical extends-number
+      -- relation must survive, so tag member lists naming 'long' still load
+      local introspection = require("parsers.introspection")
+      assert.is_true(introspection.typeSameOrExtends("long", "number"))
     end)
 
     it("should validate int64 (exact 64-bit range on EVERY Lua version)", function()

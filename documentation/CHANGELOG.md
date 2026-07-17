@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- **`long` now fails deterministically at type resolution on LuaJIT, instead of
+  silently limiting to ±2^53.** Previously a `long` column on LuaJIT accepted values
+  in the safe-integer range and rejected larger ones per-cell — but LuaJIT's
+  `tonumber()` rounds oversized text *before* any parser code runs, so whether a load
+  succeeded depended on the data. Now resolving the `long` type to a parser fails
+  immediately (before any cell is read), with an error naming `int64` as the fix, so a
+  manifest with a `long` column fails the same way whether its tables are empty or full.
+  The `long` type *name* stays known there — its logical `extends number` relation
+  survives, so type-tag membership and `number_type` references still resolve; only
+  data-parsing is refused. On Lua 5.3+ `long` is unchanged (full 64-bit range). Use
+  `int64` for full-precision integers that must load on every Lua version.
 - **LuaJIT 2.1 now passes the full suite, at parity with Lua 5.3/5.4/5.5** — 3250 of
   the same 3253 tests, the other 3 `pending` there by design (they assert sandbox
   instruction-quota behaviour LuaJIT cannot provide). It previously lost ~30 whole spec
@@ -67,8 +78,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
      scientific — so only LuaJIT behaviour changed.
 
   Genuine double-semantics differences remain by design and are asserted per-runtime in
-  the specs: `long` rejects values outside ±2^53 on LuaJIT instead of rounding; `1e6`
-  is indistinguishable from `1000000` (specs probe native integers via
+  the specs: `long` is unusable for parsing data on LuaJIT (see the dedicated entry below);
+  `1e6` is indistinguishable from `1000000` (specs probe native integers via
   `math.type(1.0) == "float"` — a bare `math.type ~= nil` check is wrong under
   compat53, and one such stale gate in `parsers_simple_spec` was fixed); LuaJIT's
   `string.format` renders subnormal doubles as garbage. The `migration_spec`

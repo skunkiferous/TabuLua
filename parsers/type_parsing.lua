@@ -858,6 +858,18 @@ parse_type = function(badVal, parsed, log_unknown)
         warnDontUseNumber(badVal, type_spec, orig_type_spec)
     end
     if not result then
+        -- A type can be KNOWN but unusable for parsing data on this runtime
+        -- (e.g. 'long' on LuaJIT): fail with the targeted message instead of
+        -- pretending the name is unknown. Checked BEFORE the UNKNOWN_TYPES
+        -- dedup cache, and logged on every (logging) use — a silent nil after
+        -- some earlier quiet probe would leave the user with no clue.
+        local unsupported = state.UNSUPPORTED[utils.resolve(type_spec)]
+        if unsupported then
+            if log_unknown then
+                utils.log(badVal, 'type', orig_type_spec, unsupported)
+            end
+            return nil, type_spec
+        end
         if state.UNKNOWN_TYPES[type_spec] then
             return nil, type_spec
         end

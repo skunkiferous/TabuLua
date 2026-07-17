@@ -134,6 +134,13 @@ M.TAG_MEMBERS = {}
 -- Maps type tag names to their ancestor type: tag_name -> ancestor_name
 M.TAG_ANCESTOR = {}
 
+-- Maps type names that are KNOWN but not usable for parsing data on this Lua
+-- runtime to the error message explaining why (and what to use instead).
+-- Such a type keeps its logical EXTENDS relation (so tag membership and
+-- number_type references still work), but resolving it to a parser fails
+-- deterministically — independent of the data values — with this message.
+M.UNSUPPORTED = {}
+
 -- ============================================================
 -- State snapshot/restore for global_reset support
 -- ============================================================
@@ -148,6 +155,7 @@ local MUTABLE_TABLES = {
     "TYPES_PARAMS_TODO", "ARRAY_PARSERS", "MAP_PARSERS",
     "TUPLE_PARSERS", "UNION_PARSERS", "UNION_FIRST_TYPE",
     "RECORD_PARSERS", "EXPR_VALIDATORS", "SHAPE_TYPES", "TAG_MEMBERS", "TAG_ANCESTOR",
+    "UNSUPPORTED",
 }
 
 local snapshot = nil
