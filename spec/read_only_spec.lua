@@ -75,6 +75,63 @@ describe("read_only", function()
       assert.equals("custom_type", getmetatable(ro))
     end)
 
+    it("should forward __eq, __lt and __le through opt_index", function()
+      -- All values of a type must share ONE opt_index, so they share one
+      -- meta-table: __eq only fires when both operands are tables
+      local opt_index = {
+        __eq = function(a, b)
+          return read_only.unwrap(a).v == read_only.unwrap(b).v
+        end,
+        __lt = function(a, b)
+          return read_only.unwrap(a).v < read_only.unwrap(b).v
+        end,
+        __le = function(a, b)
+          return read_only.unwrap(a).v <= read_only.unwrap(b).v
+        end,
+        __type = "boxed_number"
+      }
+      local one = read_only.readOnly({v = 1}, opt_index)
+      local oneAgain = read_only.readOnly({v = 1}, opt_index)
+      local two = read_only.readOnly({v = 2}, opt_index)
+
+      -- Distinct proxies, so a true result can only come from __eq
+      assert.is_false(rawequal(one, oneAgain))
+      assert.is_true(one == oneAgain)
+      assert.is_false(one == two)
+      assert.is_true(one < two)
+      assert.is_false(two < one)
+      assert.is_true(one <= oneAgain)
+      assert.is_false(two <= one)
+    end)
+
+    it("should let opt_index override __len", function()
+      local opt_index = {
+        __len = function() error("length is not defined", 2) end,
+        __type = "unmeasurable"
+      }
+      local ro = read_only.readOnly({1, 2, 3}, opt_index)
+
+      -- Without the override, this would report the original table's length
+      assert.has_error(function() return #ro end, "length is not defined")
+    end)
+
+    it("should return int64 boxes unchanged, without logging an error", function()
+      -- An int64 box always has a metatable and is already immutable, so it
+      -- joins 'badVal' and semver in the exemption list
+      local box = setmetatable({}, {__metatable = "int64"})
+      local logged = {}
+      local real_print = _G.print
+      rawset(_G, "print",
+          function(...) logged[#logged+1] = table.concat({...}, " ") end)
+      local ro
+      local ok, err = pcall(function() ro = read_only.readOnly(box) end)
+      rawset(_G, "print", real_print)
+      assert.is_true(ok, tostring(err))
+
+      assert.equals(box, ro)
+      assert.equals(0, #logged)
+    end)
+
     it("should prevent modifications through pairs/ipairs", function()
       local t = {a = 1, b = 2, c = {x = 10}}
       local ro = read_only.readOnly(t)

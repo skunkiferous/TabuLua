@@ -278,11 +278,15 @@ state.PARSERS.int64 = function (badVal, value, context)
     if t == "number" then
         -- Lua-defined content may hold numbers; int64.of converts exactly
         -- (native integers fully, doubles only within ±2^53) or says why not
-        local canon, err = int64.of(value)
-        if canon == nil then
+        -- Phase 2 note: int64.of now yields a BOX, but the parsed value stays
+        -- the canonical STRING until Phase 3 flips it, so nothing outside
+        -- util/int64.lua changes behavior yet
+        local box, err = int64.of(value)
+        if box == nil then
             utils.log(badVal, 'int64', value, err)
             return nil, tostring(value)
         end
+        local canon = int64.tostring(box)
         return canon, canon
     end
     if t ~= "string" then

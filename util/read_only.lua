@@ -109,7 +109,7 @@ end
 
 --- Creates a read-only proxy for a table, preventing modifications.
 --- Non-table values are returned unchanged (they are inherently immutable).
---- Tables with existing metatables (except 'badVal' and semver) are returned unchanged with an error logged.
+--- Tables with existing metatables (except 'badVal', semver and 'int64') are returned unchanged with an error logged.
 ---
 --- @param t any The value to make read-only. If not a table, returns t unchanged.
 --- @param opt_index table|nil Optional table providing additional index entries and metamethod overrides:
@@ -118,15 +118,18 @@ end
 ---   - __call: Makes the proxy callable
 ---   - __index: Custom index function called when key not found: function(original_table, key) -> value
 ---   - __type: Custom type string (assigned to __metatable, returned by getmetatable)
+---   - __eq, __lt, __le: Comparison metamethods, for proxies representing a value type
+---   - __len: Overrides the default length (the original table's length)
 --- @return any A read-only proxy if t is a table without metatable, otherwise t unchanged
---- @side_effect Logs an error if t has a metatable (except 'badVal' and semver objects)
+--- @side_effect Logs an error if t has a metatable (except 'badVal', semver and 'int64' objects)
 local function readOnly(t, opt_index)
     -- Don't wrap already-read-only tables, or tables with a metatable
     if type(t) == "table" and proxy_to_original[t] == nil then
         local t_mt = getmetatable(t)
         if t_mt ~= nil then
-            -- Ignore badVal and semver objects
-            if t_mt ~= 'badVal' and t_mt ~= semver_mt then
+            -- Ignore badVal, semver and int64 objects: they are already
+            -- immutable value types, so returning them unchanged is correct
+            if t_mt ~= 'badVal' and t_mt ~= semver_mt and t_mt ~= 'int64' then
                 local now = os.date("%Y-%m-%d %H:%M:%S")..'.000000 '
                 print(now.."ERROR [read_only] Can't make tables with a metatable read only: ".. dump(t))
             end
@@ -172,6 +175,24 @@ local function readOnly(t, opt_index)
                 -- Does opt_index define a custom __call?
                 if opt_index.__call then
                     mt.__call = opt_index.__call
+                end
+                -- Comparison metamethods, for proxies standing in for a value
+                -- type (an int64 box, say) rather than for a plain table.
+                -- __eq only fires when both operands are tables, and the cache
+                -- is keyed by opt_index identity, so all values of one type must
+                -- share a single opt_index to share a single meta-table.
+                if opt_index.__eq then
+                    mt.__eq = opt_index.__eq
+                end
+                if opt_index.__lt then
+                    mt.__lt = opt_index.__lt
+                end
+                if opt_index.__le then
+                    mt.__le = opt_index.__le
+                end
+                -- __len overrides the default (length of the original table)
+                if opt_index.__len then
+                    mt.__len = opt_index.__len
                 end
                 -- Does opt_index define a custom __type?
                 -- (Only useful when using a a custom type(x) function)
