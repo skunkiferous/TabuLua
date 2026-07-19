@@ -11,6 +11,7 @@ local VERSION = semver(0, 32, 0)
 local read_only = require("util.read_only")
 local readOnly = read_only.readOnly
 
+local int64 = require("util.int64")
 local serialization = require("serde.serialization")
 local deserialization = require("serde.deserialization")
 
@@ -57,6 +58,26 @@ local function deepEquals(a, b, path, visited)
     end
     if b == nil then
         return false, path .. ": a is " .. type(a) .. ", b is nil"
+    end
+
+    -- An int64 against the TEXT of the same value. This is an exact
+    -- equivalence, not a tolerance, so it belongs in the strict comparison
+    -- too: the Lua literal and natural JSON carry an int64 as quoted digits by
+    -- design (a bare literal would be lexed into a double by LuaJIT on
+    -- re-read), and the import side returns raw cell values without applying
+    -- column parsers -- so the model's box legitimately meets its own digits.
+    if int64.is(a) ~= int64.is(b) then
+        local boxed = int64.is(a) and a or b
+        local other = int64.is(a) and b or a
+        local otherType = type(other)
+        if otherType == "string" or otherType == "number" then
+            local otherBox = int64.of(other)
+            if otherBox ~= nil and rawequal(otherBox, boxed) then
+                return true, nil
+            end
+            return false, path .. ": int64 mismatch: "
+                .. int64.tostring(boxed) .. " vs " .. tostring(other)
+        end
     end
 
     -- Check types
@@ -154,6 +175,28 @@ local function compareWithTolerance(a, b, format, path, visited)
     end
 
     local ta, tb = type(a), type(b)
+
+    -- An int64 against the TEXT of the same value.
+    --
+    -- These formats carry an int64 as digits (natural JSON and the Lua literal
+    -- write a quoted string, by design -- a bare number would round on LuaJIT
+    -- re-read). The import side hands back raw cell values without applying
+    -- column parsers, so the model's box meets its own digits here. Same value,
+    -- two representations, exactly the kind of difference this comparison
+    -- already tolerates between an int and a float.
+    if int64.is(a) ~= int64.is(b) then
+        local boxed = int64.is(a) and a or b
+        local other = int64.is(a) and b or a
+        local otherType = type(other)
+        if otherType == "string" or otherType == "number" then
+            local otherBox = int64.of(other)
+            if otherBox ~= nil and rawequal(otherBox, boxed) then
+                return true, nil
+            end
+            return false, path .. ": int64 mismatch: "
+                .. int64.tostring(boxed) .. " vs " .. tostring(other)
+        end
+    end
 
     -- Float tolerance comparison for all formats
     -- Serialization/deserialization can introduce small precision differences

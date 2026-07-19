@@ -25,6 +25,7 @@ local compareWithTolerance = round_trip.compareWithTolerance
 
 local manifest_loader = require("loader.manifest_loader")
 local exporter = require("serde.exporter")
+local shouldExport = require("tsv.file_joining").shouldExport
 
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
@@ -95,6 +96,7 @@ local FORMAT_CONFIGS = {
         extension = ".mpk",
         dataFormat = nil,
         tolerant = true,  -- Float precision may vary
+        untypedHeader = true,
     },
     -- SQL formats
     ["sql-json-typed"] = {
@@ -116,6 +118,7 @@ local FORMAT_CONFIGS = {
         extension = ".sql",
         dataFormat = "mpk",
         tolerant = false,
+        untypedHeader = true,
     },
 }
 
@@ -218,9 +221,21 @@ end
 --- Converts parsed TSV data to the sequence-of-sequences format used by exports.
 --- Comment columns are dropped, to match what the export formats actually carry.
 --- @param tsvData table The parsed TSV data from mod_loader
+--- @param optHeader table|nil Header the export would carry (see exportedShape)
+--- @param optRows table|nil Rows the export would carry (see exportedShape)
 --- @return table Sequence of sequences (header row + data rows)
-local function tsvToSequences(tsvData)
+local function tsvToSequences(tsvData, optHeader, optRows)
     local result = {}
+    -- An export is not the source table: secondary files are joined into their
+    -- primary and Files.tsv is rewritten. Compare against that shape.
+    local header = optHeader or tsvData[1]
+    local rows = optRows
+    if rows == nil then
+        rows = {}
+        for i = 2, #tsvData do rows[#rows + 1] = tsvData[i] end
+    end
+    tsvData = {header}
+    for i, row in ipairs(rows) do tsvData[i + 1] = row end
 
     -- Column indices the exports actually carry, in order
     local kept = {}
@@ -250,7 +265,12 @@ local function tsvToSequences(tsvData)
             local dataRow = {}
             for outIdx, srcIdx in ipairs(kept) do
                 local cell = row[srcIdx]
-                dataRow[outIdx] = cell and cell.parsed or nil
+                -- NOT `cell and cell.parsed or nil`: a parsed value of FALSE
+                -- would take the `or nil` branch and vanish, so every
+                -- boolean-false cell would read as absent
+                if cell ~= nil then
+                    dataRow[outIdx] = cell.parsed
+                end
             end
             result[#result + 1] = dataRow
         end
@@ -289,6 +309,20 @@ local function validateImport(imported, expected, formatConfig, _filePath)
 
         if not importedRow then
             return false, "Missing row " .. rowIdx
+        end
+
+        -- MessagePack stores bare column NAMES, not "name:type_spec" -- the
+        -- types travel in the paired SQL DDL, not in the blob. Comparing the
+        -- model's typed header against it fails on EVERY file, for a
+        -- difference the format is not meant to carry, so compare the header
+        -- by name in that case.
+        if rowIdx == 1 and formatConfig.untypedHeader then
+            local expectedNames = {}
+            for i, cell in ipairs(expectedRow) do
+                expectedNames[i] = (tostring(cell):match("^([^:]*)") or
+                    tostring(cell))
+            end
+            expectedRow = expectedNames
         end
 
         -- Use tolerant comparison for formats with known limitations
@@ -476,9 +510,18 @@ local function runTests(sourceDirectories, exportDir, formats, verbose)
 
     -- Convert source TSV data to expected format
     local sourceData = {}
+    local joinMeta = result.joinMeta
     for filePath, tsvData in pairs(result.tsv_files) do
-        sourceData[exportKey(filePath, result.file2dir)] =
-            tsvToSequences(tsvData)
+        -- A secondary (a translation such as Item.en.tsv, a patch such as
+        -- SeasonalPatch.tsv) is merged into its primary and never exported on
+        -- its own, so it has no exported file to compare against
+        local lcfn = filePath:lower():gsub("\\", "/"):match("[^/]+$") or ""
+        if joinMeta == nil or shouldExport(lcfn, joinMeta) then
+            local header, rows = exporter.exportedShape(
+                filePath, result.tsv_files, joinMeta, result.file2dir)
+            sourceData[exportKey(filePath, result.file2dir)] =
+                tsvToSequences(tsvData, header, rows)
+        end
     end
 
     local sourceCount = 0

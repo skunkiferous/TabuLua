@@ -394,6 +394,69 @@ local function isFilesDescriptor(file_name)
     return lower:match("/files%.tsv$") or lower:match("\\files%.tsv$") or lower == "files.tsv"
 end
 
+--- Returns the header and rows an EXPORT of this file would contain, without
+--- writing anything.
+---
+--- An exported file is not the source table: secondary files (translations such
+--- as Item.en.tsv, patches such as SeasonalPatch.tsv) are JOINED into their
+--- primary, so the primary gains their columns and the secondaries are never
+--- exported at all; and Files.tsv is rewritten to drop join columns and the
+--- rows describing those same secondaries.
+---
+--- Exposed because a tool comparing exports against the model (export_tester)
+--- must compare against this shape, not the raw source table. Comparing the
+--- source view reported failures on every merged file -- which is what those
+--- "row count mismatch" and "extra key" failures were.
+---
+--- Mirrors the shaping in exportTSV; export_tester is itself the check that the
+--- two agree, since it compares this against what exportTSV actually wrote.
+--- @param file_name string The source file path
+--- @param tsv_files table Map of source path -> parsed TSV
+--- @param joinMeta table|nil Join metadata from manifest_loader
+--- @param file2dir table|nil Map of source file -> its package directory
+--- @return table|nil The header the export would carry, or nil to use tsv[1]
+--- @return table|nil The rows the export would carry, or nil to use the source
+local function exportedShape(file_name, tsv_files, joinMeta, file2dir)
+    local tsv = tsv_files[file_name]
+    if tsv == nil or joinMeta == nil then
+        return nil, nil
+    end
+    -- Files.tsv is rewritten wholesale, and that wins over any join
+    if isFilesDescriptor(file_name) then
+        local header, rows = transformFilesDescForExport(tsv, joinMeta)
+        return header, rows
+    end
+    -- Same key exportTSV joins on: the package-relative name, lowercased
+    local lcfnKey = computeRelativePath(file_name, file2dir)
+        :lower():gsub("\\", "/")
+    local secondaryLcfns = groupSecondaryFiles(joinMeta)[lcfnKey]
+    if not secondaryLcfns or #secondaryLcfns == 0 then
+        return nil, nil
+    end
+    local secondaryTsvList = {}
+    for _, secLcfn in ipairs(secondaryLcfns) do
+        local secPath = findFilePath(secLcfn, tsv_files)
+        if secPath and tsv_files[secPath] then
+            secondaryTsvList[#secondaryTsvList + 1] = {
+                tsv = tsv_files[secPath],
+                joinColumn = joinMeta.lcFn2JoinColumn[secLcfn],
+                sourceName = secPath,
+            }
+        end
+    end
+    if #secondaryTsvList == 0 then
+        return nil, nil
+    end
+    -- Silent badVal: this is a query, so it must not log or raise
+    local badVal = setmetatable({source_name = file_name, line_no = 0, errors = 0},
+        {__call = function(self) self.errors = self.errors + 1 end})
+    local joinedRows, joinedHeader = joinFiles(tsv, secondaryTsvList, badVal)
+    if not joinedRows then
+        return nil, nil
+    end
+    return joinedHeader, joinedRows
+end
+
 -- Builds a type specification string from a header (array of column definitions)
 -- Each column should have 'name' and 'type_spec' fields
 local function buildTypeSpecFromHeader(header)
@@ -1450,6 +1513,7 @@ local API = {
     -- export_tester.lua) derives the SAME package-namespaced path this module
     -- writes, instead of reimplementing the rule and drifting from it
     computeExportPath = computeExportPath,
+    exportedShape = exportedShape,
     exportJSON = exportJSON,
     exportJSONTSV = exportJSONTSV,
     exportLua = exportLua,
