@@ -173,6 +173,44 @@ describe("serialization", function()
     end)
   end)
 
+  describe("MessagePack determinism", function()
+    -- lua-MessagePack's own map packer iterates pairs(), so the same model
+    -- exported twice produced DIFFERENT bytes (measured on Boss/Recipe/
+    -- ExpansionWiring/Item), making exports impossible to diff, content-address
+    -- or check in CI. Every other serializer here already sorts its keys.
+    --
+    -- pairs() order is stable for one table within a process, so the test that
+    -- actually bites is that INSERTION ORDER no longer changes the output.
+    it("should not depend on map insertion order", function()
+      local a = {}
+      a.zebra = 1; a.apple = 2; a.mango = 3; a.kiwi = 4; a.cherry = 5
+      local b = {}
+      b.cherry = 5; b.kiwi = 4; b.mango = 3; b.apple = 2; b.zebra = 1
+      assert.are.equal(serialization.serializeMessagePack(a),
+          serialization.serializeMessagePack(b))
+    end)
+
+    it("should stay deterministic with mixed-type and nested keys", function()
+      local a = {}
+      a[2] = "two"; a.name = "x"; a[true] = "yes"; a[1] = "one"
+      a.nested = {beta = 1, alpha = 2}
+      local b = {}
+      b.nested = {alpha = 2, beta = 1}
+      b[1] = "one"; b[true] = "yes"; b.name = "x"; b[2] = "two"
+      assert.are.equal(serialization.serializeMessagePack(a),
+          serialization.serializeMessagePack(b))
+    end)
+
+    it("should still round-trip through MessagePack", function()
+      -- Reordering keys must not change MEANING, only bytes
+      local original = {name = "sword", damage = 42, tags = {"a", "b"},
+                        nested = {x = 1, y = 2}}
+      local back = deserialization.deserializeMessagePack(
+          serialization.serializeMessagePack(original))
+      assert.are.same(original, back)
+    end)
+  end)
+
   describe("unquotedStr", function()
     it("should handle strings", function()
       local t = serialization.unquotedStr("abc")

@@ -138,6 +138,10 @@ local BASE_TYPES = {"boolean", "integer", "number", "string", "table"}
 
 -- Computes the relative path of a file for export.
 -- Uses file2dir to strip the source directory prefix from absolute paths.
+--
+-- NOTE this is the PACKAGE-RELATIVE name, and it is what joinMeta is keyed by,
+-- so it must stay package-relative. For the on-disk output path, which must be
+-- unique ACROSS packages, use computeExportPath below.
 local function computeRelativePath(file_name, file2dir)
     if not file2dir then return file_name end
     local dir = file2dir[file_name]
@@ -148,6 +152,100 @@ local function computeRelativePath(file_name, file2dir)
         return file_name:sub(#dir + 2)
     end
     return file_name
+end
+
+-- Splits a path into its non-empty segments.
+local function pathSegments(p)
+    local segs = {}
+    for seg in p:gmatch("[^/\\]+") do
+        segs[#segs + 1] = seg
+    end
+    return segs
+end
+
+-- Assigns each source directory a short, UNIQUE namespace segment.
+--
+-- Exports are package-relative, so two packages holding the same file name --
+-- and every package has a Manifest.transposed.tsv and a Files.tsv -- resolved
+-- to the SAME output path, and the last one written silently destroyed the
+-- other. That is data loss in the documented multi-package invocation
+-- ("reformatter.lua tutorial/core/ tutorial/expansion/").
+--
+-- Uses the shortest trailing path segments that tell the directories apart --
+-- normally just the leaf ("core", "expansion"), but "a/core" and "b/core" get
+-- "a/core" and "b/core" rather than colliding all over again.
+local function buildPackageNamespaces(file2dir)
+    local dirs = {}
+    local seen = {}
+    for _, dir in pairs(file2dir) do
+        if not seen[dir] then
+            seen[dir] = true
+            dirs[#dirs + 1] = dir
+        end
+    end
+    local segsByDir = {}
+    local maxDepth = 1
+    for _, dir in ipairs(dirs) do
+        local segs = pathSegments(dir)
+        segsByDir[dir] = segs
+        if #segs > maxDepth then maxDepth = #segs end
+    end
+    for depth = 1, maxDepth do
+        local candidate = {}
+        local taken = {}
+        local unique = true
+        for _, dir in ipairs(dirs) do
+            local segs = segsByDir[dir]
+            local parts = {}
+            for i = math.max(1, #segs - depth + 1), #segs do
+                parts[#parts + 1] = segs[i]
+            end
+            local ns = table.concat(parts, "/")
+            if taken[ns] then
+                unique = false
+                break
+            end
+            taken[ns] = true
+            candidate[dir] = ns
+        end
+        if unique then
+            return candidate
+        end
+    end
+    -- Every directory shares its whole path with another: impossible, since
+    -- they came from a set of distinct directories
+    local fallback = {}
+    for _, dir in ipairs(dirs) do
+        fallback[dir] = table.concat(segsByDir[dir], "/")
+    end
+    return fallback
+end
+
+-- Cache of namespace maps, keyed by the file2dir table they came from, so the
+-- work happens once per export rather than once per file.
+local namespaceCache = setmetatable({}, { __mode = "k" })
+
+-- Computes the on-disk export path of a file, RELATIVE TO the format directory:
+-- the package namespace followed by the package-relative name.
+local function computeExportPath(file_name, file2dir)
+    local relative = computeRelativePath(file_name, file2dir)
+    if not file2dir then
+        return relative
+    end
+    local dir = file2dir[file_name]
+    if not dir or dir == "." then
+        return relative
+    end
+    local namespaces = namespaceCache[file2dir]
+    if not namespaces then
+        namespaces = buildPackageNamespaces(file2dir)
+        namespaceCache[file2dir] = namespaces
+    end
+    local ns = namespaces[dir]
+    if not ns or ns == "" then
+        return relative
+    end
+    return ns .. "/" .. relative
 end
 
 -- True iff the loader resolved this file's role as an ASSET (manifest_loader's
@@ -388,7 +486,9 @@ local function exportTSV(process_files, exportParams, serializer)
         -- A .tsv the loader resolved as an ASSET is not a table: it is copied
         -- verbatim below, keeping its own name and extension.
         local is_tsv = hasExtension(file_name, "tsv") and not isAssetFile(joinMeta, file_name)
-        local new_name = pathJoin(exportDir, relative_name)
+        -- Namespaced by package: relative_name alone collides across packages
+        local new_name = pathJoin(exportDir,
+            computeExportPath(file_name, file2dir))
         if is_tsv and fileExt ~= "tsv" then
             new_name = changeExtension(new_name, fileExt)
         end
@@ -925,7 +1025,9 @@ local function exportMessagePack(process_files, exportParams)
         end
         -- As in exportTSV: an asset .tsv is copied verbatim, not packed as data.
         local is_tsv = hasExtension(file_name, "tsv") and not isAssetFile(joinMeta, file_name)
-        local new_name = pathJoin(exportDir, relative_name)
+        -- Namespaced by package: relative_name alone collides across packages
+        local new_name = pathJoin(exportDir,
+            computeExportPath(file_name, file2dir))
         if is_tsv then
             new_name = changeExtension(new_name, "mpk")
         end
@@ -1316,7 +1418,8 @@ local function exportSVG(process_files, exportParams)
                 edgePalette = exportParams.svgEdgePalette,
             })
 
-            local out_name = changeExtension(pathJoin(exportDir, relative_name), "svg")
+            local out_name = changeExtension(pathJoin(exportDir,
+                computeExportPath(file_name, file2dir)), "svg")
             if not ensureParentDir(out_name, dirChecked) then
                 return false
             end
@@ -1343,6 +1446,10 @@ end
 -- The public, versioned, API of this module
 local API = {
     getVersion = getVersion,
+    -- Exposed so a tool mapping an exported file back to its source (see
+    -- export_tester.lua) derives the SAME package-namespaced path this module
+    -- writes, instead of reimplementing the rule and drifting from it
+    computeExportPath = computeExportPath,
     exportJSON = exportJSON,
     exportJSONTSV = exportJSONTSV,
     exportLua = exportLua,

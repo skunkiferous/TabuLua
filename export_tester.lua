@@ -24,6 +24,7 @@ local deepEquals = round_trip.deepEquals
 local compareWithTolerance = round_trip.compareWithTolerance
 
 local manifest_loader = require("loader.manifest_loader")
+local exporter = require("serde.exporter")
 
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
@@ -176,19 +177,68 @@ local function getBaseName(path)
     return name:match("^(.+)%.[^.]+$") or name
 end
 
+--- Strips the extension from a path, keeping its directories.
+--- @param path string The path
+--- @return string The path without its final extension
+local function stripExtension(path)
+    return (path:gsub("\\", "/"):match("^(.+)%.[^./]+$")
+        or path:gsub("\\", "/"))
+end
+
+--- The key an exported file and its source table are matched on.
+---
+--- Must NOT be the bare base name: every package has a Files.tsv and a
+--- Manifest.transposed.tsv, so base names collide across packages and one
+--- package's expected data silently replaced the other's -- the same bug the
+--- exporter itself had. Uses the exporter's own package-namespaced path so the
+--- two cannot drift.
+--- @param sourcePath string The source file path
+--- @param file2dir table|nil Map of source file -> its package directory
+--- @return string The lookup key
+local function exportKey(sourcePath, file2dir)
+    return stripExtension(exporter.computeExportPath(sourcePath, file2dir))
+end
+
+--- True for a column whose declared type is `comment` (or `comment|nil`).
+---
+--- Comments are AUTHORING METADATA, not data: no export format carries them,
+--- neither `#` comment lines (which the model keeps as `__comment<N>:comment`
+--- pseudo-columns) nor comment-typed columns such as `devNotes:comment|nil`.
+--- Comparing them would report a mismatch on every file that has one, for a
+--- difference that is intended -- so they are excluded from the expected data
+--- rather than being chased as round-trip failures.
+--- @param headerCell any The header cell, rendering as "name:type_spec"
+--- @return boolean True if this column is a comment column
+local function isCommentColumn(headerCell)
+    local spec = tostring(headerCell)
+    local declaredType = spec:match("^[^:]*:(.*)$")
+    return declaredType == "comment" or declaredType == "comment|nil"
+end
+
 --- Converts parsed TSV data to the sequence-of-sequences format used by exports.
+--- Comment columns are dropped, to match what the export formats actually carry.
 --- @param tsvData table The parsed TSV data from mod_loader
 --- @return table Sequence of sequences (header row + data rows)
 local function tsvToSequences(tsvData)
     local result = {}
 
-    -- Header row (uses .parsed which returns name:type_spec via metamethod)
-    local headerRow = {}
+    -- Column indices the exports actually carry, in order
+    local kept = {}
     if tsvData[1] then
         for i, col in ipairs(tsvData[1]) do
             -- Column objects have a __index metamethod that returns
             -- name..':'..type_spec for 'parsed', 'reformatted', etc.
-            headerRow[i] = col.parsed
+            if not isCommentColumn(col.parsed) then
+                kept[#kept + 1] = i
+            end
+        end
+    end
+
+    -- Header row
+    local headerRow = {}
+    if tsvData[1] then
+        for outIdx, srcIdx in ipairs(kept) do
+            headerRow[outIdx] = tsvData[1][srcIdx].parsed
         end
     end
     result[1] = headerRow
@@ -198,8 +248,9 @@ local function tsvToSequences(tsvData)
         local row = tsvData[rowIdx]
         if type(row) == "table" then
             local dataRow = {}
-            for colIdx, cell in ipairs(row) do
-                dataRow[colIdx] = cell.parsed
+            for outIdx, srcIdx in ipairs(kept) do
+                local cell = row[srcIdx]
+                dataRow[outIdx] = cell and cell.parsed or nil
             end
             result[#result + 1] = dataRow
         end
@@ -304,8 +355,11 @@ local function testFormatDirectory(formatDir, formatConfig, sourceData, verbose)
     local files = listFilesRecursive(formatDir, formatConfig.extension)
 
     for _, filePath in ipairs(files) do
-        local baseName = getBaseName(filePath)
-        local expected = sourceData[baseName]
+        -- Match on the path RELATIVE to the format directory, which is the
+        -- package-namespaced key the source side is stored under
+        local relative = filePath:gsub("\\", "/")
+            :sub(#(formatDir:gsub("\\", "/")) + 2)
+        local expected = sourceData[stripExtension(relative)]
 
         if expected then
             tested = tested + 1
@@ -423,8 +477,8 @@ local function runTests(sourceDirectories, exportDir, formats, verbose)
     -- Convert source TSV data to expected format
     local sourceData = {}
     for filePath, tsvData in pairs(result.tsv_files) do
-        local baseName = getBaseName(filePath)
-        sourceData[baseName] = tsvToSequences(tsvData)
+        sourceData[exportKey(filePath, result.file2dir)] =
+            tsvToSequences(tsvData)
     end
 
     local sourceCount = 0

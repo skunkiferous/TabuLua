@@ -680,9 +680,12 @@ describe("exporter", function()
             assert.is_truthy(content:match('"item1"'))
         end)
 
-        it("should strip directory prefix when directory is not '.'", function()
-            -- When the data directory is a real path, the prefix should be stripped
-            -- so the exported file is relative to the export directory.
+        it("should namespace by package when directory is not '.'", function()
+            -- The source prefix is stripped to get the PACKAGE-RELATIVE name,
+            -- then the package's own namespace is prefixed back on. Exporting
+            -- straight to the package-relative name made two packages collide
+            -- (every package has a Files.tsv and a Manifest.transposed.tsv),
+            -- and the last one written silently destroyed the other.
             local test_file = "mydata/test.tsv"
             local tsv = createTestTSV(test_file)
 
@@ -696,11 +699,54 @@ describe("exporter", function()
             local success = exporter.exportLuaTSV(process_files, exportParams)
             assert.is_true(success)
 
-            -- The file should be at exportDir/test.tsv (prefix "mydata/" stripped)
-            local exported_file = path_join(temp_dir, "test.tsv")
+            -- The file should be at exportDir/mydata/test.tsv: the package
+            -- namespace ("mydata") plus the package-relative name
+            local exported_file = path_join(temp_dir, "mydata", "test.tsv")
             local content = file_util.readFile(exported_file)
-            assert.is_not_nil(content, "File should be at test.tsv with directory prefix stripped")
+            assert.is_not_nil(content,
+                "File should be at mydata/test.tsv (package-namespaced)")
             assert.is_truthy(content:match('"item1"'))
+        end)
+
+        it("should keep two packages' same-named files apart", function()
+            -- The bug this namespacing exists to fix: both files are called
+            -- Files.tsv, and before namespacing the second export overwrote
+            -- the first, silently discarding one package's data.
+            local core_file = "pkg/core/Files.tsv"
+            local exp_file = "pkg/expansion/Files.tsv"
+            -- Distinct first cells, so the assertions below prove each output
+            -- holds its OWN package's data rather than merely existing
+            local core_tsv = createTestTSV(core_file)
+            core_tsv[2][1].parsed = "coreRow"
+            local exp_tsv = createTestTSV(exp_file)
+            exp_tsv[2][1].parsed = "expRow"
+            local process_files = {
+                tsv_files = {
+                    [core_file] = core_tsv,
+                    [exp_file] = exp_tsv,
+                },
+                raw_files = {
+                    [core_file] = "id\tvalue\ncoreRow\t1",
+                    [exp_file] = "id\tvalue\nexpRow\t2",
+                },
+                file2dir = {
+                    [core_file] = "pkg/core",
+                    [exp_file] = "pkg/expansion",
+                },
+            }
+            local success = exporter.exportLuaTSV(process_files,
+                { exportDir = temp_dir })
+            assert.is_true(success)
+
+            local core_out = file_util.readFile(
+                path_join(temp_dir, "core", "Files.tsv"))
+            local exp_out = file_util.readFile(
+                path_join(temp_dir, "expansion", "Files.tsv"))
+            assert.is_not_nil(core_out, "core package's file was lost")
+            assert.is_not_nil(exp_out, "expansion package's file was lost")
+            -- ...and each holds its OWN rows, not the other's
+            assert.is_truthy(core_out:match('"coreRow"'))
+            assert.is_truthy(exp_out:match('"expRow"'))
         end)
 
         it("should preserve subdirectory paths when directory is '.'", function()

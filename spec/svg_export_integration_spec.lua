@@ -21,6 +21,12 @@ local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))
 end
 
+-- Exports are namespaced by package, so that two packages holding the same
+-- file name cannot overwrite each other: exported/<fmt>/<packageDir>/<file>
+local function svgOut(export_dir, pkg_dir, name)
+    return path_join(export_dir, "svg-svg", pkg_dir:match("[^/]+$"), name)
+end
+
 local function countOccur(haystack, needle)
     local count, pos = 0, 1
     while true do
@@ -95,9 +101,9 @@ describe("--file=svg export (graph_svg_export Phase 3)", function()
             {exportDir = export_dir})
 
         -- The graph file is drawn; the plain file gets no .svg.
-        local svg = file_util.readFile(path_join(export_dir, "svg-svg", "Skill.svg"))
+        local svg = file_util.readFile(svgOut(export_dir, pkg_dir, "Skill.svg"))
         assert.is_not_nil(svg, "Skill.svg was not generated")
-        assert.is_nil(file_util.readFile(path_join(export_dir, "svg-svg", "Item.svg")),
+        assert.is_nil(file_util.readFile(svgOut(export_dir, pkg_dir, "Item.svg")),
             "Item.svg should not exist — Item is not a graph")
 
         -- One box per node (a, b, c, d).
@@ -122,7 +128,7 @@ describe("--file=svg export (graph_svg_export Phase 3)", function()
             {{fn = exporter.exportSVG, subdir = "svg-svg"}},
             {exportDir = export_dir, svgEdgePalette = {"#111111", "#222222"}})
 
-        local svg = file_util.readFile(path_join(export_dir, "svg-svg", "Skill.svg"))
+        local svg = file_util.readFile(svgOut(export_dir, pkg_dir, "Skill.svg"))
         assert.is_not_nil(svg)
         -- Roots a and b are different sources → different palette colours,
         -- each with its own matching arrowhead marker; the single-colour
@@ -163,7 +169,7 @@ describe("--file=svg export (graph_svg_export Phase 3)", function()
             {{fn = exporter.exportSVG, subdir = "svg-svg"}},
             {exportDir = export_dir})
 
-        local svg = file_util.readFile(path_join(export_dir, "svg-svg", "Net.svg"))
+        local svg = file_util.readFile(svgOut(export_dir, pkg_dir, "Net.svg"))
         assert.is_not_nil(svg, "Net.svg was not generated")
         assert.equal(5, countOccur(svg, "<rect "))       -- a,b,c,x,y
         assert.is_nil(svg:find("<marker ", 1, true))     -- undirected: no arrows
@@ -202,21 +208,21 @@ describe("--file=svg export (graph_svg_export Phase 3)", function()
         local on_dir = path_join(temp_dir, "labels_on")
         reformatter.processFiles({pkg_dir},
             {{fn = exporter.exportSVG, subdir = "svg-svg"}}, {exportDir = on_dir})
-        local svg = file_util.readFile(path_join(on_dir, "svg-svg", "Skill.svg"))
+        local svg = file_util.readFile(svgOut(on_dir, pkg_dir, "Skill.svg"))
         assert.is_not_nil(svg)
         for _, w in ipairs({"5", "3", "1"}) do
             assert.is_truthy(svg:find(">" .. w .. "</text>", 1, true),
                 "missing edge label " .. w)
         end
         -- The edge file itself is not drawn.
-        assert.is_nil(file_util.readFile(path_join(on_dir, "svg-svg", "SkillEdge.svg")))
+        assert.is_nil(file_util.readFile(svgOut(on_dir, pkg_dir, "SkillEdge.svg")))
 
         -- Labels off: the weights are gone.
         local off_dir = path_join(temp_dir, "labels_off")
         reformatter.processFiles({pkg_dir},
             {{fn = exporter.exportSVG, subdir = "svg-svg"}},
             {exportDir = off_dir, svgLabelEdges = false})
-        local svg2 = file_util.readFile(path_join(off_dir, "svg-svg", "Skill.svg"))
+        local svg2 = file_util.readFile(svgOut(off_dir, pkg_dir, "Skill.svg"))
         assert.is_not_nil(svg2)
         assert.is_nil(svg2:find(">5</text>", 1, true))
     end)
@@ -229,8 +235,8 @@ describe("--file=svg export (graph_svg_export Phase 3)", function()
             {{fn = exporter.exportSVG, subdir = "svg-svg"}}, {exportDir = a_dir})
         reformatter.processFiles({pkg_dir},
             {{fn = exporter.exportSVG, subdir = "svg-svg"}}, {exportDir = b_dir})
-        local a = file_util.readFile(path_join(a_dir, "svg-svg", "Skill.svg"))
-        local b = file_util.readFile(path_join(b_dir, "svg-svg", "Skill.svg"))
+        local a = file_util.readFile(svgOut(a_dir, pkg_dir, "Skill.svg"))
+        local b = file_util.readFile(svgOut(b_dir, pkg_dir, "Skill.svg"))
         assert.is_not_nil(a)
         assert.equal(a, b)
     end)

@@ -122,16 +122,16 @@ describe("exporter / reformatter - archives (zip)", function()
         assert.is_true(exporter.exportLuaTSV(result, {exportDir = exportDir}))
 
         -- The zip is exported as a regular FILE, byte-identical to the source.
-        local exported_zip = path_join(exportDir, "utilmod.zip")
+        local exported_zip = path_join(exportDir, "ZipPkg", "utilmod.zip")
         assert.is_true(file_util.isFile(exported_zip))
         assert.equals(zip_bytes, file_util.readFileBinary(exported_zip))
 
         -- It is NOT exploded into a directory: no utilmod.zip/ tree, no member file.
         assert.is_false(file_util.isDir(exported_zip))
-        assert.is_false(file_util.isFile(path_join(exportDir, "utilmod.zip", "data", "Item.tsv")))
+        assert.is_false(file_util.isFile(path_join(exportDir, "ZipPkg", "utilmod.zip", "data", "Item.tsv")))
 
         -- A loose data file still exports normally (sanity: the export ran).
-        assert.is_true(file_util.isFile(path_join(exportDir, "CustomTypes.tsv")))
+        assert.is_true(file_util.isFile(path_join(exportDir, "ZipPkg", "CustomTypes.tsv")))
     end)
 
     it("leaves the archive (and its members) untouched on reformat", function()

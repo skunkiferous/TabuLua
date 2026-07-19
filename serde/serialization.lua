@@ -826,6 +826,68 @@ mpk.packers.table = function(buffer, v, ...)
     return mpk_pack_table(buffer, v, ...)
 end
 
+-- DETERMINISTIC MAP ORDER. lua-MessagePack's own map packer iterates pairs(),
+-- so the same model exported twice produces DIFFERENT bytes -- measured on
+-- Boss/Recipe/Files/ExpansionWiring, which alternate between runs. That makes
+-- exports non-reproducible: they cannot be diffed, cached by content, or
+-- checked in CI. Every other serializer here already sorts its keys
+-- (serializeTable does table.sort(keyed)); MessagePack was the sole exception.
+--
+-- The map framing below (fixmap / map16 / map32) is the MessagePack wire format
+-- itself, not a library detail, so replacing the packer is safe: the library
+-- dispatches through packers['map'] by name at call time.
+local MPK_KEY_RANK = { boolean = 1, number = 2, string = 3 }
+
+-- Total order over mixed-type keys: group by type first, then within a type.
+local function mpkKeyLess(a, b)
+    local ra = MPK_KEY_RANK[type(a)] or 4
+    local rb = MPK_KEY_RANK[type(b)] or 4
+    if ra ~= rb then
+        return ra < rb
+    end
+    local t = type(a)
+    if t == "number" or t == "string" then
+        return a < b
+    end
+    if t == "boolean" then
+        return (not a) and b
+    end
+    -- Tables: an int64 key orders by its digits, anything else by its text.
+    -- Only stability matters here, not the particular order.
+    local ta = int64.is(a) and int64Digits(a) or tostring(a)
+    local tb = int64.is(b) and int64Digits(b) or tostring(b)
+    return ta < tb
+end
+
+mpk.packers.map = function(buffer, tbl)
+    local keys = {}
+    local n = 0
+    for k in pairs(tbl) do
+        n = n + 1
+        keys[n] = k
+    end
+    table.sort(keys, mpkKeyLess)
+    if n <= 0x0F then
+        buffer[#buffer + 1] = string.char(0x80 + n)              -- fixmap
+    elseif n <= 0xFFFF then
+        buffer[#buffer + 1] = string.char(0xDE,                  -- map16
+            math.floor(n / 0x100), n % 0x100)
+    elseif n <= 4294967295.0 then
+        buffer[#buffer + 1] = string.char(0xDF,                  -- map32
+            math.floor(n / 0x1000000), math.floor(n / 0x10000) % 0x100,
+            math.floor(n / 0x100) % 0x100, n % 0x100)
+    else
+        error("overflow in pack 'map'")
+    end
+    local packers = mpk.packers
+    for i = 1, n do
+        local k = keys[i]
+        packers[type(k)](buffer, k)
+        local v = tbl[k]
+        packers[type(v)](buffer, v)
+    end
+end
+
 --- Serializes a value using MessagePack binary format.
 --- Configured to support sparse arrays via mpk.set_array('with_hole').
 --- @param v any The value to serialize

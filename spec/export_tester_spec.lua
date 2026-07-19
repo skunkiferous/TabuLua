@@ -297,12 +297,20 @@ describe("export_tester", function()
                 col.header = header
             end
 
+            -- Key by the FULL source path and supply file2dir, exactly as the
+            -- loader does: exports are namespaced by package, so a fixture
+            -- without file2dir would write to a path runTests cannot match
+            -- back to its source.
+            local source_path = path_join(source_dir, "Test.tsv")
             local process_files = {
                 tsv_files = {
-                    ["Test.tsv"] = tsv,
+                    [source_path] = tsv,
                 },
                 raw_files = {
-                    ["Test.tsv"] = "id:string\tvalue:integer\nitem1\t42",
+                    [source_path] = "id:string\tvalue:integer\nitem1\t42",
+                },
+                file2dir = {
+                    [source_path] = source_dir,
                 },
             }
 

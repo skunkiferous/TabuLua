@@ -173,7 +173,7 @@ describe("non-table files (asset_file / ignored roles)", function()
                 {{fn = exporter.exportJSON, subdir = "json-json"}},
                 {exportDir = export_dir})
             assert.equals(THEME_JSON,
-                file_util.readFileBinary(path_join(export_dir, "json-json", "theme.json")))
+                file_util.readFileBinary(path_join(export_dir, "json-json", "Pkg", "theme.json")))
         end)
 
         it("copies a declared .xml asset byte-for-byte", function()
@@ -186,7 +186,7 @@ describe("non-table files (asset_file / ignored roles)", function()
                 {exportDir = export_dir})
 
             assert.equals(LAYOUT_XML,
-                file_util.readFileBinary(path_join(export_dir, "json-json", "layout.xml")))
+                file_util.readFileBinary(path_join(export_dir, "json-json", "Pkg", "layout.xml")))
         end)
 
         -- The case with no prior workaround at all. A .tsv is the most table-ish
@@ -222,11 +222,11 @@ describe("non-table files (asset_file / ignored roles)", function()
             -- Exported byte-for-byte, under its OWN name: a .tsv asset is not a
             -- table, so --file=json must not serialize it into Lookup.json.
             assert.equals(LOOKUP_TSV,
-                file_util.readFileBinary(path_join(export_dir, "json-json", "Lookup.tsv")))
-            assert.is_nil(file_util.readFile(path_join(export_dir, "json-json", "Lookup.json")),
+                file_util.readFileBinary(path_join(export_dir, "json-json", "Pkg", "Lookup.tsv")))
+            assert.is_nil(file_util.readFile(path_join(export_dir, "json-json", "Pkg", "Lookup.json")),
                 "an asset .tsv must not be re-serialized into the target format")
             -- The declared table, by contrast, IS serialized to the target format.
-            assert.is_not_nil(file_util.readFile(path_join(export_dir, "json-json", "Item.json")))
+            assert.is_not_nil(file_util.readFile(path_join(export_dir, "json-json", "Pkg", "Item.json")))
         end)
 
         it("declares an asset without warning about it", function()
@@ -310,9 +310,9 @@ describe("non-table files (asset_file / ignored roles)", function()
             -- file list — stored it again, and every export carried a copy.
             assert.is_nil(findBySuffix(result.raw_files, "migrate_v2.tsv"))
             assert.is_nil(file_util.readFile(
-                path_join(export_dir, "json-json", "migrate_v2.tsv")))
+                path_join(export_dir, "json-json", "Pkg", "migrate_v2.tsv")))
             assert.is_nil(file_util.readFile(
-                path_join(export_dir, "json-json", "migrate_v2.json")))
+                path_join(export_dir, "json-json", "Pkg", "migrate_v2.json")))
             -- The source file is of course still on disk, untouched.
             assert.is_not_nil(file_util.readFile(path_join(pkg_dir, "migrate_v2.tsv")))
         end)
@@ -338,7 +338,7 @@ describe("non-table files (asset_file / ignored roles)", function()
                 {{fn = exporter.exportJSON, subdir = "json-json"}},
                 {exportDir = export_dir})
             assert.equals(THEME_JSON, file_util.readFileBinary(
-                path_join(export_dir, "json-json", "ui", "theme.json")))
+                path_join(export_dir, "json-json", "Pkg", "ui", "theme.json")))
         end)
 
         it("ignores glob-matched temp files SILENTLY — the annoyance that started this", function()
