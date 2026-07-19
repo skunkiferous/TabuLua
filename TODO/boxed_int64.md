@@ -307,7 +307,42 @@ int64 support is implemented, this phase must ensure a box never reaches `mpk.pa
 unrecognized: either encode it properly, or **fail loudly**. Silent loss is the one
 outcome that is not acceptable.
 
-### Phase 5 — the read path
+### ⚠️ Phases 5 and 7 were RESTRUCTURED (2026-07-19, ratified)
+
+Two problems with the original split were found by measurement during Phase 4:
+
+1. **`{"int":"…"}` already means "any Lua integer"** — `serializeJSON(123)` emits it today.
+   Reading it back as a box would turn **every** integer in an untyped `table`/`raw` column
+   into a box, and a box has **no arithmetic** (`box + 1` raises), so sandboxed validators
+   and processors doing math on such values would break. **Decided: int64 gets its own tag**
+   — `{"i64":"<digits>"}` in typed JSON and `<int64>` in XML — so `{"int":…}` keeps meaning
+   Lua integer and only genuine int64s read back as boxes. This supersedes the typed-JSON
+   and XML rows of the Phase 7 table below, and OQ4.
+2. **Read and write must land together per format.** Reading a tag the writer does not yet
+   emit breaks round-trip at the intermediate commit — the same "two halves must land
+   together" argument this plan already makes for SQL's `BIGINT` column + bare literal.
+
+**Phases 5 and 7 are therefore replaced by one phase per format, each landing read AND
+write together**, so every commit stays round-trip green and independently reviewable:
+
+- **5a — typed JSON** (`{"i64":"…"}`, read + write)
+- **5b — XML** (`<int64>`, read + write)
+- **5c — MessagePack** (standard `0xD3`, read + write, incl. the self-validating
+  `unpackers[0xD3]` patch; replaces the Phase 4 raise-guard)
+- **5d — Lua literal** (`{__int64 = "…"}` wrapper for untyped containers, read + write)
+- **5e — SQL** (`BIGINT` column + bare literal, both halves together)
+
+Phase 6 (map keys / nested containers), Phase 8 (cross-runtime round-trip) and Phase 9
+(docs) are unchanged. The per-format rationale in the Phase 7 table below still applies —
+only the typed-JSON and XML *tag spellings* changed, and the phase each half lands in.
+
+**Additional obligation for 5d, found in Phase 3:** a **declared** `{int64}` container needs
+the ltcn treatment too, not just untyped ones. Container cells are parsed by `ltcn`, which
+lexes bare number literals before any int64 code runs, so on LuaJIT a bare
+`9007199254740993` in a `{int64}` cell silently becomes `9007199254740992`. Phase 7's claim
+that declared containers need no wrapper is true on the write side, false on the read side.
+
+### Phase 5 (ORIGINAL — superseded by 5a–5e above, kept for its detail)
 
 Deserialization produces boxes for `{"int":"…"}` wrappers instead of `tonumber`-ing them,
 on **every** runtime (this replaces the superseded plan's platform-capability rule, which

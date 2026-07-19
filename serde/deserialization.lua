@@ -15,6 +15,8 @@ local dkjson = require("dkjson")
 -- lua-MessagePack
 local mpk = require("serde.serialization").messagePack
 
+local int64 = require("util.int64")
+
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
 local function getVersion()
@@ -78,6 +80,19 @@ local function processTypedValue(v)
     local t = type(v)
     if t ~= "table" then
         return v, nil
+    end
+
+    -- int64 carries its OWN tag, so an ordinary integer ({"int":...}) keeps
+    -- reading back as a number. Sharing one tag would silently turn every
+    -- integer in an untyped container into a box, which supports no
+    -- arithmetic. The digits arrive as a JSON string, so nothing has rounded
+    -- them -- this is what makes the value exact on LuaJIT too.
+    if v.i64 ~= nil then
+        local box, err = int64.of(v.i64)
+        if box == nil then
+            return nil, "Failed to parse int64: " .. tostring(err)
+        end
+        return box, nil
     end
 
     -- Type wrappers: {"int":"123"} or {"float":"nan"}

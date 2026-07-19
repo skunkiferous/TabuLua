@@ -52,13 +52,14 @@ describe("serialization", function()
     local MAX = "9223372036854775807"
     local MIN = "-9223372036854775808"
 
-    it("should serialize like the digit string in every format", function()
+    it("should serialize like the digit string in the untagged formats",
+        function()
+      -- Typed JSON is excluded: it now carries the {"i64":"..."} tag, which is
+      -- what lets the value be reconstructed as an int64 on re-read.
       for _, digits in ipairs({MAX, MIN, "0", "42", "-7"}) do
         local box = int64.of(digits)
         assert.are.equal(serialization.serialize(digits),
             serialization.serialize(box))
-        assert.are.equal(serialization.serializeJSON(digits),
-            serialization.serializeJSON(box))
         assert.are.equal(serialization.serializeNaturalJSON(digits),
             serialization.serializeNaturalJSON(box))
         assert.are.equal(serialization.serializeSQL(digits),
@@ -66,6 +67,17 @@ describe("serialization", function()
         assert.are.equal(serialization.serializeXML(digits),
             serialization.serializeXML(box))
       end
+    end)
+
+    it("should tag int64 in typed JSON, distinctly from a Lua integer",
+        function()
+      -- The tags MUST differ. {"int":...} is emitted for every Lua integer, so
+      -- sharing it would make every integer in an untyped container read back
+      -- as a box -- and a box supports no arithmetic, which would break
+      -- sandboxed code doing math on such a value.
+      assert.are.equal('{"i64":"' .. MAX .. '"}',
+          serialization.serializeJSON(int64.of(MAX)))
+      assert.are.equal('{"int":"123"}', serialization.serializeJSON(123))
     end)
 
     it("should never emit an empty container", function()
@@ -107,6 +119,41 @@ describe("serialization", function()
       assert.has_error(function()
         serialization.serializeTable({[{1}] = "v"}, false, nil, 0)
       end)
+    end)
+
+    it("should round-trip through typed JSON, exactly, at any depth",
+        function()
+      -- The whole point of the box: identical bytes and an exact value on
+      -- every Lua version, including LuaJIT where a bare JSON number would
+      -- round. The digits ride inside a JSON *string*, so no number parser
+      -- ever sees them.
+      for _, digits in ipairs({MAX, MIN, "0", "9007199254740993"}) do
+        local box = int64.of(digits)
+        local back = deserialization.deserializeJSON(
+            serialization.serializeJSON(box))
+        assert.is_true(int64.is(back))
+        assert.are.equal(digits, int64.tostring(back))
+        -- interning: the reconstructed value IS the original box
+        assert.is_true(rawequal(box, back))
+      end
+
+      -- An ordinary integer must still come back a NUMBER
+      local back = deserialization.deserializeJSON(
+          serialization.serializeJSON(123))
+      assert.are.equal("number", type(back))
+      assert.are.equal(123, back)
+
+      -- Nested, and in key position
+      local box = int64.of(MAX)
+      local encoded = serialization.serializeTableJSON(
+          {box, inner = {box}, [box] = "keyed"}, false, nil, 0)
+      local rt = deserialization.deserializeJSON(encoded)
+      assert.is_true(int64.is(rt[1]))
+      assert.is_true(int64.is(rt.inner[1]))
+      assert.are.equal("keyed", rt[box])
+      -- Re-encoding is byte-identical, so repeated round-trips are stable
+      assert.are.equal(encoded,
+          serialization.serializeTableJSON(rt, false, nil, 0))
     end)
 
     it("should FAIL LOUDLY rather than pack an empty map in MessagePack",

@@ -375,11 +375,13 @@ local function serializeJSON(v, nil_as_empty_str, in_process, depth)
     if t == "string" or t == "boolean" or t == "nil" then
         return dkjson.encode(v)
     end
-    -- int64: emitted as the digit string, exactly as when the value WAS a
-    -- string. The {"int":"..."} tagged form is Phase 7 of TODO/boxed_int64.md;
-    -- this phase only makes the box recognizable, so the bytes must not move.
+    -- int64: its OWN tag, deliberately not the {"int":...} used for Lua
+    -- integers. Sharing that tag would make every integer in an untyped
+    -- container read back as a box, and a box has no arithmetic -- so
+    -- sandboxed code doing math on such a value would break. The digits live
+    -- inside a JSON *string*, so no JSON number parser ever touches them.
     if int64.is(v) then
-        return dkjson.encode(int64Digits(v))
+        return '{"i64":"' .. int64Digits(v) .. '"}'
     end
     if t == "function" then
         -- Not very useful, but better than crashing
