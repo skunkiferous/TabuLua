@@ -188,6 +188,26 @@ function M.restrictNumber(badVal, numberType, min, max, newName)
         return nil
     end
     numberType = utils.resolve(numberType)
+    -- int64 became a "number" type when its parsed value became a box, which
+    -- means restrictNumber now ACCEPTS it -- but the generated validator
+    -- compares against plain-number bounds, and the unspecified side defaults
+    -- to +/-math.huge, which no int64 can be compared to. Rather than generate
+    -- a parser that errors on its first value, reject it here with a message
+    -- that says so. Deferring regresses nothing: min/max on an int64 was
+    -- impossible before this, because int64 was not a number type at all.
+    --
+    -- Adding it later means branching here to build an int64-aware validator
+    -- via int64.compare. Note the bounds would still be plain numbers, so they
+    -- could not express the range beyond +/-2^53 -- which is most of what
+    -- makes int64 int64. That is the main reason this waits for a real use
+    -- case. See TODO/boxed_int64.md (OQ8).
+    if introspection.typeSameOrExtends(numberType, "int64") then
+        utils.log(badVal, 'type', numberType,
+            "min/max are not supported on an int64 type yet (its bounds would "
+            .. "have to be int64 values, not numbers); "
+            .. "declare the type without min/max")
+        return nil
+    end
     if min == nil and max == nil then
         utils.log(badVal, 'range', "nil,nil", 'min and max cannot both be nil')
         return nil

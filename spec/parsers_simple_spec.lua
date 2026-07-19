@@ -316,24 +316,31 @@ describe("parsers - simple types", function()
       local badVal = mockBadVal(log_messages)
       local int64Parser = parsers.parseType(badVal, "int64")
       assert.is.not_nil(int64Parser, "int64Parser is nil")
-      -- The parsed value IS the canonical decimal string, on every version
-      assert_equals_2("123", "123", int64Parser(badVal, "123"))
-      assert_equals_2("-456", "-456", int64Parser(badVal, "-456"))
-      assert_equals_2("0", "0", int64Parser(badVal, "0"))
+      -- The parsed value is an int64 BOX (interning makes the expected box the
+      -- very same object); the reformatted text stays the canonical digits, so
+      -- TSV output is unchanged
+      local i64 = require("util.int64")
+      assert_equals_2(i64.of("123"), "123", int64Parser(badVal, "123"))
+      assert_equals_2(i64.of("-456"), "-456", int64Parser(badVal, "-456"))
+      assert_equals_2(i64.of("0"), "0", int64Parser(badVal, "0"))
       -- Lenient input, canonical output
-      assert_equals_2("42", "42", int64Parser(badVal, "042"))
-      assert_equals_2("5", "5", int64Parser(badVal, "+5"))
-      assert_equals_2("0", "0", int64Parser(badVal, "-0"))
+      assert_equals_2(i64.of("42"), "42", int64Parser(badVal, "042"))
+      assert_equals_2(i64.of("5"), "5", int64Parser(badVal, "+5"))
+      assert_equals_2(i64.of("0"), "0", int64Parser(badVal, "-0"))
+      -- The parsed value really is an int64, recognizable without a schema
+      assert.is_true(i64.is((int64Parser(badVal, "123"))))
       -- The full 64-bit range works UNGATED — including on LuaJIT, which is
       -- the whole point of the type: the text never touches tonumber()
-      assert_equals_2("9007199254740993", "9007199254740993",
+      assert_equals_2(i64.of("9007199254740993"), "9007199254740993",
         int64Parser(badVal, "9007199254740993"))
-      assert_equals_2("9223372036854775807", "9223372036854775807",
+      assert_equals_2(i64.of("9223372036854775807"), "9223372036854775807",
         int64Parser(badVal, "9223372036854775807"))
-      assert_equals_2("-9223372036854775808", "-9223372036854775808",
+      assert_equals_2(i64.of("-9223372036854775808"), "-9223372036854775808",
         int64Parser(badVal, "-9223372036854775808"))
       -- Numbers (from Lua-defined content) convert exactly
-      assert_equals_2("123", "123", int64Parser(badVal, 123))
+      assert_equals_2(i64.of("123"), "123", int64Parser(badVal, 123))
+      -- Re-parsing a parsed value is idempotent
+      assert_equals_2(i64.of("123"), "123", int64Parser(badVal, i64.of("123")))
       -- Invalid values
       assert_equals_2(nil, "1.5", int64Parser(badVal, "1.5"))
       assert_equals_2(nil, "abc", int64Parser(badVal, "abc"))
@@ -347,6 +354,98 @@ describe("parsers - simple types", function()
           .. "[-9223372036854775808, 9223372036854775807])",
         "Bad int64  in test on line 1: '1.5' ('1.5' has a fractional part)",
       }, log_messages)
+    end)
+
+    it("should have int64 extend number, not string", function()
+      -- The EXTENDS relation describes what the parsed value IS. int64
+      -- extended string only because its value used to be a string; a box is
+      -- not a string. "number" and not "integer", mirroring long: integer is
+      -- the ±2^53 safe-range type, and int64's range is wider.
+      local introspection = require("parsers.introspection")
+      assert.is_true(introspection.typeSameOrExtends("int64", "number"))
+      assert.is_false(introspection.typeSameOrExtends("int64", "string"))
+      assert.is_false(introspection.typeSameOrExtends("int64", "integer"))
+    end)
+
+    it("should parse {int64} arrays element-wise", function()
+      -- REGRESSION GUARD. While int64 extended "string", the array parser's
+      -- "assume a single unquoted string" shortcut fired for every {int64}
+      -- cell, so "123,456" silently became a ONE-element array holding the
+      -- literal text "123,456" instead of two int64s. Only the explicitly
+      -- quoted form worked. Extending "number" retires that shortcut.
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local arrParser = parsers.parseType(badVal, "{int64}")
+      assert.is.not_nil(arrParser)
+      local i64 = require("util.int64")
+
+      -- Array cells carry no outer braces: table_parser supplies them
+      local parsed = arrParser(badVal, "123,456")
+      assert.equals(2, #parsed)
+      assert.is_true(i64.is(parsed[1]))
+      assert.equals("123", i64.tostring(parsed[1]))
+      assert.equals("456", i64.tostring(parsed[2]))
+
+      -- A single element still works
+      parsed = arrParser(badVal, "123")
+      assert.equals(1, #parsed)
+      assert.equals("123", i64.tostring(parsed[1]))
+      assert.same({}, log_messages)
+
+      -- Past 2^53 the QUOTED form is the portable one, and it is what
+      -- TabuLua itself writes (see the reformat assertion below), so our own
+      -- files round-trip exactly on every runtime
+      parsed = arrParser(badVal, '"9223372036854775807","-1"')
+      assert.equals(2, #parsed)
+      assert.equals("9223372036854775807", i64.tostring(parsed[1]))
+      assert.equals("-1", i64.tostring(parsed[2]))
+
+      local _, reformatted = arrParser(badVal, "123,456")
+      assert.equals('"123","456"', reformatted)
+    end)
+
+    -- KNOWN GAP, to be closed by the read-path phase (TODO/boxed_int64.md
+    -- Phase 5). A container cell is parsed by ltcn, which LEXES a bare number
+    -- literal before any int64 code runs -- so on LuaJIT a bare value past
+    -- 2^53 has already been rounded to a double by then. The scalar int64
+    -- column is unaffected: it receives the raw cell TEXT, never a number.
+    -- The plan currently assumes only UNTYPED containers need the ltcn tag
+    -- treatment; this shows a DECLARED {int64} needs it too.
+    it("documents the bare-literal gap in {int64} cells", function()
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local arrParser = parsers.parseType(badVal, "{int64}")
+      local i64 = require("util.int64")
+
+      if HAS_NATIVE_INTEGERS then
+        -- Lua 5.3+ lexes the literal as a native 64-bit integer: exact
+        local parsed = arrParser(badVal, "9223372036854775807,-1")
+        assert.equals(2, #parsed)
+        assert.equals("9223372036854775807", i64.tostring(parsed[1]))
+        assert.equals("9007199254740993",
+            i64.tostring((arrParser(badVal, "9007199254740993"))[1]))
+        assert.same({}, log_messages)
+      else
+        -- LuaJIT: far past 2^53 the rounded double is rejected, loudly
+        assert.is_nil(arrParser(badVal, "9223372036854775807,-1"))
+        assert.matches("beyond %+/%-2%^53", log_messages[1])
+        -- ...but JUST past 2^53 it rounds onto the acceptance boundary and is
+        -- accepted as exact -- silently off by one. This is the gap.
+        assert.equals("9007199254740992",
+            i64.tostring((arrParser(badVal, "9007199254740993"))[1]))
+      end
+    end)
+
+    it("should reject min/max on an int64 type, for now", function()
+      -- The parent change makes restrictNumber ACCEPT int64, but its validator
+      -- compares against plain-number bounds and the unspecified side defaults
+      -- to ±math.huge, which no int64 can be compared against. Rejecting here
+      -- beats generating a parser that errors on its first value.
+      local log_messages = {}
+      local badVal = mockBadVal(log_messages)
+      local parser = parsers.restrictNumber(badVal, "int64", 0, nil, "positive_id")
+      assert.is_nil(parser)
+      assert.matches("not supported on an int64 type yet", log_messages[1])
     end)
 
     it("should validate percent", function()

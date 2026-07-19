@@ -10,6 +10,8 @@ local unquotedStr = serialization.unquotedStr
 local table_parsing = require("util.table_parsing")
 local parseTableStr = table_parsing.parseTableStr
 
+local int64 = require("util.int64")
+
 local error_reporting = require("infra.error_reporting")
 local didYouMean = error_reporting.didYouMean
 
@@ -130,6 +132,13 @@ end
 -- Add quotes or {} to reformatted values if needed, based on type of parsed
 function M.quoteIfNeeded(parsed, reformatted, pretendString)
     local parsed_type = type(parsed)
+    -- An int64 box IS a table, but it is a SCALAR: without this it would take
+    -- the table branch below and be reformatted as {9223372036854775807},
+    -- inventing braces and corrupting the output. It presents exactly like the
+    -- string it used to be, so this is also what keeps the output unchanged.
+    if parsed_type == "table" and int64.is(parsed) then
+        return reformatted
+    end
     if (parsed_type == "string" or parsed_type == "nil") or pretendString then
         return reformatted
     elseif parsed_type == "table" then

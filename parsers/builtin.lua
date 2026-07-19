@@ -264,30 +264,36 @@ end
 generators.extendsOrRestrictsType('percent', 'number')
 state.COMPARATORS.percent = state.COMPARATORS.number
 
--- "int64" is an exact 64-bit signed integer, carried as its canonical decimal
--- STRING on EVERY Lua version. It exists because a true int64 cannot live in a
--- LuaJIT number (doubles round past ±2^53, and tonumber() rounds before any
--- parser code runs), and a per-version representation would make exports
--- diverge — the string is the one carrier that is exact and byte-identical
--- everywhere. Use util/int64.lua for comparison and add/sub arithmetic on
--- these values; plain Lua operators on them either fail or silently coerce
--- through doubles.
+-- "int64" is an exact 64-bit signed integer. Its parsed value is an int64 BOX
+-- (util/int64.lua) -- an interned, immutable, empty proxy -- identical in shape
+-- on every Lua version. It exists because a true int64 cannot live in a LuaJIT
+-- number (doubles round past ±2^53, and tonumber() rounds before any parser
+-- code runs), and a per-version representation would make exports diverge.
+--
+-- The box, rather than the canonical decimal string it used to carry, is what
+-- lets the serializers recognize an int64 by VALUE (int64.is) instead of by
+-- schema -- so it works at any depth, including inside untyped containers,
+-- arrays and map keys, where no schema is available.
+--
+-- Use util/int64.lua for arithmetic and conversion; <, <=, > and >= are exact
+-- on a box, but '..', '#', string methods and math.* do not work, by design.
 state.PARSERS.int64 = function (badVal, value, context)
     utils.expectTSV(context) -- Just for side-effects
     local t = type(value)
+    if int64.is(value) then
+        -- Already an int64 (re-parsing a parsed value): interning makes this
+        -- return the very same box
+        return value, int64.tostring(value)
+    end
     if t == "number" then
         -- Lua-defined content may hold numbers; int64.of converts exactly
         -- (native integers fully, doubles only within ±2^53) or says why not
-        -- Phase 2 note: int64.of now yields a BOX, but the parsed value stays
-        -- the canonical STRING until Phase 3 flips it, so nothing outside
-        -- util/int64.lua changes behavior yet
         local box, err = int64.of(value)
         if box == nil then
             utils.log(badVal, 'int64', value, err)
             return nil, tostring(value)
         end
-        local canon = int64.tostring(box)
-        return canon, canon
+        return box, int64.tostring(box)
     end
     if t ~= "string" then
         utils.log(badVal, 'int64', value)
@@ -308,21 +314,25 @@ state.PARSERS.int64 = function (badVal, value, context)
     else
         canon = digits
     end
-    local checked, err = int64.of(canon)
-    if checked == nil then
+    local box, err = int64.of(canon)
+    if box == nil then
         utils.log(badVal, 'int64', value, err)
         return nil, value
     end
-    return canon, canon
+    return box, canon
 end
--- "int64" only logically extends "string", because its parsed value is a string
--- (the canonical decimal text), but the input format is far narrower
-generators.extendsOrRestrictsType('int64', 'string')
+-- "int64" logically extends "number": the EXTENDS relation describes what the
+-- parsed value IS, the same rule "percent" states above. It extended "string"
+-- only because its value used to be a string; with a box that justification is
+-- gone. "number", not "integer", mirroring "long": integer is the ±2^53
+-- safe-range type and int64's range is WIDER, and a subtype must narrow.
+-- This is also what unlocks the sensible restriction family for a derived
+-- custom type (min/max rather than minLen/maxLen/pattern).
+generators.extendsOrRestrictsType('int64', 'number')
 state.COMPARATORS.int64 = function (a, b)
-    -- Values reaching a comparator are already canonical, so int64.lt cannot
-    -- fail here; it orders numerically where the string comparator would
-    -- order lexically ("100" < "99")
-    return int64.lt(a, b)
+    -- Plain '<' is exact on boxes (__lt), so no helper is needed: this is the
+    -- lexical-ordering bug ("100" < "99") disappearing with the string
+    return a < b
 end
 
 -- A true value, useful only to create "sets" Note: 'true' is a keyword
