@@ -32,6 +32,14 @@ local sandbox_env = require("infra.sandbox_env")
 
 local formatInteger = require("util.string_utils").formatInteger
 
+-- int64 values are BOXES: empty tables carrying a metatable. Every serializer
+-- below therefore needs an explicit arm, because otherwise each one would fall
+-- through to its table branch and emit an empty container instead of the value.
+-- The check is per VALUE (int64.is), not per column, which is exactly why it
+-- works at any depth -- nested, inside untyped containers, and in key position.
+local int64 = require("util.int64")
+local int64Digits = int64.tostring
+
 --- Renders a number for serialized output. tostring, EXCEPT for an
 --- integer-valued number that tostring would render in scientific notation:
 --- on LuaJIT tostring(9007199254740991) is "9.007199254741e+15" — rounded! —
@@ -92,8 +100,13 @@ local MAX_TABLE_DEPTH = 10
 -- It can never carry a genuine table key: a table is not a legal map KEY type
 -- (parsers/type_parsing.lua rejects it via NEVER_TABLE), so the wrapped key is
 -- always a scalar's text.
+-- An int64 box is exempt for the same reason an UNQUOTED_MT value is, but on
+-- stronger grounds: boxes are INTERNED, so they compare by value and a freshly
+-- parsed key is the very same object as the original. That is precisely the
+-- property whose absence this refusal exists to catch.
 local function rejectTableKey(k, reason)
-    if type(k) == "table" and getmetatable(k) ~= UNQUOTED_MT then
+    if type(k) == "table" and getmetatable(k) ~= UNQUOTED_MT
+        and not int64.is(k) then
         error("table used as a map key: nothing can read that back (" .. reason
             .. "). See TODO/tables_as_keys.md", 0)
     end
@@ -171,6 +184,12 @@ local function serialize(v, nil_as_empty_str, in_process, depth)
     local t = type(v)
     if t == "table" and getmetatable(v) == UNQUOTED_MT then
         return v[1]
+    end
+    -- int64: a QUOTED string of canonical digits, unchanged from when the value
+    -- itself was a string. A bare literal would be lexed straight into a double
+    -- by LuaJIT on re-import, and the Lua format has no tag to rescue it.
+    if int64.is(v) then
+        return string.format("%q", int64Digits(v))
     end
     if t == "function" then
         -- Not very useful, but better than crashing
@@ -356,6 +375,12 @@ local function serializeJSON(v, nil_as_empty_str, in_process, depth)
     if t == "string" or t == "boolean" or t == "nil" then
         return dkjson.encode(v)
     end
+    -- int64: emitted as the digit string, exactly as when the value WAS a
+    -- string. The {"int":"..."} tagged form is Phase 7 of TODO/boxed_int64.md;
+    -- this phase only makes the box recognizable, so the bytes must not move.
+    if int64.is(v) then
+        return dkjson.encode(int64Digits(v))
+    end
     if t == "function" then
         -- Not very useful, but better than crashing
         return '"<function>"'
@@ -472,6 +497,12 @@ local function serializeNaturalJSON(v, nil_as_empty_str, in_process, depth)
     if t == "string" or t == "boolean" or t == "nil" then
         return dkjson.encode(v)
     end
+    -- int64: a QUOTED string, and it stays one. A bare JSON number is exact on
+    -- Lua 5.3+ but ROUNDS when LuaJIT re-reads it, which would reintroduce the
+    -- version-dependence int64 exists to remove.
+    if int64.is(v) then
+        return dkjson.encode(int64Digits(v))
+    end
     if t == "function" then
         return '"<FUNCTION>"'
     end
@@ -486,6 +517,11 @@ local function keyToString(k)
     -- Stringifying a table key would be irreversible: on read we only ever see a
     -- string, with nothing left to rebuild the table from.
     rejectTableKey(k, NO_TABLE_KEY_JSON)
+    -- An int64 key stringifies to its digits, which re-parse to the very same
+    -- interned box -- the round-trip a generic table key cannot offer
+    if int64.is(k) then
+        return int64Digits(k)
+    end
     local t = type(k)
     if t == "string" then
         return k
@@ -620,6 +656,12 @@ local function serializeSQL(v, tableSerializer)
         return numberToText(v)
     elseif t == "boolean" then
         return v and "1" or "0"
+    elseif int64.is(v) then
+        -- int64: a quoted SQL string literal, unchanged. The BIGINT column plus
+        -- bare literal is Phase 7 of TODO/boxed_int64.md, and the two halves
+        -- must land together -- sql_types maps int64 to TEXT today, so a bare
+        -- literal here would be a type mismatch against its own column.
+        return escapeSQLString(int64Digits(v))
     elseif t == "table" then
         -- Encode table as JSON/XML/... string
         local encoded = ser(v, false)
@@ -673,6 +715,12 @@ local function serializeXML(v, nil_as_empty_str, in_process, depth)
             return "<number>-inf</number>"
         end
         return "<number>" .. tostring(v) .. "</number>"
+    end
+    -- int64: the <string> form, unchanged. The <integer> form is Phase 7 of
+    -- TODO/boxed_int64.md and requires the read-side fix first, or the value
+    -- rounds through tonumber() on re-read.
+    if int64.is(v) then
+        return "<string>" .. int64Digits(v) .. "</string>"
     end
     if t == "string" then
         return "<string>" .. (v:gsub("&", "&amp;")
@@ -753,11 +801,35 @@ local function serializeTableXML(t, nil_as_empty_str, in_process, depth)
 end
 serializeTableXMLRef = serializeTableXML
 
+-- MANDATORY GUARD: a box is an EMPTY table, so lua-MessagePack -- which
+-- dispatches on the Lua type -- would pack it as an empty map/array (a single
+-- 0xC0-class byte, MEASURED: 0x90), losing the value completely and SILENTLY.
+-- Silent loss is the one outcome that is not acceptable, so until the real
+-- int64 encoding lands (standard 0xD3, Phase 7 of TODO/boxed_int64.md) a box
+-- reaching the packer must fail loudly instead.
+--
+-- Hooking packers.table rather than pre-walking the value is what makes the
+-- guard total: lua-MessagePack recurses through this same dispatch table, so
+-- a box nested at any depth is caught, at no per-call walking cost.
+if type(mpk.packers) ~= "table" or type(mpk.packers.table) ~= "function" then
+    error("lua-MessagePack does not expose packers.table, so an int64 could be "
+        .. "silently packed as an empty container; refusing to continue")
+end
+local mpk_pack_table = mpk.packers.table
+mpk.packers.table = function(buffer, v, ...)
+    if int64.is(v) then
+        error("int64 values cannot be MessagePack-encoded yet (int64 "
+            .. int64Digits(v) .. "); see TODO/boxed_int64.md Phase 7", 0)
+    end
+    return mpk_pack_table(buffer, v, ...)
+end
+
 --- Serializes a value using MessagePack binary format.
 --- Configured to support sparse arrays via mpk.set_array('with_hole').
 --- @param v any The value to serialize
 --- @param nil_as_empty_str boolean|nil Ignored (MessagePack API is not configurable)
 --- @return string Binary MessagePack data
+--- @error Throws if the value contains an int64 (see the guard above)
 local function serializeMessagePack(v, nil_as_empty_str)
     return mpk.pack(v)
 end
@@ -812,6 +884,10 @@ local function serializeInSandbox(value)
         return "<userdata>"
     elseif t == "thread" then
         return "<thread>"
+    elseif int64.is(value) then
+        -- Before the table branch: a box has no fields to walk, and the
+        -- sandbox must never see one as a container
+        return int64Digits(value)
     elseif t == "table" then
         -- Run serializeTable() in a sandbox to prevent infinite loops,
         -- excessive memory usage, or malicious __tostring metamethods

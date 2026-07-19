@@ -41,6 +41,91 @@ describe("serialization", function()
     end)
   end)
 
+  -- An int64 is a BOX: an empty table with a metatable. Without an explicit
+  -- arm, every serializer would fall through to its table branch and emit an
+  -- empty container -- silently losing the value. These tests pin the rule for
+  -- this phase: a box emits EXACTLY what the canonical digit string emits, so
+  -- no existing output moves. (The per-format int64 presentations -- typed
+  -- JSON {"int":"..."}, SQL BIGINT, XML <integer> -- are a later phase.)
+  describe("int64 values", function()
+    local int64 = require("util.int64")
+    local MAX = "9223372036854775807"
+    local MIN = "-9223372036854775808"
+
+    it("should serialize like the digit string in every format", function()
+      for _, digits in ipairs({MAX, MIN, "0", "42", "-7"}) do
+        local box = int64.of(digits)
+        assert.are.equal(serialization.serialize(digits),
+            serialization.serialize(box))
+        assert.are.equal(serialization.serializeJSON(digits),
+            serialization.serializeJSON(box))
+        assert.are.equal(serialization.serializeNaturalJSON(digits),
+            serialization.serializeNaturalJSON(box))
+        assert.are.equal(serialization.serializeSQL(digits),
+            serialization.serializeSQL(box))
+        assert.are.equal(serialization.serializeXML(digits),
+            serialization.serializeXML(box))
+      end
+    end)
+
+    it("should never emit an empty container", function()
+      -- The failure mode this phase exists to prevent
+      local box = int64.of(MAX)
+      assert.are.equal('"' .. MAX .. '"', serialization.serialize(box))
+      assert.are.equal("'" .. MAX .. "'", serialization.serializeSQL(box))
+      for _, out in ipairs({serialization.serialize(box),
+                            serialization.serializeJSON(box),
+                            serialization.serializeNaturalJSON(box),
+                            serialization.serializeXML(box)}) do
+        assert.is_nil(out:find("{}", 1, true))
+        assert.is_true(out:find(MAX, 1, true) ~= nil)
+      end
+    end)
+
+    it("should work at any depth, which is the point of a per-value check",
+        function()
+      local box = int64.of(MAX)
+      assert.are.equal('{"' .. MAX .. '",x="' .. MAX .. '"}',
+          serialization.serializeTable({box, x = box}, false, nil, 0))
+      -- Nested two deep, inside what could be an untyped container
+      assert.are.equal('{{"' .. MAX .. '"}}',
+          serialization.serializeTable({{box}}, false, nil, 0))
+    end)
+
+    it("should be allowed as a map key", function()
+      -- rejectTableKey refuses table keys because nothing can read them back.
+      -- An interned box can: it compares by value and re-parses to the very
+      -- same object, which is exactly the property that refusal protects.
+      local box = int64.of(MAX)
+      assert.has_no.errors(function()
+        serialization.serializeTable({[box] = "v"}, false, nil, 0)
+      end)
+      assert.has_no.errors(function()
+        serialization.serializeTableNaturalJSON({[box] = "v"}, false, nil, 0)
+      end)
+      -- ...while a genuine table key is still refused
+      assert.has_error(function()
+        serialization.serializeTable({[{1}] = "v"}, false, nil, 0)
+      end)
+    end)
+
+    it("should FAIL LOUDLY rather than pack an empty map in MessagePack",
+        function()
+      -- lua-MessagePack dispatches on the Lua type, so an unguarded box packs
+      -- to a single 0x90 byte -- an empty array, total silent loss of the
+      -- value. Failing is acceptable here; losing the value is not.
+      local box = int64.of(MAX)
+      local ok, err = pcall(serialization.serializeMessagePack, box)
+      assert.is_false(ok)
+      assert.matches("int64", tostring(err))
+      -- ...and at depth too, since the guard hooks the packer's own dispatch
+      local ok2 = pcall(serialization.serializeMessagePack, {1, {box}, "x"})
+      assert.is_false(ok2)
+      -- Ordinary values still pack fine
+      assert.is_true(pcall(serialization.serializeMessagePack, {1, "x"}))
+    end)
+  end)
+
   describe("unquotedStr", function()
     it("should handle strings", function()
       local t = serialization.unquotedStr("abc")

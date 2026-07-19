@@ -692,6 +692,15 @@ local function colToSQL(sql_types, col)
         if (colType == "hexbytes") or extendsOrRestrict(colType, "hexbytes")
             or (colType == "base64bytes") or extendsOrRestrict(colType, "base64bytes") then
             sqlType = optional and "BLOB" or "BLOB NOT NULL"
+        -- int64 must be pinned BEFORE the BASE_TYPES scan below. It extends
+        -- "number" now, so that scan would map it to REAL -- silently narrowing
+        -- a 64-bit id to a double, the exact loss the type exists to prevent.
+        -- TEXT matches what serializeSQL emits (a quoted digit string), and it
+        -- is what this column was before int64 became a number type.
+        -- Phase 7 of TODO/boxed_int64.md moves BOTH halves together: a BIGINT
+        -- column AND a bare literal. Changing either one alone is a mismatch.
+        elseif (colType == "int64") or extendsOrRestrict(colType, "int64") then
+            sqlType = optional and "TEXT" or "TEXT NOT NULL"
         else
             for _, b in ipairs(BASE_TYPES) do
                 if (colType == b) or extendsOrRestrict(colType, b) then
