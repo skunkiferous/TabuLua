@@ -32,6 +32,65 @@ describe("table_parsing", function()
       --assert.are.equal("test on line 1: 'bad value'", log_messages[1])
     end)
 
+    it("should convert an {__int64=...} wrapper into a box", function()
+      local log_messages = {}
+      local log = function(self, msg) table.insert(log_messages, msg) end
+      local badVal = error_reporting.badValGen(log)
+      badVal.source_name = "test"
+      badVal.line_no = 1
+      local int64 = require("util.int64")
+
+      -- ltcn lexes a bare number before any int64 code runs, so the wrapper is
+      -- the only way an int64 survives inside a table cell.
+      local t = table_parsing.parseTableStr(badVal, 'raw',
+          [[{{__int64="9007199254740993"},k={__int64="-9223372036854775808"}}]])
+      assert.is_true(int64.is(t[1]))
+      assert.is_true(int64.is(t.k))
+      assert.are.equal("9007199254740993", int64.tostring(t[1]))
+      assert.are.equal("-9223372036854775808", int64.tostring(t.k))
+
+      -- Narrow on purpose, exactly like the typed-JSON tag: a lone __int64 key
+      -- with a canonical int64 string, and nothing else. Everything else is
+      -- left as the plain table the author wrote.
+      local notATag = table_parsing.parseTableStr(badVal, 'raw',
+          [[{{__int64="nope"},{__int64="5",other=1},{__int64=5}}]])
+      assert.are.same({{__int64 = "nope"}, {__int64 = "5", other = 1},
+                       {__int64 = 5}}, notATag)
+      assert.are.same({}, log_messages)
+    end)
+
+    it("should reject a bare literal a double cannot hold exactly", function()
+      local log_messages = {}
+      local log = function(self, msg) table.insert(log_messages, msg) end
+      local badVal = error_reporting.badValGen(log)
+      badVal.source_name = "test"
+      badVal.line_no = 1
+
+      -- On LuaJIT this rounded SILENTLY (9007199254740993 -> ...992); on Lua
+      -- 5.3+ it was exact. Same file, two meanings. Now both reject it, and
+      -- the check is textual so the two runtimes cannot diverge.
+      assert.is_nil(table_parsing.parseTableStr(badVal, 'raw',
+          "{9007199254740993}"))
+      assert.matches("cannot be represented exactly", log_messages[1])
+      assert.is_nil(table_parsing.parseTableStr(badVal, 'raw',
+          "{9007199254740992}"))    -- 2^53 itself: indistinguishable from a
+                                    -- rounded 2^53+1, so also refused
+
+      -- Everything a double DOES hold exactly is untouched...
+      log_messages = {}
+      assert.are.same({9007199254740991, -1, 42},
+          table_parsing.parseTableStr(badVal, 'raw',
+              "{9007199254740991,-1,42}"))
+      -- ...as are floats, hex, digits inside strings, and the two forms the
+      -- error message actually recommends
+      assert.are.same({1.5e20, 0x7FFFFFFF, "id 9007199254740993"},
+          table_parsing.parseTableStr(badVal, 'raw',
+              [[{1.5e20,0x7FFFFFFF,"id 9007199254740993"}]]))
+      assert.are.same({"9007199254740993"},
+          table_parsing.parseTableStr(badVal, 'raw', [[{"9007199254740993"}]]))
+      assert.are.same({}, log_messages)
+    end)
+
     it("should report error for invalid syntax", function()
       local log_messages = {}
       local log = function(self, msg) table.insert(log_messages, msg) end

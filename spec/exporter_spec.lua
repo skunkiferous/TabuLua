@@ -222,6 +222,39 @@ describe("exporter", function()
             assert.is_truthy(content:match('"item1"'))
             assert.is_truthy(content:match("42"))
         end)
+
+        it("should wrap int64 only in an untyped table/raw column", function()
+            -- The wrapper decision is per COLUMN. A declared int64 column keeps
+            -- its plain quoted digits, because the column type already restores
+            -- the box on re-read; an untyped raw/table column has nothing else
+            -- to say the value was an int64, so it gets the tag.
+            local int64 = require("util.int64")
+            local box = int64.of("9007199254740993")
+            local header = {
+                {name = "id", type = "int64", idx = 1, parsed = "id"},
+                {name = "bag", type = "raw", idx = 2, parsed = "bag"},
+            }
+            header.__source = path_join(temp_dir, "wrap.tsv")
+            local row = {{parsed = box}, {parsed = {box, k = box}}}
+            local tsv = {header, row}
+            header.__dataset = tsv
+            for _, col in ipairs(header) do col.header = header end
+
+            local success = exporter.exportLuaTSV({
+                tsv_files = {["wrap.tsv"] = tsv},
+                raw_files = {["wrap.tsv"] = "id:int64\tbag:raw"},
+            }, {exportDir = temp_dir})
+            assert.is_true(success)
+
+            local content = file_util.readFile(path_join(temp_dir, "wrap.tsv"))
+            local dataLine = content:match("\n([^\n]*9007199254740993[^\n]*)")
+            assert.is_not_nil(dataLine)
+            local declared, untyped = dataLine:match("^([^\t]*)\t(.*)$")
+            assert.are.equal('"9007199254740993"', declared)
+            assert.are.equal(
+                '{{__int64="9007199254740993"},k={__int64="9007199254740993"}}',
+                untyped)
+        end)
     end)
 
     describe("exportJSONTSV", function()

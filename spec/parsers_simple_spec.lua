@@ -411,29 +411,34 @@ describe("parsers - simple types", function()
     -- column is unaffected: it receives the raw cell TEXT, never a number.
     -- The plan currently assumes only UNTYPED containers need the ltcn tag
     -- treatment; this shows a DECLARED {int64} needs it too.
-    it("documents the bare-literal gap in {int64} cells", function()
+    it("should reject a bare over-2^53 literal in an {int64} cell", function()
+      -- THE SAME ANSWER ON EVERY RUNTIME is the whole point. Before this
+      -- check, a bare 9007199254740993 was exact on Lua 5.3+ (ltcn lexes a
+      -- native integer) but on LuaJIT rounded to ...992 and was accepted
+      -- SILENTLY, because the rounded value lands back inside the acceptance
+      -- range. The literal is now rejected on the cell TEXT, before ltcn ever
+      -- lexes it, so both runtimes agree.
       local log_messages = {}
       local badVal = mockBadVal(log_messages)
       local arrParser = parsers.parseType(badVal, "{int64}")
       local i64 = require("util.int64")
 
-      if HAS_NATIVE_INTEGERS then
-        -- Lua 5.3+ lexes the literal as a native 64-bit integer: exact
-        local parsed = arrParser(badVal, "9223372036854775807,-1")
-        assert.equals(2, #parsed)
-        assert.equals("9223372036854775807", i64.tostring(parsed[1]))
-        assert.equals("9007199254740993",
-            i64.tostring((arrParser(badVal, "9007199254740993"))[1]))
-        assert.same({}, log_messages)
-      else
-        -- LuaJIT: far past 2^53 the rounded double is rejected, loudly
-        assert.is_nil(arrParser(badVal, "9223372036854775807,-1"))
-        assert.matches("beyond %+/%-2%^53", log_messages[1])
-        -- ...but JUST past 2^53 it rounds onto the acceptance boundary and is
-        -- accepted as exact -- silently off by one. This is the gap.
-        assert.equals("9007199254740992",
-            i64.tostring((arrParser(badVal, "9007199254740993"))[1]))
-      end
+      assert.is_nil(arrParser(badVal, "9007199254740993"))
+      assert.matches("cannot be represented exactly", log_messages[1])
+      assert.matches("__int64", log_messages[1])
+      assert.is_nil(arrParser(badVal, "9223372036854775807,-1"))
+
+      -- The two forms that DO survive, and are what the message recommends
+      log_messages = {}
+      badVal = mockBadVal(log_messages)
+      arrParser = parsers.parseType(badVal, "{int64}")
+      assert.equals("9007199254740993",
+          i64.tostring((arrParser(badVal, '"9007199254740993"'))[1]))
+      assert.equals("9007199254740993",
+          i64.tostring((arrParser(badVal, '{__int64="9007199254740993"}'))[1]))
+      -- ...and small bare literals are untouched, on both runtimes
+      assert.equals("-1", i64.tostring((arrParser(badVal, "-1"))[1]))
+      assert.same({}, log_messages)
     end)
 
     it("should reject min/max on an int64 type, for now", function()

@@ -123,6 +123,26 @@ local function isBytesColumn(col)
     return isHexBytesColumn(col) or isBase64BytesColumn(col)
 end
 
+-- Returns true if a column is an UNTYPED container: 'table' or 'raw' (or a user
+-- type extending either), with any |nil suffix stripped.
+--
+-- These are the only columns whose Lua export needs the {__int64="…"} wrapper.
+-- Everywhere else the declared type already says where the int64s are, so the
+-- box is restored on re-read without a tag -- which is why the decision is made
+-- per COLUMN here and not per depth inside the serializer: a "wrap whenever
+-- nested" rule would turn a declared {int64} column into
+-- {{__int64="1"},{__int64="2"}} for no benefit.
+-- NOTE the deliberate absence of an extendsOrRestrict(baseType, "raw") arm:
+-- 'raw' is the union alias boolean|number|table|string|nil, so EVERY type
+-- "extends" it -- including int64 itself, which made a declared int64 column
+-- wrap its own value. Only the literal names, plus genuine subtypes of 'table'.
+local function isUntypedContainerColumn(col)
+    local colType = col.type
+    local baseType = colType:match("^(.+)|nil$") or colType
+    return baseType == "table" or baseType == "raw"
+        or extendsOrRestrict(baseType, "table")
+end
+
 -- Converts a parsed bytes value to raw binary data.
 local function bytesToBinary(col, value)
     if value == nil then return nil end
@@ -797,7 +817,10 @@ end
 --- @side_effect Creates files in exportDir
 local function exportLuaTSV(process_files, exportParams)
     logger:info("Exporting files as (Lua)TSV to: " .. exportParams.exportDir)
-    local function ser(rowIdx, col, value) return serialize(value, true) end
+    local function ser(rowIdx, col, value)
+        return serialize(value, true, nil, nil,
+            col ~= nil and isUntypedContainerColumn(col))
+    end
     return exportTSV(process_files, exportParams, ser)
 end
 
@@ -864,7 +887,10 @@ local function exportLua(process_files, exportParams)
     copy.lineSep = ",\n"
     copy.colSep = ","
     copy.fileExt = "lua"
-    local function ser(rowIdx, col, value) return serialize(value, false) end
+    local function ser(rowIdx, col, value)
+        return serialize(value, false, nil, nil,
+            col ~= nil and isUntypedContainerColumn(col))
+    end
     return exportTSV(process_files, copy, ser)
 end
 

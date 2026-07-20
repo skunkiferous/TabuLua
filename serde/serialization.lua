@@ -40,6 +40,16 @@ local formatInteger = require("util.string_utils").formatInteger
 local int64 = require("util.int64")
 local int64Digits = int64.tostring
 
+-- The Lua-literal int64 tag: {__int64 = "<canonical digits>"}.
+--
+-- The Lua format has no typed/natural split to hide a tag in, and ltcn's
+-- grammar admits no other carrier -- comments are captured as `/ 0` and
+-- discarded, and call syntax (int64"…") does not parse at all -- so a table
+-- wrapper is the only construct that survives a round trip. It is
+-- author-visible, hence a named constant shared by the writer, the reader and
+-- their tests rather than a string spelled out in three places.
+local INT64_WRAPPER_KEY = "__int64"
+
 --- Renders a number for serialized output. tostring, EXCEPT for an
 --- integer-valued number that tostring would render in scientific notation:
 --- on LuaJIT tostring(9007199254740991) is "9.007199254741e+15" — rounded! —
@@ -146,9 +156,13 @@ local serializeTableRef
 --- @param nil_as_empty_str boolean|nil If true, nil values become empty string "" (default: false)
 --- @param in_process table|nil Internal: tracks tables being processed to detect recursion
 --- @param depth number|nil Internal: current recursion depth
+--- @param wrapInt64 boolean|nil If true, int64 values are emitted as the
+---        {__int64="<digits>"} wrapper instead of a plain quoted string. Set it
+---        only for an UNTYPED table/raw column, where nothing else records that
+---        the value was an int64 (see INT64_WRAPPER_KEY below).
 --- @return string Lua source code that evaluates to the original value
 --- @error Throws on recursive tables or depth exceeding MAX_TABLE_DEPTH
-local function serialize(v, nil_as_empty_str, in_process, depth)
+local function serialize(v, nil_as_empty_str, in_process, depth, wrapInt64)
     if v == nil and nil_as_empty_str then
         return ""
     end
@@ -185,17 +199,28 @@ local function serialize(v, nil_as_empty_str, in_process, depth)
     if t == "table" and getmetatable(v) == UNQUOTED_MT then
         return v[1]
     end
-    -- int64: a QUOTED string of canonical digits, unchanged from when the value
-    -- itself was a string. A bare literal would be lexed straight into a double
-    -- by LuaJIT on re-import, and the Lua format has no tag to rescue it.
+    -- int64: a QUOTED string of canonical digits. A bare literal would be lexed
+    -- straight into a double by LuaJIT on re-import, and a plain Lua literal
+    -- carries no type tag to rescue it.
+    --
+    -- In an UNTYPED table/raw column the quoted string alone is not enough --
+    -- nothing on re-read says it was an int64 rather than a string -- so the
+    -- caller asks for the wrapper. It is NOT emitted for a declared int64 or
+    -- declared container column: there the column type already restores the
+    -- box, and wrapping would churn existing output into
+    -- {{__int64="1"},{__int64="2"}} for no gain.
     if int64.is(v) then
-        return string.format("%q", int64Digits(v))
+        local digits = string.format("%q", int64Digits(v))
+        if wrapInt64 then
+            return "{" .. INT64_WRAPPER_KEY .. "=" .. digits .. "}"
+        end
+        return digits
     end
     if t == "function" then
         -- Not very useful, but better than crashing
         return "<function>"
     end
-    return serializeTableRef(v, nil_as_empty_str, in_process, depth)
+    return serializeTableRef(v, nil_as_empty_str, in_process, depth, wrapInt64)
 end
 
 --- Serializes a table to a Lua-readable string representation.
@@ -204,9 +229,10 @@ end
 --- @param nil_as_empty_str boolean|nil If true, nil values become empty string "" (default: false)
 --- @param in_process table|nil Internal: tracks tables being processed to detect recursion
 --- @param depth number|nil Internal: current recursion depth (default: 0)
+--- @param wrapInt64 boolean|nil Passed through to serialize() for every element
 --- @return string Lua source code that evaluates to the original table
 --- @error Throws if t is not a table, on recursive tables, or depth exceeds MAX_TABLE_DEPTH
-local function serializeTable(t, nil_as_empty_str, in_process, depth)
+local function serializeTable(t, nil_as_empty_str, in_process, depth, wrapInt64)
     if type(t) ~= "table" then
         error("not a table: " .. type(t))
     end
@@ -237,7 +263,7 @@ local function serializeTable(t, nil_as_empty_str, in_process, depth)
         if v == nil then
             r[#r + 1] = nil_as_empty_str and "''" or "nil"
         else
-            r[#r + 1] = serialize(v, nil_as_empty_str, in_process, depth)
+            r[#r + 1] = serialize(v, nil_as_empty_str, in_process, depth, wrapInt64)
         end
     end
 
@@ -251,13 +277,13 @@ local function serializeTable(t, nil_as_empty_str, in_process, depth)
                 if type(k) == "string" and k:match("^[%a_][%w_]*$") then
                     tmp[1] = k
                     tmp[2] = '='
-                    tmp[3] = serialize(v, nil_as_empty_str, in_process, depth)
+                    tmp[3] = serialize(v, nil_as_empty_str, in_process, depth, wrapInt64)
                     tmp[4] = nil
                 else
                     tmp[1] = '['
-                    tmp[2] = serialize(k, nil_as_empty_str, in_process, depth)
+                    tmp[2] = serialize(k, nil_as_empty_str, in_process, depth, wrapInt64)
                     tmp[3] = ']='
-                    tmp[4] = serialize(v, nil_as_empty_str, in_process, depth)
+                    tmp[4] = serialize(v, nil_as_empty_str, in_process, depth, wrapInt64)
                 end
                 keyed[#keyed + 1] = table.concat(tmp)
             end

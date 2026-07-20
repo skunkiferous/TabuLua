@@ -68,6 +68,21 @@ describe("serialization", function()
       end
     end)
 
+    it("should wrap int64 in a Lua literal only when asked", function()
+      -- The wrapper is for an UNTYPED table/raw column, where nothing else
+      -- records that the value was an int64. It is opt-in per column, so a
+      -- declared int64 or declared container keeps its existing output.
+      local box = int64.of(MAX)
+      assert.are.equal('"' .. MAX .. '"', serialization.serialize(box))
+      assert.are.equal('{__int64="' .. MAX .. '"}',
+          serialization.serialize(box, false, nil, nil, true))
+      -- ...and it reaches every depth and the key position, not just the top
+      assert.are.equal('{{__int64="' .. MAX .. '"},k={__int64="' .. MAX .. '"}}',
+          serialization.serialize({box, k = box}, false, nil, nil, true))
+      assert.are.equal('{"' .. MAX .. '",k="' .. MAX .. '"}',
+          serialization.serialize({box, k = box}, false, nil, nil, false))
+    end)
+
     it("should tag int64 distinctly from a Lua integer, in both tagged formats",
         function()
       -- The tags MUST differ. {"int":...} / <integer> are emitted for every
