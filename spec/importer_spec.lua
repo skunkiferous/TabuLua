@@ -119,6 +119,25 @@ describe("importer", function()
             assert.matches("Expected JSON array at top level", err)
         end)
 
+        it("should import a row containing nulls", function()
+            -- REGRESSION: an empty optional column decodes to a HOLE, and
+            -- re-encoding a holed table yields a JSON OBJECT keyed by "1",
+            -- "2", ... -- so every cell of such a row read back as missing.
+            -- Patch files, whose rows are sparse by nature, hit this on
+            -- nearly every row.
+            local file_path = path_join(temp_dir, "test.json")
+            file_util.writeFile(file_path,
+                '[\n["a",null,"c",null,{"int":"7"}]\n]')
+
+            local result, err = importer.importTypedJSONFile(file_path)
+            assert.is_nil(err)
+            assert.equals("a", result[1][1])
+            assert.is_nil(result[1][2])
+            assert.equals("c", result[1][3])
+            assert.is_nil(result[1][4])
+            assert.equals(7, result[1][5])
+        end)
+
         it("should handle JSON object at top level as empty result", function()
             -- Note: JSON objects are Lua tables, so they pass type check
             -- but ipairs over them yields nothing, resulting in empty result
@@ -161,6 +180,20 @@ describe("importer", function()
             assert.is_nil(err)
             assert.are.same({"a", "b", "c"}, result[1])
             assert.are.same({1, 2, 3}, result[2])
+        end)
+
+        it("should import a row containing nulls", function()
+            -- Same regression as the typed path: a holed row must not come
+            -- back keyed by "1", "2", ...
+            local file_path = path_join(temp_dir, "test.json")
+            file_util.writeFile(file_path, '[\n["a",null,"c",null,7]\n]')
+
+            local result, err = importer.importNaturalJSONFile(file_path)
+            assert.is_nil(err)
+            assert.equals("a", result[1][1])
+            assert.is_nil(result[1][2])
+            assert.equals("c", result[1][3])
+            assert.equals(7, result[1][5])
         end)
 
         it("should handle special float values", function()
@@ -432,6 +465,56 @@ INSERT INTO "test" ("id","value") VALUES --
             assert.is_nil(err)
             assert.equals("item1", result[2][1])
             assert.is_nil(result[2][2])
+        end)
+
+        it("should read a bytes-column BLOB as its text, not MessagePack",
+            function()
+            -- REGRESSION, and the worst kind: an unquoted X'...' is a BYTES
+            -- COLUMN (raw bytes), but it was decoded as MessagePack. X'18'
+            -- came back as the NUMBER 24 and X'C3' as TRUE, with no error --
+            -- silent corruption, not a visible failure.
+            --
+            -- Which text to rebuild depends on the declared type, which SQL
+            -- alone cannot express (both are just "BLOB"), hence the
+            -- tabulua-types line the exporter now writes.
+            local sql = [[-- tabulua-types: {"name":"name","bitmap":"hexbytes","raw":"base64bytes"}
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY,
+  "bitmap" BLOB NOT NULL,
+  "raw" BLOB NOT NULL);
+INSERT INTO "test" ("name","bitmap","raw") VALUES --
+('sword',X'18',X'616263')
+;
+]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.equals("sword", result[2][1])
+            -- hexbytes: the hex digits, NOT the number 24
+            assert.equals("18", result[2][2])
+            -- base64bytes: "abc" re-encoded, not the raw bytes
+            assert.equals("YWJj", result[2][3])
+        end)
+
+        it("should read a MessagePack cell, which is a QUOTED X'...' string",
+            function()
+            -- The other half of the same swap: an mpk cell is a STRING whose
+            -- content is X'...', and it was being left as text -- which is
+            -- where the "table vs string" round-trip failures came from.
+            local ser = require("serde.serialization")
+            local blob = ser.serializeMessagePackSQLBlob(
+                {alpha = 1, beta = 2})
+            local sql = table.concat({
+                'CREATE TABLE "test" (',
+                '  "name" TEXT NOT NULL PRIMARY KEY,',
+                '  "data" TEXT NOT NULL);',
+                'INSERT INTO "test" ("name","data") VALUES --',
+                "('boss','" .. blob:gsub("'", "''") .. "')",
+                ";",
+            }, "\n")
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.equals("boss", result[2][1])
+            assert.are.same({alpha = 1, beta = 2}, result[2][2])
         end)
 
         it("should handle escaped quotes in strings", function()

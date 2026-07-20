@@ -279,9 +279,37 @@ local function ensureParentDir(path, dirChecked)
     return true
 end
 
+-- HARD ERROR: an exported TEXT file must never contain a Windows line ending.
+--
+-- CRLF in an export is not cosmetic. It makes output differ byte-for-byte with
+-- the OS that produced it, and it CORRUPTS DATA across platforms: a newline
+-- inside a value (a multi-line description in a SQL string literal) written as
+-- CRLF keeps its CR *inside the value* when the file is read on Linux, because
+-- only Windows translates it back. Writes are binary now, so this cannot come
+-- from the file layer -- reaching here means generated content carried a CR,
+-- which is a defect in whatever produced it. Raise rather than emit it.
+--
+-- Applies to GENERATED TEXT only. Verbatim asset copies and the binary formats
+-- (MessagePack, gzip) legitimately contain 0x0D bytes and are never checked.
+-- Reading CRLF stays tolerated; only writing it is refused.
+local function assertNoWindowsEOL(path, content)
+    local at = content:find("\r", 1, true)
+    if at then
+        error(string.format(
+            "refusing to export %s: generated text contains a carriage return "
+            .. "at byte %d (Windows line ending). Exports must use LF only.",
+            path, at), 0)
+    end
+end
+
 -- Writes content to a file with logging.
+-- generatedText: true when `content` is text this exporter produced, in which
+-- case a Windows line ending is a hard error (see assertNoWindowsEOL).
 -- Returns true on success, false on failure.
-local function writeExportFile(path, content)
+local function writeExportFile(path, content, generatedText)
+    if generatedText then
+        assertNoWindowsEOL(path, content)
+    end
     logger:info("Exporting: " .. path)
     local ok, err = file_util.writeFile(path, content)
     if not ok then
@@ -754,7 +782,7 @@ local function exportTSV(process_files, exportParams, serializer)
         if not is_tsv then
             content2 = applySinkStrip(file_name, content2, exportParams)
         end
-        if not writeExportFile(new_name, content2) then
+        if not writeExportFile(new_name, content2, is_tsv) then
             return false
         end
         ::continue::
@@ -840,6 +868,19 @@ local function exportLua(process_files, exportParams)
     return exportTSV(process_files, copy, ser)
 end
 
+--- The SQL-safe form of a column name.
+---
+--- Exploded columns use dot and bracket notation (`stats.attack`,
+--- `materials[1]`, `prices[iron]=`), none of which is legal unquoted in SQL, so
+--- they become underscores. Exposed because a tool comparing exports against
+--- the model (export_tester) has to apply the same rule to know that
+--- `stats.attack` and `stats_attack` are the same column.
+--- @param name string The model column name
+--- @return string The SQL-safe column name
+local function sqlColumnName(name)
+    return (name:gsub("[%.%[%]%=]", "_"):gsub("_+$", ""))
+end
+
 -- Converts TSV column model to SQL column string
 local function colToSQL(sql_types, col)
     local colType = col.type
@@ -902,10 +943,7 @@ local function colToSQL(sql_types, col)
         sql_types[key] = sqlType
         logger:info("Mapping column type " .. col.type .. " to SQL type " .. sqlType)
     end
-    -- Replace dots, brackets, and '=' with underscores for SQL-safe column names
-    -- (exploded columns use bracket notation like materials[1] or materials[iron]=)
-    local sqlColName = col.name:gsub("[%.%[%]%=]", "_"):gsub("_+$", "")
-    local result = '"' .. sqlColName .. '" ' .. sqlType
+    local result = '"' .. sqlColumnName(col.name) .. '" ' .. sqlType
     if col.idx == 1 then
         result = result .. " PRIMARY KEY"
     end
@@ -919,7 +957,26 @@ local function createTableInsertSQL(sql_types, header, export_cols)
     local file = source_path[#source_path] or "unknown"
     local file_without_ext = file:match("^(.*)%.[^%.]+$") or file
     local tableName = '"' .. file_without_ext .. '"'
-    local result = "CREATE TABLE " .. tableName .. " "
+    -- Self-describing type line, so the file can be re-imported on its own.
+    --
+    -- SQL declares a bytes column BLOB and says nothing more, but the model
+    -- value behind it is TEXT: hex digits for hexbytes, base64 for
+    -- base64bytes. Those are indistinguishable from the BLOB alone, so without
+    -- this the importer cannot reconstruct the original value. A `--` comment
+    -- is ignored by every SQL engine, and a file lacking it still imports (the
+    -- importer falls back), so old exports keep working.
+    local typeParts = {}
+    for _, col in ipairs(header) do
+        if col.name and col.type_spec then
+            typeParts[#typeParts + 1] = string.format("%q:%q",
+                col.name, col.type_spec)
+        end
+    end
+    local result = ""
+    if #typeParts > 0 then
+        result = "-- tabulua-types: {" .. table.concat(typeParts, ",") .. "}\n"
+    end
+    result = result .. "CREATE TABLE " .. tableName .. " "
     local sep = "(\n  "
     local is_first = true
 
@@ -1143,7 +1200,7 @@ local function exportMessagePack(process_files, exportParams)
         if not is_tsv then
             content2 = applySinkStrip(file_name, content2, exportParams)
         end
-        if not writeExportFile(new_name, content2) then
+        if not writeExportFile(new_name, content2, false) then
             return false
         end
         ::continue::
@@ -1189,6 +1246,7 @@ local function exportSchema(exportDir, processedFiles, badVal)
     end
     local schema = raw_tsv.rawTSVToString(raw_tsv_model)
     logger:info("Writing schema to " .. new_name)
+    assertNoWindowsEOL(new_name, schema)
     local success, err = writeFile(new_name, schema)
     if not success then
         logger:error("Failed to update " .. new_name.." : " .. err)
@@ -1486,7 +1544,7 @@ local function exportSVG(process_files, exportParams)
             if not ensureParentDir(out_name, dirChecked) then
                 return false
             end
-            if not writeExportFile(out_name, svg) then
+            if not writeExportFile(out_name, svg, true) then
                 return false
             end
             logger:info(string.format("Drew %s (%d nodes, %d crossings)",
@@ -1514,6 +1572,7 @@ local API = {
     -- writes, instead of reimplementing the rule and drifting from it
     computeExportPath = computeExportPath,
     exportedShape = exportedShape,
+    sqlColumnName = sqlColumnName,
     exportJSON = exportJSON,
     exportJSONTSV = exportJSONTSV,
     exportLua = exportLua,

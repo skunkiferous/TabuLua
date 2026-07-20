@@ -620,8 +620,21 @@ local function writeFileWithMode(file_path, content, mode)
     return true
 end
 
+-- Writes in BINARY mode deliberately, so a "\n" stays one byte on every
+-- platform. Text mode ("w") translates it to CRLF on Windows, which:
+--
+--   * makes exported files differ byte-for-byte depending on the OS that wrote
+--     them, so they cannot be diffed, content-addressed or checked in CI; and
+--   * CORRUPTS DATA across platforms. A newline inside a value -- a multi-line
+--     description in a SQL string literal, say -- is written as CRLF, and
+--     reading that file on Linux keeps the CR *inside the value*, because only
+--     Windows translates it back. Measured: the same description came back 90
+--     bytes on Windows and 91 in the Linux container.
+--
+-- Reads stay in text mode, which is forgiving: on Windows it still normalizes
+-- CRLF in files written by other tools.
 local function writeFile(file_path, content)
-    return writeFileWithMode(file_path, content, "w")
+    return writeFileWithMode(file_path, content, "wb")
 end
 
 --- Writes content to a file in BINARY mode (no CRLF translation), overwriting if

@@ -255,6 +255,27 @@ describe("file_util", function()
           local read_content = file_util.readFile(file_path)
           assert.equal(content, read_content)
       end)
+
+      it("should write LF, never CRLF, on every platform", function()
+          -- REGRESSION: writeFile used text mode, so on Windows every "\n"
+          -- became CRLF. That made exported files differ byte-for-byte
+          -- depending on the OS that wrote them, and CORRUPTED DATA across
+          -- platforms: a newline inside a value (a multi-line description in
+          -- a SQL string literal) was written as CRLF, and reading that file
+          -- on Linux kept the CR inside the value, because only Windows
+          -- translates it back.
+          local file_path = path_join(temp_dir, "line_endings.txt")
+          local content = "first\nsecond\nvalue with\nan embedded newline"
+
+          assert.is_true(file_util.writeFile(file_path, content))
+
+          -- Read as BYTES, so no platform translation can hide a stray CR
+          local raw = file_util.readFileBinary(file_path)
+          assert.is_not_nil(raw)
+          assert.is_nil(raw:find("\r", 1, true),
+              "writeFile emitted a carriage return")
+          assert.equal(content, raw)
+      end)
   end)
 
   describe("safeReplaceFile", function()

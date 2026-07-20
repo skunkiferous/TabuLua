@@ -708,6 +708,29 @@ describe("exporter", function()
             assert.is_truthy(content:match('"item1"'))
         end)
 
+        it("should REFUSE to export text containing a Windows line ending",
+            function()
+            -- Hard error by policy: CRLF in an export makes output differ with
+            -- the OS that wrote it, and corrupts data across platforms -- a
+            -- newline inside a value written as CRLF keeps its CR inside that
+            -- value when the file is read on Linux, since only Windows
+            -- translates it back.
+            --
+            -- SQL is the format that stores text RAW; Lua and JSON escape a CR
+            -- (\13), so it never reaches the file there.
+            local tsv = createTestTSV("Test.tsv")
+            tsv[2][1].parsed = "line one\r\nline two"
+
+            local process_files = {
+                tsv_files = {["Test.tsv"] = tsv},
+                raw_files = {["Test.tsv"] = "id\tvalue\nitem1\t42"},
+            }
+            local ok, err = pcall(exporter.exportSQL, process_files,
+                {exportDir = temp_dir})
+            assert.is_false(ok, "export accepted a Windows line ending")
+            assert.matches("carriage return", tostring(err))
+        end)
+
         it("should keep two packages' same-named files apart", function()
             -- The bug this namespacing exists to fix: both files are called
             -- Files.tsv, and before namespacing the second export overwrote

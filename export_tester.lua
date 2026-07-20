@@ -26,6 +26,7 @@ local compareWithTolerance = round_trip.compareWithTolerance
 local manifest_loader = require("loader.manifest_loader")
 local exporter = require("serde.exporter")
 local shouldExport = require("tsv.file_joining").shouldExport
+local int64 = require("util.int64")
 
 local error_reporting = require("infra.error_reporting")
 local badValGen = error_reporting.badValGen
@@ -103,22 +104,33 @@ local FORMAT_CONFIGS = {
         extension = ".sql",
         dataFormat = "json-typed",
         tolerant = false,
+        untypedHeader = true,
+        sqlNames = true,
+        booleanAsNumber = true,
     },
     ["sql-json-natural"] = {
         extension = ".sql",
         dataFormat = "json-natural",
         tolerant = true,
+        untypedHeader = true,
+        sqlNames = true,
+        booleanAsNumber = true,
     },
     ["sql-xml"] = {
         extension = ".sql",
         dataFormat = "xml",
         tolerant = false,
+        untypedHeader = true,
+        sqlNames = true,
+        booleanAsNumber = true,
     },
     ["sql-mpk"] = {
         extension = ".sql",
         dataFormat = "mpk",
         tolerant = false,
         untypedHeader = true,
+        sqlNames = true,
+        booleanAsNumber = true,
     },
 }
 
@@ -216,6 +228,33 @@ local function isCommentColumn(headerCell)
     local spec = tostring(headerCell)
     local declaredType = spec:match("^[^:]*:(.*)$")
     return declaredType == "comment" or declaredType == "comment|nil"
+end
+
+--- Rewrites booleans to the 1/0 SQL stores them as, recursively.
+---
+--- Applied to BOTH sides, so the comparison holds whichever way round the
+--- values arrive. Recursive because a boolean can sit inside a table-valued
+--- cell, not just at the top level.
+--- @param v any The value to rewrite
+--- @return any The value with booleans replaced by 1/0
+local function booleansAsNumbers(v)
+    if type(v) == "boolean" then
+        return v and 1 or 0
+    end
+    if type(v) ~= "table" then
+        return v
+    end
+    -- An int64 is an OPAQUE value that happens to be a table -- an EMPTY one,
+    -- so walking it would rebuild it as {} and destroy the value. Any
+    -- table-shaped value type needs this guard.
+    if int64.is(v) then
+        return v
+    end
+    local out = {}
+    for k, val in pairs(v) do
+        out[k] = booleansAsNumbers(val)
+    end
+    return out
 end
 
 --- Converts parsed TSV data to the sequence-of-sequences format used by exports.
@@ -319,10 +358,25 @@ local function validateImport(imported, expected, formatConfig, _filePath)
         if rowIdx == 1 and formatConfig.untypedHeader then
             local expectedNames = {}
             for i, cell in ipairs(expectedRow) do
-                expectedNames[i] = (tostring(cell):match("^([^:]*)") or
-                    tostring(cell))
+                local name = tostring(cell):match("^([^:]*)") or tostring(cell)
+                -- SQL cannot spell an exploded column's name: stats.attack and
+                -- materials[1] are not legal unquoted identifiers, so the
+                -- exporter rewrites them. Apply the exporter's own rule rather
+                -- than restating it here.
+                if formatConfig.sqlNames then
+                    name = exporter.sqlColumnName(name)
+                end
+                expectedNames[i] = name
             end
             expectedRow = expectedNames
+        end
+
+        -- SQL has no boolean: the column is SMALLINT and the value is 1 or 0
+        -- (serializeSQL writes `v and "1" or "0"`). The importer applies no
+        -- column types, so the model's boolean meets that number here.
+        if formatConfig.booleanAsNumber then
+            expectedRow = booleansAsNumbers(expectedRow)
+            importedRow = booleansAsNumbers(importedRow)
         end
 
         -- Use tolerant comparison for formats with known limitations

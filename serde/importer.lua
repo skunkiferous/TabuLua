@@ -21,6 +21,8 @@ local deserializeNaturalJSON = deserialization.deserializeNaturalJSON
 local deserializeXML = deserialization.deserializeXML
 local deserializeMessagePack = deserialization.deserializeMessagePack
 
+local base64 = require("util.base64")
+
 local string_utils = require("util.string_utils")
 local split = string_utils.split
 local trim = string_utils.trim
@@ -92,9 +94,16 @@ local function importTypedJSONFile(filePath)
     end
 
     -- Each row is in typed JSON format: [size, elem1, ..., [key,val], ...]
+    --
+    -- Process the ALREADY-DECODED row; do NOT re-encode it. A row with an empty
+    -- optional column decodes to a Lua table with HOLES, and dkjson encodes a
+    -- holed table as an OBJECT with string keys ({"1":...,"2":...}), so the
+    -- re-encoded row came back keyed by "1" instead of 1 and every cell read as
+    -- missing. Patch files, whose rows are sparse by nature, hit this on nearly
+    -- every row. processTypedValue exists for exactly this case.
     local result = {}
     for i, row in ipairs(parsed) do
-        local rowData, rowErr = deserializeJSON(dkjson.encode(row))
+        local rowData, rowErr = deserialization.processTypedValue(row)
         if rowErr then
             return nil, "Failed to deserialize row " .. i .. ": " .. tostring(rowErr)
         end
@@ -124,10 +133,12 @@ local function importNaturalJSONFile(filePath)
         return nil, "Expected JSON array at top level"
     end
 
-    -- Each row is a standard JSON array
+    -- Each row is a standard JSON array. Process the ALREADY-DECODED row, for
+    -- the same reason as the typed path above: re-encoding a row that has holes
+    -- (an empty optional column) turns it into an object keyed by "1", "2", ...
     local result = {}
     for i, row in ipairs(parsed) do
-        local rowData, rowErr = deserializeNaturalJSON(dkjson.encode(row))
+        local rowData, rowErr = deserialization.processNaturalValue(row)
         if rowErr then
             return nil, "Failed to deserialize row " .. i .. ": " .. tostring(rowErr)
         end
@@ -405,6 +416,19 @@ local function parseSQLContent(content, tableDeserializer)
         return nil, "Could not extract column names from CREATE TABLE"
     end
 
+    -- Declared TabuLua types, from the self-describing comment the exporter
+    -- writes. Absent in older files, so everything below treats it as optional.
+    -- Needed because SQL says only "BLOB": it cannot say whether the model
+    -- value was hex text (hexbytes) or base64 text (base64bytes).
+    local columnTypes = nil
+    local typeLine = content:match("%-%-%s*tabulua%-types:%s*(%b{})")
+    if typeLine then
+        columnTypes = {}
+        for name, spec in typeLine:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do
+            columnTypes[name] = spec
+        end
+    end
+
     -- Add header row
     result[1] = columns
 
@@ -498,8 +522,20 @@ local function parseSQLContent(content, tableDeserializer)
                 end
                 local str = table.concat(strContent)
 
+                -- A MessagePack cell: the mpk bytes hex-wrapped as X'...' and
+                -- stored as a STRING (a bytes COLUMN is instead an unquoted
+                -- BLOB literal, handled below -- the two are distinct, and
+                -- were previously handled the wrong way round).
+                if str:match("^X'%x*'$") and #str % 2 == 1 then
+                    local mpkVal, mpkErr =
+                        deserialization.deserializeMessagePackSQLBlob(str)
+                    if mpkErr then
+                        value = str  -- Not ours after all; keep the text
+                    else
+                        value = mpkVal
+                    end
                 -- Check if this looks like a serialized table (JSON, XML, etc.)
-                if str:sub(1, 1) == "[" or str:sub(1, 1) == "{" or str:sub(1, 6) == "<table" then
+                elseif str:sub(1, 1) == "[" or str:sub(1, 1) == "{" or str:sub(1, 6) == "<table" then
                     local tableVal, tableErr = deserializeTable(str)
                     if tableErr then
                         value = str  -- Fall back to string if deserialization fails
@@ -511,15 +547,31 @@ local function parseSQLContent(content, tableDeserializer)
                 end
                 valPos = strEnd + 1
             elseif char == "X" and rowContent:sub(valPos, valPos + 1) == "X'" then
-                -- BLOB value
+                -- An unquoted BLOB literal is a BYTES COLUMN: raw bytes, NOT
+                -- MessagePack. Decoding it as mpk was not merely wrong, it was
+                -- silently wrong -- X'18' decoded to the number 24 and
+                -- X'C3' to true, with no error.
+                --
+                -- The model value behind those bytes is TEXT, and which text
+                -- depends on the declared type: hex digits for hexbytes,
+                -- base64 for base64bytes. That is why the type line matters --
+                -- the BLOB alone cannot say which.
                 local blobEnd = rowContent:find("'", valPos + 2)
                 if blobEnd then
                     local blob = rowContent:sub(valPos, blobEnd)
-                    local blobVal, blobErr = deserialization.deserializeMessagePackSQLBlob(blob)
+                    local binary, blobErr =
+                        deserialization.deserializeSQLBlob(blob)
                     if blobErr then
                         return nil, "Failed to deserialize BLOB: " .. tostring(blobErr)
                     end
-                    value = blobVal
+                    local declared = columnTypes
+                        and columnTypes[columns[colIdx] or ""] or nil
+                    if declared and declared:match("^base64bytes") then
+                        value = base64.encode(binary)
+                    else
+                        -- hexbytes, or unknown: the hex digits as written
+                        value = blob:sub(3, -2)
+                    end
                     valPos = blobEnd + 1
                 else
                     return nil, "Unterminated BLOB literal"
