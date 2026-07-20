@@ -190,20 +190,51 @@ describe("serialization", function()
           serialization.serializeTableXML(rt, false, nil, 0))
     end)
 
-    it("should FAIL LOUDLY rather than pack an empty map in MessagePack",
+    it("should round-trip through MessagePack as the standard 0xD3 int64",
         function()
-      -- lua-MessagePack dispatches on the Lua type, so an unguarded box packs
-      -- to a single 0x90 byte -- an empty array, total silent loss of the
-      -- value. Failing is acceptable here; losing the value is not.
+      -- lua-MessagePack dispatches on the Lua type, so an unhooked box would
+      -- pack to a single 0x90 byte -- an empty array, total silent loss.
+      local packed = serialization.serializeMessagePack(int64.of(MAX))
+      assert.are.equal(0xD3, packed:byte(1))
+      assert.are.equal(9, #packed)
+      assert.are.equal("\127\255\255\255\255\255\255\255", packed:sub(2))
+
+      for _, digits in ipairs({MAX, MIN, "9007199254740993",
+                               "-9007199254740993"}) do
+        local back = deserialization.deserializeMessagePack(
+            serialization.serializeMessagePack(int64.of(digits)))
+        assert.is_true(int64.is(back))
+        assert.are.equal(digits, int64.tostring(back))
+      end
+
+      -- ...and at depth, since the hook sits on the packer's own dispatch
       local box = int64.of(MAX)
-      local ok, err = pcall(serialization.serializeMessagePack, box)
-      assert.is_false(ok)
-      assert.matches("int64", tostring(err))
-      -- ...and at depth too, since the guard hooks the packer's own dispatch
-      local ok2 = pcall(serialization.serializeMessagePack, {1, {box}, "x"})
-      assert.is_false(ok2)
-      -- Ordinary values still pack fine
-      assert.is_true(pcall(serialization.serializeMessagePack, {1, "x"}))
+      local rt = deserialization.deserializeMessagePack(
+          serialization.serializeMessagePack({1, {box}, "x"}))
+      assert.is_true(int64.is(rt[2][1]))
+      assert.are.equal(MAX, int64.tostring(rt[2][1]))
+    end)
+
+    it("should leave ordinary numbers alone across the 0xD3 collision",
+        function()
+      -- 0xD3 is NOT exclusively ours: lua-MessagePack emits it for any
+      -- ordinary negative integer below -2^31. Boxing every 0xD3 would change
+      -- the type of ordinary data, so only values a double cannot hold
+      -- exactly (outside +/-2^53) come back boxed.
+      for _, n in ipairs({-1700000000000, -2147483649, -42, 2147483647}) do
+        local back = deserialization.deserializeMessagePack(
+            serialization.serializeMessagePack(n))
+        assert.is_false(int64.is(back))
+        assert.are.equal(n, back)
+        assert.are.equal(math.type(n), math.type(back))
+      end
+      -- The accepted cost of that rule: a SMALL int64 in an untyped container
+      -- is indistinguishable on the wire and returns as a plain number. A
+      -- declared int64 column re-boxes it when parsing.
+      local small = deserialization.deserializeMessagePack(
+          serialization.serializeMessagePack(int64.of("5")))
+      assert.is_false(int64.is(small))
+      assert.are.equal(5, small)
     end)
   end)
 

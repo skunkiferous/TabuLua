@@ -805,25 +805,29 @@ local function serializeTableXML(t, nil_as_empty_str, in_process, depth)
 end
 serializeTableXMLRef = serializeTableXML
 
--- MANDATORY GUARD: a box is an EMPTY table, so lua-MessagePack -- which
--- dispatches on the Lua type -- would pack it as an empty map/array (a single
--- 0xC0-class byte, MEASURED: 0x90), losing the value completely and SILENTLY.
--- Silent loss is the one outcome that is not acceptable, so until the real
--- int64 encoding lands (standard 0xD3, Phase 7 of TODO/boxed_int64.md) a box
--- reaching the packer must fail loudly instead.
+-- INT64 -> the standard MessagePack int64, 0xD3 followed by 8 big-endian
+-- two's-complement bytes. Not an extension type: 0xD3 is what every conformant
+-- MessagePack reader already understands as a 64-bit signed integer, so these
+-- exports stay readable outside TabuLua.
 --
--- Hooking packers.table rather than pre-walking the value is what makes the
--- guard total: lua-MessagePack recurses through this same dispatch table, so
--- a box nested at any depth is caught, at no per-call walking cost.
+-- Hooking packers.table rather than pre-walking the value is what makes this
+-- total: lua-MessagePack recurses through this same dispatch table, so a box
+-- nested at any depth is encoded, at no per-call walking cost. Without the
+-- hook a box -- an EMPTY table -- would be packed by type as an empty
+-- container (MEASURED: the single byte 0x90), losing the value SILENTLY.
 if type(mpk.packers) ~= "table" or type(mpk.packers.table) ~= "function" then
-    error("lua-MessagePack does not expose packers.table, so an int64 could be "
+    error("lua-MessagePack does not expose packers.table, so an int64 would be "
         .. "silently packed as an empty container; refusing to continue")
 end
 local mpk_pack_table = mpk.packers.table
 mpk.packers.table = function(buffer, v, ...)
     if int64.is(v) then
-        error("int64 values cannot be MessagePack-encoded yet (int64 "
-            .. int64Digits(v) .. "); see TODO/boxed_int64.md Phase 7", 0)
+        local bytes, err = int64.toBytes(v)
+        if bytes == nil then
+            error("int64 MessagePack encoding failed: " .. tostring(err), 0)
+        end
+        buffer[#buffer + 1] = "\211" .. bytes                    -- 0xD3
+        return
     end
     return mpk_pack_table(buffer, v, ...)
 end
@@ -890,12 +894,115 @@ mpk.packers.map = function(buffer, tbl)
     end
 end
 
+-- THE READ HALF of the 0xD3 encoding above. It lives here, beside the packer,
+-- because the two are one wire format: splitting them across modules is how a
+-- writer and a reader drift apart.
+--
+-- lua-MessagePack's own unpack_int64 accumulates into a Lua NUMBER
+-- (b1*0x100 + b2 ...), which cannot represent every int64: on LuaJIT that is a
+-- double throughout, so anything past 2^53 comes back ROUNDED.
+--
+-- BUT 0xD3 IS NOT EXCLUSIVELY OURS. lua-MessagePack emits it for any ordinary
+-- negative Lua integer below -2^31 (MEASURED: -1700000000000 packs as 0xD3;
+-- positive values take the unsigned 0xCF path instead, so only negatives
+-- collide). Boxing every 0xD3 would therefore change the TYPE of ordinary
+-- negative data -- ids, offsets, deltas -- on the way back in.
+--
+-- So the magnitude decides: outside +/-2^53 a double cannot hold the value
+-- exactly and the old reader was simply wrong, so a box is returned; inside,
+-- the library's own number is returned exactly as before. The threshold is a
+-- fixed constant, not a property of the running Lua, so both runtimes classify
+-- every value identically.
+--
+-- The known cost, accepted deliberately: a SMALL int64 in an untyped container
+-- comes back as a plain number, since nothing on the wire distinguishes it. A
+-- declared int64 column re-boxes it when parsing; an untyped one does not.
+--
+-- The unpackers table is a file-local in lua-MessagePack -- it is NOT exported
+-- the way m.packers is -- so it can only be reached as an upvalue of the
+-- exported unpack_cursor.
+local INT64_EXACT_MIN = int64.of("-9007199254740992")   -- -2^53
+local INT64_EXACT_MAX = int64.of("9007199254740992")    --  2^53
+
+local function patchInt64Unpacker()
+    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
+        return false, "debug.getupvalue is unavailable"
+    end
+    if type(mpk.unpack_cursor) ~= "function" then
+        return false, "lua-MessagePack does not export unpack_cursor"
+    end
+    local unpackers
+    for i = 1, math.huge do
+        local name, value = debug.getupvalue(mpk.unpack_cursor, i)
+        if name == nil then
+            break
+        end
+        if name == "unpackers" and type(value) == "table" then
+            unpackers = value
+            break
+        end
+    end
+    if unpackers == nil then
+        return false, "no 'unpackers' upvalue on unpack_cursor"
+    end
+    local unpack_int64 = unpackers[0xD3]
+    if type(unpack_int64) ~= "function" then
+        return false, "no 0xD3 unpacker to wrap"
+    end
+
+    unpackers[0xD3] = function(c)
+        local s, i, j = c.s, c.i, c.j
+        if i + 7 > j then
+            c:underflow(i + 7)
+            s, i = c.s, c.i
+        end
+        local bytes = s:sub(i, i + 7)
+        -- Delegate for the in-range case rather than converting the box: the
+        -- library's own accumulation is what decides integer-vs-float, so
+        -- ordinary values keep the exact type (and text form) they had before
+        -- this patch existed. It also advances the cursor.
+        local n = unpack_int64(c)
+        local v, err = int64.fromBytes(bytes)
+        if v == nil then
+            error("MessagePack int64 (0xD3) decode failed: " .. tostring(err), 0)
+        end
+        if int64.ge(v, INT64_EXACT_MIN) and int64.le(v, INT64_EXACT_MAX) then
+            return n
+        end
+        return v
+    end
+    return true
+end
+
+-- SELF-VALIDATING INSTALL. A patch that reaches into another library's
+-- internals must prove it actually took effect, at load time, on a value the
+-- old code provably got wrong -- 2^62+1 is exact as an int64 and not as a
+-- double. Degrading quietly to the library's lossy reader is the one outcome
+-- worse than not booting: it corrupts data on write-out, far from here.
+do
+    local installed, why = patchInt64Unpacker()
+    if not installed then
+        error("cannot install the MessagePack int64 reader (" .. tostring(why)
+            .. "), so int64 values would be read back rounded; refusing to "
+            .. "continue")
+    end
+    local probe = int64.of("4611686018427387905")
+    local ok, back = pcall(mpk.unpack, mpk.pack(probe))
+    if not ok then
+        error("MessagePack int64 round trip raised at install time: "
+            .. tostring(back))
+    end
+    if not int64.is(back) or int64Digits(back) ~= "4611686018427387905" then
+        error("MessagePack int64 round trip is wrong at install time: got "
+            .. tostring(back) .. "; refusing to continue")
+    end
+end
+
 --- Serializes a value using MessagePack binary format.
 --- Configured to support sparse arrays via mpk.set_array('with_hole').
 --- @param v any The value to serialize
 --- @param nil_as_empty_str boolean|nil Ignored (MessagePack API is not configurable)
 --- @return string Binary MessagePack data
---- @error Throws if the value contains an int64 (see the guard above)
 local function serializeMessagePack(v, nil_as_empty_str)
     return mpk.pack(v)
 end

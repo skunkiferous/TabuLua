@@ -129,6 +129,12 @@ local renderPayload
 local addPayload, subPayload
 -- toNumberPayload(payload) -> Lua number (lossy beyond 2^53)
 local toNumberPayload
+-- bytesPayload(payload) -> 8-byte big-endian two's-complement string
+-- payloadFromBytes(s) -> payload, from those same 8 bytes
+-- Big-endian because that is the MessagePack int64 wire order (0xD3); making
+-- these the backends' business keeps the native integer and the FFI cdata out
+-- of every caller.
+local bytesPayload, payloadFromBytes
 -- ZERO payload, for sign comparisons
 local ZERO
 
@@ -151,6 +157,18 @@ if HAS_NATIVE_INTEGERS then
 
     toNumberPayload = function(p)
         return p + 0.0
+    end
+
+    -- ">i8" is exactly a big-endian 8-byte signed integer, so string.pack does
+    -- the whole job. No bit-shift operators appear anywhere in this file: they
+    -- are a SYNTAX error on LuaJIT, which parses this branch even though it
+    -- never runs it.
+    bytesPayload = function(p)
+        return string.pack(">i8", p)
+    end
+
+    payloadFromBytes = function(s)
+        return (string.unpack(">i8", s))
     end
 else
     local ok_ffi, ffi = pcall(require, "ffi")
@@ -178,6 +196,30 @@ else
     end
 
     toNumberPayload = tonumber
+
+    -- ffi.string over an int64_t[1] gives the bytes in the HOST order, so the
+    -- host order is measured rather than assumed. Every LuaJIT target in
+    -- practice is little-endian, but guessing here would corrupt every value on
+    -- the one that is not, in a way no same-host test could ever show.
+    local LITTLE_ENDIAN = (ffi.string(ffi.new("uint16_t[1]", 1), 2) == "\1\0")
+    local scratch = ffi.new("int64_t[1]")
+
+    bytesPayload = function(p)
+        scratch[0] = p
+        local s = ffi.string(scratch, 8)
+        if LITTLE_ENDIAN then
+            return s:reverse()
+        end
+        return s
+    end
+
+    payloadFromBytes = function(s)
+        if LITTLE_ENDIAN then
+            s = s:reverse()
+        end
+        ffi.copy(scratch, s, 8)
+        return scratch[0]
+    end
 end
 
 -- Overflow detection is SIGN ANALYSIS, not a structural check.
@@ -373,6 +415,37 @@ end
 -- Interns from a payload, rendering its canonical form first.
 local function fromPayload(payload)
     return intern(renderPayload(payload), payload)
+end
+
+--- Encodes an int64 as 8 big-endian two's-complement bytes.
+---
+--- This is the MessagePack int64 wire form (the body of a 0xD3), and the only
+--- lossless binary form: the decimal text is 1-20 bytes and needs parsing back.
+--- @param v table The int64 box
+--- @return string|nil The 8 bytes, or nil on failure
+--- @return string|nil The error message when the first result is nil
+local function toBytes(v)
+    local p = payloadOf(v)
+    if p == nil then
+        return nil, "toBytes: not an int64: " .. type(v)
+    end
+    return bytesPayload(p)
+end
+
+--- Decodes 8 big-endian two's-complement bytes into an int64 box.
+---
+--- Every 8-byte string is a valid int64, so the only failure is a wrong length.
+--- @param s string Exactly 8 bytes
+--- @return table|nil The int64 box, or nil on failure
+--- @return string|nil The error message when the first result is nil
+local function fromBytes(s)
+    if type(s) ~= "string" then
+        return nil, "fromBytes: expected a string, got " .. type(s)
+    end
+    if #s ~= 8 then
+        return nil, "fromBytes: expected exactly 8 bytes, got " .. #s
+    end
+    return fromPayload(payloadFromBytes(s))
 end
 
 --- Normalizes a value to an int64 box.
@@ -635,6 +708,8 @@ local API = {
     abs = abs,
     sign = sign,
     toNumber = toNumber,
+    toBytes = toBytes,
+    fromBytes = fromBytes,
     getVersion = getVersion,
 }
 

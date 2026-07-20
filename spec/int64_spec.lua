@@ -451,6 +451,51 @@ describe("int64", function()
     end)
   end)
 
+  describe("toBytes and fromBytes", function()
+    -- 8 big-endian two's-complement bytes: the MessagePack 0xD3 body, and the
+    -- only lossless binary form. The expected bytes below are the wire format
+    -- itself, so they are spelled out rather than computed from the code under
+    -- test -- otherwise an endianness mistake would agree with itself.
+    it("should encode known values big-endian", function()
+      assert.equals("\0\0\0\0\0\0\0\0", int64.toBytes(int64.of("0")))
+      assert.equals("\0\0\0\0\0\0\0\1", int64.toBytes(int64.of("1")))
+      assert.equals("\255\255\255\255\255\255\255\255",
+          int64.toBytes(int64.of("-1")))
+      assert.equals("\127\255\255\255\255\255\255\255",
+          int64.toBytes(int64.MAX))
+      assert.equals("\128\0\0\0\0\0\0\0", int64.toBytes(int64.MIN))
+      -- 2^53+1: the smallest positive value a double gets wrong
+      assert.equals("\0\32\0\0\0\0\0\1",
+          int64.toBytes(int64.of("9007199254740993")))
+    end)
+
+    it("should round-trip every boundary exactly", function()
+      for _, digits in ipairs({"0", "1", "-1", MAX, MIN, "9007199254740993",
+                               "-9007199254740993", "4611686018427387905"}) do
+        local v = int64.of(digits)
+        local back = int64.fromBytes(int64.toBytes(v))
+        assert.equals(digits, s(back))
+        -- and it comes back as the SAME interned box, so key parity holds
+        assert.is_true(rawequal(v, back))
+      end
+    end)
+
+    it("should reject bad input", function()
+      local v, err = int64.toBytes("9223372036854775807")
+      assert.is_nil(v)
+      assert.is_string(err)
+      for _, bad in ipairs({"", "\0", string.rep("\0", 7),
+                            string.rep("\0", 9)}) do
+        local b, e = int64.fromBytes(bad)
+        assert.is_nil(b)
+        assert.matches("8 bytes", e)
+      end
+      local b2, e2 = int64.fromBytes(42)
+      assert.is_nil(b2)
+      assert.is_string(e2)
+    end)
+  end)
+
   describe("module API", function()
     it("should expose the range bounds as int64 values", function()
       assert.is_true(int64.is(int64.MAX))
