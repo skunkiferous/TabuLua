@@ -718,11 +718,13 @@ local function serializeXML(v, nil_as_empty_str, in_process, depth)
         end
         return "<number>" .. tostring(v) .. "</number>"
     end
-    -- int64: the <string> form, unchanged. The <integer> form is Phase 7 of
-    -- TODO/boxed_int64.md and requires the read-side fix first, or the value
-    -- rounds through tonumber() on re-read.
+    -- int64 has its OWN tag, deliberately not <integer>. <integer> is emitted
+    -- for every Lua integer and is read back through tonumber(), which rounds
+    -- past 2^53 on LuaJIT; and sharing it would turn every integer in an
+    -- untyped container into a box, which supports no arithmetic. The digits
+    -- need no escaping, being only '-' and 0-9.
     if int64.is(v) then
-        return "<string>" .. int64Digits(v) .. "</string>"
+        return "<int64>" .. int64Digits(v) .. "</int64>"
     end
     if t == "string" then
         return "<string>" .. (v:gsub("&", "&amp;")

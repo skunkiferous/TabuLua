@@ -367,6 +367,22 @@ local function parseXMLContent(xml, pos)
         end
         return num, endPos + #closingTag, nil
 
+    elseif tagName == "int64" then
+        -- Its OWN tag, so an ordinary <integer> keeps reading back as a
+        -- number. The digits arrive as TEXT and go straight to int64.of, never
+        -- through tonumber() -- which is what keeps the value exact on LuaJIT,
+        -- where tonumber rounds anything past 2^53.
+        local endPos = xml:find(closingTag, pos, true)
+        if not endPos then
+            return nil, pos, "Missing closing tag for int64"
+        end
+        local content = xml:sub(pos, endPos - 1)
+        local box, err = int64.of(content)
+        if box == nil then
+            return nil, pos, "Invalid int64: " .. tostring(err)
+        end
+        return box, endPos + #closingTag, nil
+
     elseif tagName == "number" then
         local endPos = xml:find(closingTag, pos, true)
         if not endPos then
@@ -458,21 +474,21 @@ end
 --- Handles our specific XML format with <table>, <integer>, <string>, etc. tags.
 --- @param s string The serialized XML string
 --- @return any The deserialized Lua value
---- @return number|nil The position after parsing (for streaming), or nil on error
 --- @return string|nil Error message if deserialization failed
+--- @return number|nil The position after parsing (for streaming), or nil on error
 local function deserializeXML(s)
     if s == nil then
         return nil, nil, nil
     end
     if type(s) ~= "string" then
-        return nil, nil, "deserializeXML: argument not a string: " .. type(s)
+        return nil, "deserializeXML: argument not a string: " .. type(s), nil
     end
     if s == "" then
         return nil, nil, nil
     end
 
     local value, pos, err = parseXMLContent(s, 1)
-    return value, pos, err
+    return value, err, pos
 end
 
 --- Deserializes a MessagePack binary string back to a Lua value.

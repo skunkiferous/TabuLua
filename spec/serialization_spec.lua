@@ -54,8 +54,9 @@ describe("serialization", function()
 
     it("should serialize like the digit string in the untagged formats",
         function()
-      -- Typed JSON is excluded: it now carries the {"i64":"..."} tag, which is
-      -- what lets the value be reconstructed as an int64 on re-read.
+      -- Typed JSON and XML are excluded: they now carry an int64 tag, which is
+      -- what lets the value be reconstructed as an int64 on re-read. The
+      -- others carry quoted digits, by design.
       for _, digits in ipairs({MAX, MIN, "0", "42", "-7"}) do
         local box = int64.of(digits)
         assert.are.equal(serialization.serialize(digits),
@@ -64,20 +65,23 @@ describe("serialization", function()
             serialization.serializeNaturalJSON(box))
         assert.are.equal(serialization.serializeSQL(digits),
             serialization.serializeSQL(box))
-        assert.are.equal(serialization.serializeXML(digits),
-            serialization.serializeXML(box))
       end
     end)
 
-    it("should tag int64 in typed JSON, distinctly from a Lua integer",
+    it("should tag int64 distinctly from a Lua integer, in both tagged formats",
         function()
-      -- The tags MUST differ. {"int":...} is emitted for every Lua integer, so
-      -- sharing it would make every integer in an untyped container read back
-      -- as a box -- and a box supports no arithmetic, which would break
-      -- sandboxed code doing math on such a value.
+      -- The tags MUST differ. {"int":...} / <integer> are emitted for every
+      -- Lua integer, so sharing them would make every integer in an untyped
+      -- container read back as a box -- and a box supports no arithmetic,
+      -- which would break sandboxed code doing math on such a value.
       assert.are.equal('{"i64":"' .. MAX .. '"}',
           serialization.serializeJSON(int64.of(MAX)))
       assert.are.equal('{"int":"123"}', serialization.serializeJSON(123))
+
+      assert.are.equal("<int64>" .. MAX .. "</int64>",
+          serialization.serializeXML(int64.of(MAX)))
+      assert.are.equal("<integer>123</integer>",
+          serialization.serializeXML(123))
     end)
 
     it("should never emit an empty container", function()
@@ -154,6 +158,36 @@ describe("serialization", function()
       -- Re-encoding is byte-identical, so repeated round-trips are stable
       assert.are.equal(encoded,
           serialization.serializeTableJSON(rt, false, nil, 0))
+    end)
+
+    it("should round-trip through XML, exactly, at any depth", function()
+      for _, digits in ipairs({MAX, MIN, "0", "9007199254740993"}) do
+        local box = int64.of(digits)
+        local back = deserialization.deserializeXML(
+            serialization.serializeXML(box))
+        assert.is_true(int64.is(back))
+        assert.are.equal(digits, int64.tostring(back))
+        assert.is_true(rawequal(box, back))
+      end
+
+      -- An ordinary integer must still come back a NUMBER. <integer> is read
+      -- through tonumber(), which rounds past 2^53 on LuaJIT -- which is
+      -- exactly why int64 needed its own tag rather than sharing this one.
+      local back = deserialization.deserializeXML(
+          serialization.serializeXML(123))
+      assert.are.equal("number", type(back))
+      assert.are.equal(123, back)
+
+      -- Nested, and in key position
+      local box = int64.of(MAX)
+      local encoded = serialization.serializeTableXML(
+          {box, inner = {box}, [box] = "keyed"}, false, nil, 0)
+      local rt = deserialization.deserializeXML(encoded)
+      assert.is_true(int64.is(rt[1]))
+      assert.is_true(int64.is(rt.inner[1]))
+      assert.are.equal("keyed", rt[box])
+      assert.are.equal(encoded,
+          serialization.serializeTableXML(rt, false, nil, 0))
     end)
 
     it("should FAIL LOUDLY rather than pack an empty map in MessagePack",

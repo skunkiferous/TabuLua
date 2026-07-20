@@ -148,7 +148,7 @@ local function parseCells(inner)
     while pos <= #inner do
         pos = inner:match("^%s*()", pos)
         if pos > #inner then break end
-        local val, newPos, err = deserializeXML(inner:sub(pos))
+        local val, err, newPos = deserializeXML(inner:sub(pos))
         if err then
             return nil, err
         end

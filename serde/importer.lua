@@ -339,7 +339,7 @@ local function importXMLFile(filePath)
 
             -- Parse the XML value
             -- newPos is relative to the substring, so add (cellPos - 1) to get position in rowContent
-            local val, newPos, parseErr = deserialization.deserializeXML(rowContent:sub(cellPos))
+            local val, parseErr, newPos = deserialization.deserializeXML(rowContent:sub(cellPos))
             if parseErr then
                 return nil, "Failed to parse cell: " .. tostring(parseErr)
             end

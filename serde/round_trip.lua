@@ -337,7 +337,7 @@ end
 --- @return string|nil Error message if failed
 local function testXMLRoundTrip(value)
     local serialized = serialization.serializeXML(value)
-    local deserialized, _pos, err = deserialization.deserializeXML(serialized)
+    local deserialized, err = deserialization.deserializeXML(serialized)
     if err then
         return false, "Deserialization failed: " .. err
     end

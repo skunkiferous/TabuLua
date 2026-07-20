@@ -517,6 +517,27 @@ INSERT INTO "test" ("name","bitmap","raw") VALUES --
             assert.are.same({alpha = 1, beta = 2}, result[2][2])
         end)
 
+        it("should decode an XML table cell, not leave it as text", function()
+            -- REGRESSION: deserializeXML used to return (value, POSITION, err),
+            -- so passed straight in as the table deserializer the position was
+            -- read as an error and the cell fell back to its undecoded text --
+            -- EVERY XML table cell in a sql-xml export imported as a string.
+            -- It now returns (value, err, position) like every other
+            -- deserializer, so it can be used directly.
+            local xmlDeserializer = require("serde.deserialization").deserializeXML
+            local sql = [[CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY,
+  "tags" TEXT NOT NULL);
+INSERT INTO "test" ("name","tags") VALUES --
+('sword','<table><string>weapon</string><string>melee</string></table>')
+;
+]]
+            local result, err = importer.parseSQLContent(sql, xmlDeserializer)
+            assert.is_nil(err)
+            assert.equals("sword", result[2][1])
+            assert.are.same({"weapon", "melee"}, result[2][2])
+        end)
+
         it("should handle escaped quotes in strings", function()
             local sql = [[CREATE TABLE "test" (
   "name" TEXT NOT NULL PRIMARY KEY
