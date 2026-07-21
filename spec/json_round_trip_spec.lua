@@ -122,20 +122,20 @@ describe("JSON transcode round-trip (unit)", function()
     end)
 
     describe(":typed codec", function()
-        it("json:objects:typed round-trips a large int via the {\"int\":…} wrapper", function()
+        it("json:objects:typed round-trips a large int via the {\"integer\":…} wrapper", function()
             -- 2^53-1, the largest integer a JS number can still hold exactly; the
             -- typed wrapper is what lets even larger ints survive a JS toolchain.
             local big = "9007199254740991"
             local out, decoded = roundtrip("json:objects:typed",
-                '[{"id":"x","n":{"int":"' .. big .. '"}}]', "{id:identifier,n:integer}")
+                '[{"id":"x","n":{"integer":"' .. big .. '"}}]', "{id:identifier,n:integer}")
             -- The typed wrapper survives, so a foreign JS toolchain keeps the exact int.
-            assert.matches('{"int":"' .. big .. '"}', out, 1, true)
+            assert.matches('{"integer":"' .. big .. '"}', out, 1, true)
             assert.is_table(decoded)
         end)
 
         it("json:rows:typed round-trips a composite cell in the self-describing form", function()
             roundtrip("json:rows:typed",
-                '[["x",[2,{"int":"1"},{"int":"2"}]]]', "{id:identifier,vals:{integer}}")
+                '[["x",[2,{"integer":"1"},{"integer":"2"}]]]', "{id:identifier,vals:{integer}}")
         end)
     end)
 
@@ -308,7 +308,7 @@ describe("manifest_loader/reformatter - JSON round-trip (Files.tsv-selected)", f
 
     it("round-trips a json:objects:typed file in place", function()
         -- loot:{name} in typed form is [<count>, e1, e2] — count 2 for two elements.
-        local typed = '[\n{"name":"sword","price":{"int":"100"},"loot":[2,"gem","coin"]}\n]'
+        local typed = '[\n{"name":"sword","price":{"integer":"100"},"loot":[2,"gem","coin"]}\n]'
         local pkg_dir = makePkg("json:objects:typed", typed)
         local json_path = path_join(pkg_dir, "items.json")
         reformatter.processFiles({pkg_dir})
@@ -316,7 +316,7 @@ describe("manifest_loader/reformatter - JSON round-trip (Files.tsv-selected)", f
         local on_disk = file_util.readFile(json_path)
         assert.is_not_nil(on_disk)
         -- The typed int wrapper is preserved through the round-trip.
-        assert.matches('{"int":"100"}', on_disk, 1, true)
+        assert.matches('{"integer":"100"}', on_disk, 1, true)
 
         local msgs2 = {}
         local bad2 = error_reporting.badValGen(function(_s, m) msgs2[#msgs2 + 1] = m end)

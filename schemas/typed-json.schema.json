@@ -23,6 +23,7 @@
         { "type": "boolean" },
         { "$ref": "#/$defs/plain_number" },
         { "$ref": "#/$defs/typed_integer" },
+        { "$ref": "#/$defs/typed_int64" },
         { "$ref": "#/$defs/typed_special_float" },
         { "$ref": "#/$defs/typed_table" }
       ]
@@ -32,15 +33,27 @@
       "type": "number"
     },
     "typed_integer": {
-      "description": "An integer wrapped as {\"int\": \"N\"} to preserve integer type",
+      "description": "An integer wrapped as {\"integer\": \"N\"} to preserve integer type. The wrapper key is the TabuLua type name (integer / float / int64), identical across typed JSON, XML and the Lua {__int64} wrapper.",
       "type": "object",
       "properties": {
-        "int": {
+        "integer": {
           "type": "string",
           "pattern": "^-?[0-9]+$"
         }
       },
-      "required": ["int"],
+      "required": ["integer"],
+      "additionalProperties": false
+    },
+    "typed_int64": {
+      "description": "A 64-bit integer wrapped as {\"int64\": \"N\"}. Distinct from typed_integer so an ordinary integer is never read back as an int64 box (a box has no arithmetic). The digits are exact on every runtime, including LuaJIT.",
+      "type": "object",
+      "properties": {
+        "int64": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$"
+        }
+      },
+      "required": ["int64"],
       "additionalProperties": false
     },
     "typed_special_float": {

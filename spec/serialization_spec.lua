@@ -46,7 +46,7 @@ describe("serialization", function()
   -- empty container -- silently losing the value. These tests pin the rule for
   -- this phase: a box emits EXACTLY what the canonical digit string emits, so
   -- no existing output moves. (The per-format int64 presentations -- typed
-  -- JSON {"int":"..."}, SQL BIGINT, XML <integer> -- are a later phase.)
+  -- JSON {"integer":"..."}, SQL BIGINT, XML <integer> -- are a later phase.)
   describe("int64 values", function()
     local int64 = require("util.int64")
     local MAX = "9223372036854775807"
@@ -98,13 +98,13 @@ describe("serialization", function()
 
     it("should tag int64 distinctly from a Lua integer, in both tagged formats",
         function()
-      -- The tags MUST differ. {"int":...} / <integer> are emitted for every
+      -- The tags MUST differ. {"integer":...} / <integer> are emitted for every
       -- Lua integer, so sharing them would make every integer in an untyped
       -- container read back as a box -- and a box supports no arithmetic,
       -- which would break sandboxed code doing math on such a value.
-      assert.are.equal('{"i64":"' .. MAX .. '"}',
+      assert.are.equal('{"int64":"' .. MAX .. '"}',
           serialization.serializeJSON(int64.of(MAX)))
-      assert.are.equal('{"int":"123"}', serialization.serializeJSON(123))
+      assert.are.equal('{"integer":"123"}', serialization.serializeJSON(123))
 
       assert.are.equal("<int64>" .. MAX .. "</int64>",
           serialization.serializeXML(int64.of(MAX)))
@@ -481,9 +481,9 @@ describe("serialization", function()
     end)
 
     it("should serialize integers with type wrapper", function()
-      assert.equals('{"int":"42"}', serialization.serializeJSON(42))
-      assert.equals('{"int":"-100"}', serialization.serializeJSON(-100))
-      assert.equals('{"int":"0"}', serialization.serializeJSON(0))
+      assert.equals('{"integer":"42"}', serialization.serializeJSON(42))
+      assert.equals('{"integer":"-100"}', serialization.serializeJSON(-100))
+      assert.equals('{"integer":"0"}', serialization.serializeJSON(0))
     end)
 
     it("should serialize floats as plain numbers", function()
@@ -522,25 +522,25 @@ describe("serialization", function()
 
     it("should serialize sequence with integers", function()
       local result = serialization.serializeTableJSON({1, 2, 3})
-      assert.equals('[3,{"int":"1"},{"int":"2"},{"int":"3"}]', result)
+      assert.equals('[3,{"integer":"1"},{"integer":"2"},{"integer":"3"}]', result)
     end)
 
     it("should serialize map tables with size 0", function()
       local result = serialization.serializeTableJSON({a = 1})
       -- Map: size is 0, then key-value pairs
-      assert.equals('[0,["a",{"int":"1"}]]', result)
+      assert.equals('[0,["a",{"integer":"1"}]]', result)
     end)
 
     it("should serialize mixed tables", function()
       local result = serialization.serializeTableJSON({1, 2, a = "test"})
       -- Should have size 2 for sequence part, plus keyed entry
-      assert.equals('[2,{"int":"1"},{"int":"2"},["a","test"]]', result)
+      assert.equals('[2,{"integer":"1"},{"integer":"2"},["a","test"]]', result)
     end)
 
     it("should serialize nested tables", function()
       local result = serialization.serializeTableJSON({{1, 2}, {3, 4}})
       -- Inner tables should also be serialized
-      assert.equals('[2,[2,{"int":"1"},{"int":"2"}],[2,{"int":"3"},{"int":"4"}]]', result)
+      assert.equals('[2,[2,{"integer":"1"},{"integer":"2"}],[2,{"integer":"3"},{"integer":"4"}]]', result)
     end)
 
     it("should throw an error for non-table input", function()
@@ -662,7 +662,7 @@ describe("serialization", function()
 
     it("should serialize tables as JSON strings by default", function()
       -- Should be a quoted JSON string
-      assert.equals("'[0,[\"a\",{\"int\":\"1\"}]]'", serialization.serializeSQL({a = 1}))
+      assert.equals("'[0,[\"a\",{\"integer\":\"1\"}]]'", serialization.serializeSQL({a = 1}))
     end)
 
     it("should escape single quotes in JSON table output", function()
@@ -762,15 +762,15 @@ describe("serialization", function()
       assert.equals("<integer>0</integer>", serialization.serializeXML(0))
     end)
 
-    it("should serialize floats with <number> tag", function()
-      assert.equals("<number>3.14</number>", serialization.serializeXML(3.14))
-      assert.equals("<number>-2.5</number>", serialization.serializeXML(-2.5))
+    it("should serialize floats with <float> tag", function()
+      assert.equals("<float>3.14</float>", serialization.serializeXML(3.14))
+      assert.equals("<float>-2.5</float>", serialization.serializeXML(-2.5))
     end)
 
     it("should serialize special float values", function()
-      assert.equals("<number>nan</number>", serialization.serializeXML(0/0))
-      assert.equals("<number>inf</number>", serialization.serializeXML(math.huge))
-      assert.equals("<number>-inf</number>", serialization.serializeXML(-math.huge))
+      assert.equals("<float>nan</float>", serialization.serializeXML(0/0))
+      assert.equals("<float>inf</float>", serialization.serializeXML(math.huge))
+      assert.equals("<float>-inf</float>", serialization.serializeXML(-math.huge))
     end)
 
     it("should serialize functions as <function/>", function()

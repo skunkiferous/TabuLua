@@ -367,8 +367,11 @@ end
 local serializeTableJSONRef
 
 --- Serializes a value to a JSON-compatible string with Lua type preservation.
---- Integers are encoded as {"int":"123"} to prevent float conversion.
+--- Integers are encoded as {"integer":"123"} to prevent float conversion.
 --- Special floats are encoded as {"float":"nan"/"inf"/"-inf"}.
+--- The tag name is the TabuLua type name in every tagged format (typed JSON,
+--- XML, the Lua {__int64} wrapper) -- integer, float, int64 -- so one concept
+--- has one name across the board.
 --- @param v any The value to serialize
 --- @param nil_as_empty_str boolean|nil If true, nil values become empty string "" (default: false)
 --- @param in_process table|nil Internal: tracks tables being processed to detect recursion
@@ -384,7 +387,7 @@ local function serializeJSON(v, nil_as_empty_str, in_process, depth)
         if math.type(v) == "integer" then
             -- Stoopid JSON doesn't support integers (well, it does, but most decoders do not, bc JavaScript does not)
             -- formatInteger, not tostring: LuaJIT's tostring rounds big integral values
-            return '{"int":"' .. formatInteger(v) .. '"}'
+            return '{"integer":"' .. formatInteger(v) .. '"}'
         end
         -- Handle special float values
         if v ~= v then
@@ -401,13 +404,13 @@ local function serializeJSON(v, nil_as_empty_str, in_process, depth)
     if t == "string" or t == "boolean" or t == "nil" then
         return dkjson.encode(v)
     end
-    -- int64: its OWN tag, deliberately not the {"int":...} used for Lua
+    -- int64: its OWN tag, deliberately not the {"integer":...} used for Lua
     -- integers. Sharing that tag would make every integer in an untyped
     -- container read back as a box, and a box has no arithmetic -- so
     -- sandboxed code doing math on such a value would break. The digits live
     -- inside a JSON *string*, so no JSON number parser ever touches them.
     if int64.is(v) then
-        return '{"i64":"' .. int64Digits(v) .. '"}'
+        return '{"int64":"' .. int64Digits(v) .. '"}'
     end
     if t == "function" then
         -- Not very useful, but better than crashing
@@ -711,8 +714,9 @@ end
 local serializeTableXMLRef
 
 -- Serialize a table or basic type (number,integer,string,boolean,nil) to a "XML string"
+-- Element names are the TabuLua type names: <integer>, <float>, <int64>.
 -- Special Lua floats are encoded as:
---   <number>nan</number> / <number>inf</number> / <number>-inf</number>
+--   <float>nan</float> / <float>inf</float> / <float>-inf</float>
 -- Tables as keys or values, which are referenced multiple times, are serialized multiple times.
 -- Recursive tables are not supported.
 local function serializeXML(v, nil_as_empty_str, in_process, depth)
@@ -737,17 +741,18 @@ local function serializeXML(v, nil_as_empty_str, in_process, depth)
             -- formatInteger, not tostring: LuaJIT's tostring rounds big integral values
             return "<integer>" .. formatInteger(v) .. "</integer>"
         end
-        -- Handle special float values
+        -- Handle special float values. The element is <float> (the type name),
+        -- matching {"float":...} in typed JSON; <integer> stays for integers.
         if v ~= v then
-            return "<number>nan</number>"
+            return "<float>nan</float>"
         end
         if v == math.huge then
-            return "<number>inf</number>"
+            return "<float>inf</float>"
         end
         if v == -math.huge then
-            return "<number>-inf</number>"
+            return "<float>-inf</float>"
         end
-        return "<number>" .. tostring(v) .. "</number>"
+        return "<float>" .. tostring(v) .. "</float>"
     end
     -- int64 has its OWN tag, deliberately not <integer>. <integer> is emitted
     -- for every Lua integer and is read back through tonumber(), which rounds

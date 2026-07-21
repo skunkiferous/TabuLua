@@ -31,7 +31,7 @@ local HAS_NATIVE_INTEGERS = math.type ~= nil and math.type(1.0) == "float"
 
 -- Builds a `json:objects:typed` document from a list of rows (field→Lua value),
 -- encoding every value in TabuLua's typed JSON form via serializeJSON (so an
--- integer becomes {"int":"…"}, a map becomes [size,[k,v],…], etc.).
+-- integer becomes {"integer":"…"}, a map becomes [size,[k,v],…], etc.).
 local function typedObjectsFile(rows)
     local objs = {}
     for _, row in ipairs(rows) do
@@ -235,8 +235,8 @@ describe("JSON transcode - complex values (json-natural)", function()
 
     -- The headline reason for typed: a JSON producer that cannot represent an
     -- int64 as a NUMBER (e.g. JavaScript, capped at 2^53) emits it as a
-    -- string-tagged integer {"int":"<digits>"}, which survives any JSON toolchain.
-    it("`:typed` carries an int64 exactly via the {\"int\":\"...\"} string wrapper", function()
+    -- string-tagged integer {"integer":"<digits>"}, which survives any JSON toolchain.
+    it("`:typed` carries a large integer exactly via the {\"integer\":\"...\"} string wrapper", function()
         if not HAS_NATIVE_INTEGERS then
             -- LuaJIT: every number is a double, so an int64 beyond ±2^53
             -- cannot be held exactly at all — `long` is restricted to the
@@ -245,7 +245,7 @@ describe("JSON transcode - complex values (json-natural)", function()
             return
         end
         local v = loadField("{id:identifier,big:long}", "json:objects:typed",
-            '[{"id":"x","big":{"int":"9223372036854775807"}}]', "big")
+            '[{"id":"x","big":{"integer":"9223372036854775807"}}]', "big")
         assert.equals(9223372036854775807, v)
     end)
 

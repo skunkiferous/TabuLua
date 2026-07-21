@@ -56,7 +56,7 @@ local serializeTable = serialization.serializeTable
 
 -- The reverse encoders serialise each parsed cell value per layout: natural ids
 -- use serializeNaturalJSON, the :typed ids use serializeJSON (the self-describing
--- {"int":…} form) — the same per-cell serialisers exporter.exportJSON uses.
+-- {"integer":…} form) — the same per-cell serialisers exporter.exportJSON uses.
 local serializeNaturalJSON = serialization.serializeNaturalJSON
 local serializeJSON = serialization.serializeJSON
 
@@ -251,7 +251,7 @@ end
 -- (rawTSVToString stringifies), but an INTEGRAL number that tostring() would
 -- render in scientific notation is written as its exact digit string instead:
 -- on LuaJIT tostring(9007199254740991) is "9.007199254741e+15" — rounded! —
--- which would corrupt a {"int":"…"} wrapper on its way into the TSV.
+-- which would corrupt a {"integer":"…"} wrapper on its way into the TSV.
 -- (Finite check is implicit: tostring of inf/nan has no exponent marker.)
 local function scalarToCell(v)
     if type(v) == "number" and v == math.floor(v) and tostring(v):find("[eE]") then
@@ -264,7 +264,7 @@ end
 --   * missing/null            -> empty cell
 --   * JSON table              -> reconstruct, then native cell text (composite
 --                                result) or pass-through (scalar result — the typed
---                                format wraps a scalar int as {"int":"100"}, which
+--                                format wraps a scalar int as {"integer":"100"}, which
 --                                decodes to a table but reconstructs to a number)
 --   * plain scalar            -> passed through (rawTSVToString stringifies)
 -- Non-finite numbers (at any depth) are flagged via `flag` but NOT rejected (D5).
@@ -470,7 +470,7 @@ local objectsToTSV = makeTranscoder(objectsBody, reconstructNatural)
 local rowsToTSV    = makeTranscoder(rowsBody,    reconstructNatural)
 local columnsToTSV = makeTranscoder(columnsBody, reconstructNatural)
 
--- json-typed codec: the typed JSON encoding is self-describing ({"int":…} /
+-- json-typed codec: the typed JSON encoding is self-describing ({"integer":…} /
 -- {"float":…} wrappers and the [size,…] table form preserve every type, including
 -- non-string and table-valued map keys), so it ignores the column type. This is
 -- the read-back of `exportJSON` (json_complex_values.md Phase 2).

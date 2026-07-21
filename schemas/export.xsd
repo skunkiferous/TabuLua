@@ -13,6 +13,10 @@
     descendants are in this namespace (elementFormDefault="qualified"), which is
     how a reader tells "is this XML ours?".
 
+    Element names are the TabuLua type names -- integer, float, int64 -- the same
+    words the typed-JSON tags use ({"integer":..}, {"float":..}, {"int64":..}),
+    so one concept has one name across every tagged format.
+
     Usage: Validate XML files against this schema using any XSD validator.
   -->
 
@@ -35,7 +39,8 @@
       <xs:element name="function" type="emptyType"/>
       <xs:element name="string" type="stringType"/>
       <xs:element name="integer" type="integerType"/>
-      <xs:element name="number" type="numberType"/>
+      <xs:element name="int64" type="int64Type"/>
+      <xs:element name="float" type="floatType"/>
       <xs:element name="table" type="tableType"/>
     </xs:choice>
   </xs:complexType>
@@ -53,8 +58,14 @@
     <xs:restriction base="xs:integer"/>
   </xs:simpleType>
 
-  <!-- Number type: float value including special values nan, inf, -inf -->
-  <xs:simpleType name="numberType">
+  <!-- Int64 type: a 64-bit integer as canonical decimal text. Distinct from
+       integer so an ordinary integer is never read back as an int64 box. -->
+  <xs:simpleType name="int64Type">
+    <xs:restriction base="xs:integer"/>
+  </xs:simpleType>
+
+  <!-- Float type: float value including special values nan, inf, -inf -->
+  <xs:simpleType name="floatType">
     <xs:union>
       <xs:simpleType>
         <xs:restriction base="xs:double"/>
@@ -78,7 +89,8 @@
       <xs:element name="function" type="emptyType"/>
       <xs:element name="string" type="stringType"/>
       <xs:element name="integer" type="integerType"/>
-      <xs:element name="number" type="numberType"/>
+      <xs:element name="int64" type="int64Type"/>
+      <xs:element name="float" type="floatType"/>
       <xs:element name="table" type="tableType"/>
       <xs:element name="key_value" type="keyValueType"/>
     </xs:choice>
@@ -94,7 +106,8 @@
         <xs:element name="function" type="emptyType"/>
         <xs:element name="string" type="stringType"/>
         <xs:element name="integer" type="integerType"/>
-        <xs:element name="number" type="numberType"/>
+        <xs:element name="int64" type="int64Type"/>
+        <xs:element name="float" type="floatType"/>
         <xs:element name="table" type="tableType"/>
       </xs:choice>
       <xs:choice>
@@ -104,7 +117,8 @@
         <xs:element name="function" type="emptyType"/>
         <xs:element name="string" type="stringType"/>
         <xs:element name="integer" type="integerType"/>
-        <xs:element name="number" type="numberType"/>
+        <xs:element name="int64" type="int64Type"/>
+        <xs:element name="float" type="floatType"/>
         <xs:element name="table" type="tableType"/>
       </xs:choice>
     </xs:sequence>

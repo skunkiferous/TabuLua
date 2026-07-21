@@ -190,7 +190,7 @@ content_pipeline.register(NAME, {
 })
 
 -- The `:typed` variants of the three layouts. Same row layouts, but cell values
--- are in TabuLua's self-describing typed JSON encoding ({"int":…}/{"float":…}
+-- are in TabuLua's self-describing typed JSON encoding ({"integer":…}/{"float":…}
 -- wrappers and the [size,…] table form) — the read-back of exportJSON. They
 -- preserve every type, including non-string and table-valued map keys, where
 -- json-natural cannot (json_complex_values.md Phase 2).

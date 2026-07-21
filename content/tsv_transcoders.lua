@@ -66,7 +66,7 @@ end
 -- exportNaturalJSONTSV):
 --
 --   tsv:lua           cells are Lua literals       {attack=80,defense=40}
---   tsv:json-typed    cells are typed JSON         [0,["attack",{"int":"80"}],...]
+--   tsv:json-typed    cells are typed JSON         [0,["attack",{"integer":"80"}],...]
 --   tsv:json-natural  cells are natural JSON       {"attack":80,"defense":40}
 --
 -- They share the native TSV's skeleton — the SAME `name:type` header, columns and

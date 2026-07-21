@@ -58,7 +58,7 @@ describe("tsv_transcoders", function()
 
     describe("tsv:json-typed forward (jsonTypedToTSV)", function()
         it("decodes typed-JSON cells", function()
-            local jt = '"a:integer"\t"b:string"\n{"int":"5"}\t"x"\n'
+            local jt = '"a:integer"\t"b:string"\n{"integer":"5"}\t"x"\n'
             local out = tsv_transcoders.jsonTypedToTSV("T.tsv", jt, {}, badVal)
             assert.equal("a:integer\tb:string\n5\tx\n", out)
             assert.equal(0, badVal.errors, joined())
@@ -66,7 +66,7 @@ describe("tsv_transcoders", function()
 
         it("decodes a composite typed-JSON cell", function()
             local jt = '"name:identifier"\t"stats:{attack:integer,defense:integer}"\n'
-                .. '"boss"\t[0,["attack",{"int":"80"}],["defense",{"int":"40"}]]\n'
+                .. '"boss"\t[0,["attack",{"integer":"80"}],["defense",{"integer":"40"}]]\n'
             local out = tsv_transcoders.jsonTypedToTSV("B.tsv", jt, {}, badVal)
             assert.equal(NATIVE_COMPOSITE, out)
             assert.equal(0, badVal.errors, joined())
@@ -100,7 +100,7 @@ describe("tsv_transcoders", function()
 
         it("tsvToJsonTyped emits typed-JSON cells", function()
             local out = tsv_transcoders.tsvToJsonTyped("a:integer\tb:string\n5\tx\n", {}, nil)
-            assert.equal('"a:integer"\t"b:string"\n{"int":"5"}\t"x"\n', out)
+            assert.equal('"a:integer"\t"b:string"\n{"integer":"5"}\t"x"\n', out)
         end)
 
         it("tsvToJsonNatural emits natural-JSON cells", function()

@@ -170,7 +170,7 @@ describe("schema_validator", function()
             end)
 
             it("should accept typed integers", function()
-                local ok, err = schema_validator.validateTypedJSON('[[{"int":"42"},{"int":"-100"}]]')
+                local ok, err = schema_validator.validateTypedJSON('[[{"integer":"42"},{"integer":"-100"}]]')
                 assert.is_true(ok, err)
             end)
 
@@ -209,13 +209,13 @@ describe("schema_validator", function()
             end)
 
             it("should reject invalid typed integer format", function()
-                local ok, err = schema_validator.validateTypedJSON('[[{"int":42}]]')
+                local ok, err = schema_validator.validateTypedJSON('[[{"integer":42}]]')
                 assert.is_false(ok)
                 assert.is_truthy(err:match("must be string"))
             end)
 
             it("should reject invalid typed integer value", function()
-                local ok, err = schema_validator.validateTypedJSON('[[{"int":"abc"}]]')
+                local ok, err = schema_validator.validateTypedJSON('[[{"integer":"abc"}]]')
                 assert.is_false(ok)
                 assert.is_truthy(err:match("must be numeric string"))
             end)
@@ -228,7 +228,7 @@ describe("schema_validator", function()
             end)
 
             it("should reject typed integer with extra keys", function()
-                local ok, err = schema_validator.validateTypedJSON('[[{"int":"42","extra":"bad"}]]')
+                local ok, err = schema_validator.validateTypedJSON('[[{"integer":"42","extra":"bad"}]]')
                 assert.is_false(ok)
                 assert.is_truthy(err:match("unexpected key"))
             end)
@@ -302,10 +302,10 @@ describe("schema_validator", function()
                 local xml = [[<?xml version="1.0" encoding="UTF-8"?>
 <file>
 <header><string>n</string></header>
-<row><number>3.14</number></row>
-<row><number>nan</number></row>
-<row><number>inf</number></row>
-<row><number>-inf</number></row>
+<row><float>3.14</float></row>
+<row><float>nan</float></row>
+<row><float>inf</float></row>
+<row><float>-inf</float></row>
 </file>]]
                 local ok, err = schema_validator.validateExportXML(xml)
                 assert.is_true(ok, err)
@@ -433,7 +433,13 @@ describe("schema_validator", function()
         end)
 
         it("should validate typed integers", function()
-            local ok, err = schema_validator.validateTypedValue({int = "42"}, "test")
+            local ok, err = schema_validator.validateTypedValue({integer = "42"}, "test")
+            assert.is_true(ok, err)
+        end)
+
+        it("should validate typed int64", function()
+            local ok, err = schema_validator.validateTypedValue(
+                {int64 = "9007199254740993"}, "test")
             assert.is_true(ok, err)
         end)
 

@@ -65,7 +65,8 @@ local function deserialize(s)
 end
 
 --- Post-processes an ALREADY JSON-decoded *typed* value into its Lua value.
---- Handles the {"int":"123"} / {"float":"nan"/"inf"/"-inf"} type wrappers and the
+--- Handles the {"integer":"123"} / {"float":"nan"/"inf"/"-inf"} / {"int64":"…"}
+--- type wrappers (the tag name is the TabuLua type name) and the
 --- [size, elem1, ..., elemN, [key1,val1], ...] table encoding. Operates on a
 --- decoded value (no JSON parsing), so a caller holding a decoded substructure can
 --- reuse it without a re-encode. Returns (value, err).
@@ -82,24 +83,24 @@ local function processTypedValue(v)
         return v, nil
     end
 
-    -- int64 carries its OWN tag, so an ordinary integer ({"int":...}) keeps
+    -- int64 carries its OWN tag, so an ordinary integer ({"integer":...}) keeps
     -- reading back as a number. Sharing one tag would silently turn every
     -- integer in an untyped container into a box, which supports no
     -- arithmetic. The digits arrive as a JSON string, so nothing has rounded
     -- them -- this is what makes the value exact on LuaJIT too.
-    if v.i64 ~= nil then
-        local box, err = int64.of(v.i64)
+    if v.int64 ~= nil then
+        local box, err = int64.of(v.int64)
         if box == nil then
             return nil, "Failed to parse int64: " .. tostring(err)
         end
         return box, nil
     end
 
-    -- Type wrappers: {"int":"123"} or {"float":"nan"}
-    if v.int ~= nil then
-        local num = tonumber(v.int)
+    -- Type wrappers: {"integer":"123"} or {"float":"nan"}
+    if v.integer ~= nil then
+        local num = tonumber(v.integer)
         if num == nil then
-            return nil, "Failed to parse int: " .. tostring(v.int)
+            return nil, "Failed to parse integer: " .. tostring(v.integer)
         end
         if math.type(num) == "float" then
             num = math.floor(num)   -- force to integer
@@ -171,7 +172,7 @@ local function processTypedValue(v)
 end
 
 --- Deserializes a typed JSON string back to a Lua value.
---- Handles {"int":"123"} and {"float":"nan"/"inf"/"-inf"} type wrappers.
+--- Handles {"integer":"123"}, {"float":"nan"/"inf"/"-inf"}, {"int64":"…"}.
 --- Tables are encoded as: [size, elem1, ..., elemN, [key1,val1], ...]
 --- @param s string The serialized typed JSON string
 --- @return any The deserialized Lua value
@@ -383,10 +384,10 @@ local function parseXMLContent(xml, pos)
         end
         return box, endPos + #closingTag, nil
 
-    elseif tagName == "number" then
+    elseif tagName == "float" then
         local endPos = xml:find(closingTag, pos, true)
         if not endPos then
-            return nil, pos, "Missing closing tag for number"
+            return nil, pos, "Missing closing tag for float"
         end
         local content = xml:sub(pos, endPos - 1)
         if content == "nan" then

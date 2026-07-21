@@ -332,8 +332,8 @@ describe("exporter", function()
             -- Should be valid JSON array format
             assert.is_truthy(content:match("^%["))
             assert.is_truthy(content:match("%]$"))
-            -- Typed JSON wraps integers as {"int":"N"}
-            assert.is_truthy(content:match('{"int":"42"}'))
+            -- Typed JSON wraps integers as {"integer":"N"}
+            assert.is_truthy(content:match('{"integer":"42"}'))
         end)
     end)
 
@@ -375,9 +375,9 @@ describe("exporter", function()
             -- Should be valid JSON array format
             assert.is_truthy(content:match("^%["))
             assert.is_truthy(content:match("%]$"))
-            -- Natural JSON has plain integers, not wrapped as {"int":"N"}
+            -- Natural JSON has plain integers, not wrapped as {"integer":"N"}
             assert.is_truthy(content:match(',42,') or content:match('%[42,') or content:match(',42%]'))
-            assert.is_falsy(content:match('{"int":'))
+            assert.is_falsy(content:match('{"integer":'))
         end)
     end)
 

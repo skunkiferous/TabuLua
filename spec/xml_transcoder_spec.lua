@@ -40,8 +40,8 @@ describe("xml_transcoder", function()
             local xml = doc(
                 '<header><string>name:identifier</string><string>displayName:text</string>'
                 .. '<string>dropWeight:float</string></header>\n'
-                .. '<row><string>Common</string><string>Common</string><number>0.5</number></row>\n'
-                .. '<row><string>Rare</string><string>Rare</string><number>0.15</number></row>')
+                .. '<row><string>Common</string><string>Common</string><float>0.5</float></row>\n'
+                .. '<row><string>Rare</string><string>Rare</string><float>0.15</float></row>')
             -- No ctx.typeName supplied: types come from the file's own <header>.
             local out = xml_transcoder.xmlToTSV("R.xml", xml, {}, badVal, {})
             assert.equal(
@@ -55,7 +55,7 @@ describe("xml_transcoder", function()
                 '<header><string>a:integer</string><string>b:float</string>'
                 .. '<string>c:string</string><string>d:boolean</string>'
                 .. '<string>e:boolean</string><string>f:string|nil</string></header>\n'
-                .. '<row><integer>42</integer><number>-1.5</number><string>hi</string>'
+                .. '<row><integer>42</integer><float>-1.5</float><string>hi</string>'
                 .. '<true/><false/><null/></row>')
             local out = xml_transcoder.xmlToTSV("P.xml", xml, {}, badVal, {})
             assert.equal(
@@ -73,7 +73,7 @@ describe("xml_transcoder", function()
                 .. '<row><string>boss</string>'
                 .. '<table><key_value><string>attack</string><integer>80</integer></key_value>'
                 .. '<key_value><string>defense</string><integer>40</integer></key_value></table>'
-                .. '<table><number>-20.0</number><number>50.0</number><number>10.0</number></table>'
+                .. '<table><float>-20.0</float><float>50.0</float><float>10.0</float></table>'
                 .. '<table><string>shadowCloak</string><string>manaPotion</string></table></row>')
             local out = xml_transcoder.xmlToTSV("B.xml", xml, {}, badVal, {})
             -- The native cell form matches what a source .tsv uses for these columns.
@@ -158,7 +158,7 @@ describe("xml_transcoder", function()
                 .. '<row><string>boss</string>'
                 .. '<table><key_value><string>attack</string><integer>7</integer></key_value>'
                 .. '<key_value><string>defense</string><integer>3</integer></key_value></table>'
-                .. '<number>0.5</number></row>')
+                .. '<float>0.5</float></row>')
             local tsv = xml_transcoder.xmlToTSV("B.xml", xml, {}, badVal, {})
             assert.is_not_nil(tsv)
             local xml2 = xml_transcoder.tsvToXml(tsv, {}, nil)

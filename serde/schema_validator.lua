@@ -21,7 +21,7 @@ end
 -- Forward declaration
 local validateTypedValue
 
---- Validates a typed integer object: {"int": "123"}
+--- Validates a typed integer object: {"integer": "123"}
 --- @param v table The value to validate
 --- @return boolean True if valid
 --- @return string|nil Error message if invalid
@@ -29,19 +29,44 @@ local function isTypedInteger(v)
     if type(v) ~= "table" then
         return false, "expected table for typed integer"
     end
-    if v.int == nil then
+    if v.integer == nil then
         return false, nil  -- Not a typed integer (might be something else)
     end
-    if type(v.int) ~= "string" then
-        return false, "typed integer 'int' field must be string, got " .. type(v.int)
+    if type(v.integer) ~= "string" then
+        return false, "typed integer 'integer' field must be string, got " .. type(v.integer)
     end
-    if not v.int:match("^%-?%d+$") then
-        return false, "typed integer value must be numeric string, got: " .. v.int
+    if not v.integer:match("^%-?%d+$") then
+        return false, "typed integer value must be numeric string, got: " .. v.integer
     end
     -- Check no extra keys
     for k, _ in pairs(v) do
-        if k ~= "int" then
+        if k ~= "integer" then
             return false, "typed integer has unexpected key: " .. tostring(k)
+        end
+    end
+    return true, nil
+end
+
+--- Validates a typed int64 object: {"int64": "9007199254740993"}
+--- @param v table The value to validate
+--- @return boolean True if valid
+--- @return string|nil Error message if invalid
+local function isTypedInt64(v)
+    if type(v) ~= "table" then
+        return false, "expected table for typed int64"
+    end
+    if v.int64 == nil then
+        return false, nil  -- Not a typed int64 (might be something else)
+    end
+    if type(v.int64) ~= "string" then
+        return false, "typed int64 'int64' field must be string, got " .. type(v.int64)
+    end
+    if not v.int64:match("^%-?%d+$") then
+        return false, "typed int64 value must be numeric string, got: " .. v.int64
+    end
+    for k, _ in pairs(v) do
+        if k ~= "int64" then
+            return false, "typed int64 has unexpected key: " .. tostring(k)
         end
     end
     return true, nil
@@ -185,8 +210,17 @@ validateTypedValue = function(v, path)
         if isInt then
             return true, nil
         end
-        if v.int ~= nil and intErr then
+        if v.integer ~= nil and intErr then
             return false, path .. ": " .. intErr
+        end
+
+        -- Check if it's a typed int64
+        local isI64, i64Err = isTypedInt64(v)
+        if isI64 then
+            return true, nil
+        end
+        if v.int64 ~= nil and i64Err then
+            return false, path .. ": " .. i64Err
         end
 
         -- Check if it's a typed special float
@@ -318,7 +352,8 @@ local function validateExportXML(content)
         ["false"] = true,
         ["string"] = true,
         ["integer"] = true,
-        ["number"] = true,
+        ["float"] = true,
+        ["int64"] = true,
         ["function"] = true,
         ["table"] = true,
         ["key_value"] = true,
@@ -348,13 +383,20 @@ local function validateExportXML(content)
         end
     end
 
-    -- Validate number content (should be numeric or special value)
-    for numContent in content:gmatch("<number>([^<]*)</number>") do
+    -- Validate int64 content (canonical decimal digits)
+    for i64Content in content:gmatch("<int64>([^<]*)</int64>") do
+        if not i64Content:match("^%-?%d+$") then
+            return false, "invalid int64 content: " .. i64Content
+        end
+    end
+
+    -- Validate float content (should be numeric or special value)
+    for numContent in content:gmatch("<float>([^<]*)</float>") do
         if not numContent:match("^%-?%d") and
            numContent ~= "nan" and
            numContent ~= "inf" and
            numContent ~= "-inf" then
-            return false, "invalid number content: " .. numContent
+            return false, "invalid float content: " .. numContent
         end
     end
 

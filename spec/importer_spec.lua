@@ -90,7 +90,7 @@ describe("importer", function()
     describe("importTypedJSONFile", function()
         it("should import typed JSON array-of-arrays", function()
             local file_path = path_join(temp_dir, "test.json")
-            file_util.writeFile(file_path, '[\n[3,"a","b","c"],\n[3,{"int":"1"},{"int":"2"},{"int":"3"}]\n]')
+            file_util.writeFile(file_path, '[\n[3,"a","b","c"],\n[3,{"integer":"1"},{"integer":"2"},{"integer":"3"}]\n]')
 
             local result, err = importer.importTypedJSONFile(file_path)
             assert.is_nil(err)
@@ -100,7 +100,7 @@ describe("importer", function()
 
         it("should handle maps with typed JSON", function()
             local file_path = path_join(temp_dir, "test.json")
-            file_util.writeFile(file_path, '[[0,["name","test"],["value",{"int":"42"}]]]')
+            file_util.writeFile(file_path, '[[0,["name","test"],["value",{"integer":"42"}]]]')
 
             local result, err = importer.importTypedJSONFile(file_path)
             assert.is_nil(err)
@@ -127,7 +127,7 @@ describe("importer", function()
             -- nearly every row.
             local file_path = path_join(temp_dir, "test.json")
             file_util.writeFile(file_path,
-                '[\n["a",null,"c",null,{"int":"7"}]\n]')
+                '[\n["a",null,"c",null,{"integer":"7"}]\n]')
 
             local result, err = importer.importTypedJSONFile(file_path)
             assert.is_nil(err)
@@ -152,7 +152,7 @@ describe("importer", function()
         it("should return error for invalid typed JSON in row", function()
             local file_path = path_join(temp_dir, "test.json")
             -- Row with invalid int wrapper
-            file_util.writeFile(file_path, '[[1,{"int":"not_a_number"}]]')
+            file_util.writeFile(file_path, '[[1,{"integer":"not_a_number"}]]')
 
             local result, err = importer.importTypedJSONFile(file_path)
             assert.is_nil(result)
@@ -277,7 +277,7 @@ describe("importer", function()
     describe("importTypedJSONTSVFile", function()
         it("should import TSV with typed JSON values", function()
             local file_path = path_join(temp_dir, "test.tsv")
-            file_util.writeFile(file_path, '"id"\t"value"\n"item1"\t{"int":"42"}')
+            file_util.writeFile(file_path, '"id"\t"value"\n"item1"\t{"integer":"42"}')
 
             local result, err = importer.importTypedJSONTSVFile(file_path)
             assert.is_nil(err)
@@ -288,7 +288,7 @@ describe("importer", function()
 
         it("should return error for invalid typed JSON in cell", function()
             local file_path = path_join(temp_dir, "test.tsv")
-            file_util.writeFile(file_path, '"header"\n{"int":"not_a_number"}')
+            file_util.writeFile(file_path, '"header"\n{"integer":"not_a_number"}')
 
             local result, err = importer.importTypedJSONTSVFile(file_path)
             assert.is_nil(result)
@@ -709,7 +709,7 @@ INSERT INTO "test" ("id","data") VALUES --
 
         it("should use data format hint for TSV files", function()
             local file_path = path_join(temp_dir, "test.tsv")
-            file_util.writeFile(file_path, '"header"\n{"int":"42"}')
+            file_util.writeFile(file_path, '"header"\n{"integer":"42"}')
 
             local result, err = importer.importFile(file_path, "json-typed")
             assert.is_nil(err)

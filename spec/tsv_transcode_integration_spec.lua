@@ -166,7 +166,7 @@ describe("manifest_loader - TSV alternate-cell transcode (Files.tsv-selected)", 
     it("loads a tsv:json-typed data file too", function()
         local jt_body =
             '"name:identifier"\t"n:integer"\t"loot:{name}"\n'
-            .. '"sword"\t{"int":"100"}\t["gem","coin"]\n'
+            .. '"sword"\t{"integer":"100"}\t["gem","coin"]\n'
         local pkg_dir = makePkg(jt_body, "tsv:json-typed")
         local result = manifest_loader.processFiles({pkg_dir}, badVal)
         assert.is_not_nil(result)
