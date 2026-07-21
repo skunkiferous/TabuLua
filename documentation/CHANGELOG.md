@@ -11,27 +11,58 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - **New `int64` built-in type: exact 64-bit signed integers on EVERY Lua version,
   including LuaJIT.** A true int64 cannot live in a LuaJIT number (doubles round
-  past ±2^53, and `tonumber()` rounds before any parser code can react), so the
-  parsed value is the **canonical decimal string** — never converted to a number,
-  therefore exact and byte-identical through parsing, sorting (numeric order via a
-  dedicated comparator, not lexical) and every export format, on every version.
-  Input is lenient (`042`, `+5`, `-0`), output canonical (`42`, `5`, `0`); the type
-  logically extends `string` (the `percent` precedent, in reverse). Unlike `long`,
-  an `int64` column loads with full 64-bit precision on LuaJIT too.
-- **New `util/int64.lua`: exact comparison and arithmetic on int64 strings.**
-  Plain Lua operators on int64 strings would silently coerce through doubles
-  (string→number coercion), losing exactly the precision the type protects, so the
-  module provides `of` (normalize a string or number to a canonical int64 string),
-  `compare`, `eq`/`lt`/`le`/`gt`/`ge`, `add`/`sub`/`neg`, and `MIN`/`MAX`. One pure-Lua
-  string-arithmetic code path — no FFI, no version probes in results — so answers are
-  identical on Lua 5.3/5.4/5.5 and LuaJIT. Every function returns `nil` plus an error
-  message for invalid input or int64 overflow (no wrapping). `of` accepts native
-  5.3+ integers through the full range, but rejects *doubles* beyond ±2^53 even
-  where they happen to be exact — accepting them would make the same expression
-  version-dependent ("pass the value as an int64 string instead").
+  past ±2^53, and `tonumber()` rounds before any parser code can react), so a parsed
+  `int64` is an **interned, immutable box** — an empty table carrying the metatable
+  `"int64"`, with the 64-bit payload in a module-private map (a native integer on
+  Lua 5.3+, an FFI `int64_t` on LuaJIT). It is exact and byte-identical through
+  parsing, sorting (numeric order via a dedicated comparator, not lexical) and every
+  export format, on every version. Because a box is recognizable *by value*
+  (`int64.is`) without consulting the schema, it survives in untyped containers,
+  arrays and **map keys** — interning makes two spellings of one key the same key,
+  which a raw table key can never be. Input is lenient (`042`, `+5`, `-0`), output
+  canonical (`42`, `5`, `0`); the type extends `number`. Unlike `long`, an `int64`
+  column loads with full 64-bit precision on LuaJIT too.
+- **New `util/int64.lua`: the only correct way to work with an int64 box.** The box
+  deliberately has no arithmetic metamethods, so `box + 1`, `box .. ""`, `#box`,
+  `math.*`, and `box == "9223…"` do **not** work — by design, so a mistake fails
+  *identically on every runtime* instead of working on Lua 5.4 and silently
+  corrupting on LuaJIT. (`type(box)` is `"table"` and `math.type(box)` is `nil`, so
+  `int64.is` is the only correct type test.) The module provides `is`, `of`
+  (normalize a string/number/box to a box), `tostring`, `compare`,
+  `eq`/`lt`/`le`/`gt`/`ge`, `add`/`sub`/`neg`/`abs`/`sign`, `toNumber`,
+  `toBytes`/`fromBytes` (8 big-endian two's-complement bytes), and `MIN`/`MAX`.
+  Arithmetic returns `nil` plus an error message on int64 overflow (no wrapping).
+  `of` accepts native 5.3+ integers through the full range, but rejects *doubles*
+  beyond ±2^53 even where they happen to be exact — accepting them would make the
+  same expression version-dependent ("pass the value as an int64 string instead").
+- **Every export format carries an `int64` exactly, and re-imports it as a box.**
+  Typed JSON `{"int64":"…"}`, XML `<int64>…</int64>`, MessagePack standard `0xD3`
+  (8 big-endian bytes; the reader boxes values beyond ±2^53 and leaves ordinary
+  numbers alone), and SQL `BIGINT` with a bare literal (read from its digits, never
+  `tonumber`). In an **untyped `table` / `raw` column**, where nothing else records
+  the type, the Lua literal uses a `{__int64="…"}` wrapper; a declared `int64` or
+  `{int64}` column keeps a plain quoted string. A bare over-2^53 literal in a
+  *container* cell is rejected (it would round before any int64 code sees it), with
+  a message naming the quoted-string and `{__int64}` alternatives.
+- **`util/read_only.lua` exempts the `int64` metatable**, so an int64 box passes
+  through the read-only wrapper unchanged (it would otherwise be re-wrapped and lose
+  its identity/interning).
 
 ### Changed
 
+- **Typed-format tag names are now the TabuLua type name, identical across every
+  format.** One concept, one word: typed-JSON integers moved from `{"int":…}` to
+  `{"integer":…}`, int64 from `{"i64":…}` to `{"int64":…}`; XML floats moved from
+  `<number>` to `<float>`. `<integer>` and the typed-JSON `{"float":…}` were already
+  the type name and are unchanged. The `export.xsd` and `typed-json.schema.json`
+  schemas were updated to match and now describe `int64` (previously missing). This
+  is a breaking change to the typed-JSON and XML wire formats: re-export any files
+  in those formats. (Natural JSON, native TSV, MessagePack and SQL are unaffected.)
+- **The tutorial's `catalogId` now renders as a quoted string in natural JSON**
+  (`"9007199254740993"` instead of a bare number), a consequence of migrating that
+  column from `long` to `int64`. A bare JSON number would round past 2^53 on a
+  JavaScript-derived toolchain and on LuaJIT re-read; the quoted form is exact
+  everywhere. This is intentional, not a formatting regression.
 - **`long` now fails deterministically at type resolution on LuaJIT, instead of
   silently limiting to ±2^53.** Previously a `long` column on LuaJIT accepted values
   in the safe-integer range and rejected larger ones per-cell — but LuaJIT's
@@ -72,7 +103,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
      `"9.007199254741e+15"`, scientific **and rounded**). New
      `string_utils.formatInteger` renders integral values exactly on every Lua; used in
      the integer/long parsers' reformatted strings, parser-name encoding
-     (`number_identifiers`), the typed-JSON `{"int":"…"}` wrapper, the XML `<integer>`
+     (`number_identifiers`), the typed-JSON `{"integer":"…"}` wrapper, the XML `<integer>`
      tag, SQL export, Lua-literal serialization, and the JSON→TSV transcode path.
      Byte-identical output on Lua 5.3+ — native-integer `tostring` never goes
      scientific — so only LuaJIT behaviour changed.

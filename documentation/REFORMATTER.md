@@ -113,7 +113,7 @@ The `--data=<format>` option specifies how Lua values are serialized within the 
 | Data Format | Description |
 |-------------|-------------|
 | `json-natural` | Standard JSON format (compatible with any JSON parser) |
-| `json-typed` | JSON with Lua type preservation (integers as `{"int":"N"}`) |
+| `json-typed` | JSON with Lua type preservation (integers as `{"integer":"N"}`, int64 as `{"int64":"N"}`) |
 | `lua` | Lua literal syntax |
 | `mpk` | MessagePack binary format |
 | `svg` | SVG diagram (no cell serialization; passthrough) |
@@ -241,12 +241,17 @@ The SQL exporter maps Lua/TSV types to SQL types as follows:
 | `string` | `TEXT` |
 | `float` | `REAL` |
 | `integer` | `BIGINT` |
+| `int64` | `BIGINT` (bare literal; read back exactly as a box) |
 | `boolean` | `SMALLINT` (0/1) |
 | `table` | `TEXT` (serialized) |
 
 - The first column is automatically designated as `PRIMARY KEY`
 - Non-optional columns include `NOT NULL` constraint
 - Optional types (ending in `|nil`) allow NULL values
+- A self-describing `-- tabulua-types: {…}` comment precedes `CREATE TABLE`, so
+  the importer knows which `BIGINT` columns are `int64` (read from their digits,
+  never `tonumber`, which would round past 2^53 on LuaJIT) and which `BLOB`
+  columns are `hexbytes` vs `base64bytes`.
 
 **Example SQL output:**
 ```sql

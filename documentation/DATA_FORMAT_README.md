@@ -245,7 +245,7 @@ The type system is based on the types of Lua. The basic types, which are expecte
 | `float` | Floating-point number (input can be any numeric format; always reformatted with a decimal point, e.g., `5` becomes `5.0`) |
 | `string` | Text string |
 
-> **Note:** The `number` type exists as the parent type of both `integer`, `float`, and `long`, but direct usage of `number` in column types is deprecated. Use `float` for decimal values, `integer` for common whole numbers, or `long` when full 64-bit precision is required. This ensures consistent formatting and better compatibility across Lua versions.
+> **Note:** The `number` type exists as the parent type of `integer`, `float`, `long`, and `int64`, but direct usage of `number` in column types is deprecated. Use `float` for decimal values, `integer` for common whole numbers, `long` for full 64-bit precision on Lua 5.3+, or `int64` for full 64-bit precision on every Lua version (LuaJIT included). This ensures consistent formatting and better compatibility across Lua versions.
 
 ### Integer Range Types
 
@@ -260,7 +260,7 @@ The following integer types with range restrictions are available:
 | `short` | -32,768 to 32,767 | Extends `integer` |
 | `int` | -2,147,483,648 to 2,147,483,647 | Extends `integer` |
 | `long` | Full 64-bit signed integer | **Extends `number` directly** |
-| `int64` | Full 64-bit signed integer, on **every** Lua version | **Logically extends `string`** — the parsed value is the canonical decimal string |
+| `int64` | Full 64-bit signed integer, on **every** Lua version | **Extends `number`** — the parsed value is an interned int64 *box* (see below) |
 
 #### The `integer` vs `long` Distinction
 
@@ -293,23 +293,41 @@ The `long` type extends `number` directly (not `integer`) and supports the full 
 A true 64-bit integer cannot live in a LuaJIT number: every LuaJIT number is an
 IEEE 754 double, exact only through ±2^53, and `tonumber()` rounds larger
 literals before any validation can react. The `int64` type solves this by never
-converting the value to a number at all — the **parsed value is the canonical
-decimal string** (optional `-`, digits, no leading zeros), identical on every
-Lua version:
+storing the value as a Lua number. A parsed `int64` is an **interned, immutable
+box** — an empty table carrying the metatable `"int64"`, with the actual 64-bit
+payload held in a module-private map (a native 64-bit integer on Lua 5.3+, an
+FFI `int64_t` on LuaJIT). The box behaves identically on every Lua version:
 
 - **Exact everywhere**: `9223372036854775807` round-trips byte-for-byte through
   parsing, sorting, and every export format, on Lua 5.3+ *and* LuaJIT.
+- **Recognizable by value**: `int64.is(v)` identifies a box in any position —
+  in an untyped container, an array, or a map key — *without* consulting the
+  schema. This is what lets serializers tag it correctly wherever it appears.
+- **Interned, so usable as a map key**: two spellings of the same value are the
+  *same* box, so `{int64:Item}` works and a key round-trips to one key. A raw
+  table could never be a map key (nothing reads it back); an int64 box can.
 - **Numeric ordering**: `int64` columns sort by numeric value, not lexically
   (`99` sorts before `100`).
 - **Input is lenient, output canonical**: `042`, `+5`, and `-0` are accepted
   and reformatted to `42`, `5`, and `0`.
 
-Because the value is a string, plain Lua arithmetic and comparison operators do
-not work on it reliably — Lua would silently coerce the string through a double,
-losing exactly the precision the type exists to protect. Use the `int64` utility
-module (`util/int64.lua`) instead: `of`, `compare`, `eq`/`lt`/`le`/`gt`/`ge`,
-`add`, `sub`, and `neg` operate exactly on int64 strings (and accept safe
-numbers), returning `nil` plus an error message on invalid input or overflow.
+**Working with a box in code — always through the API.** The box deliberately
+supports *no* arithmetic: `box + 1`, `box .. ""`, `#box`, `tostring(box)` for
+digits, `math.abs(box)`, and `box == "9223…"` (comparison against a string) do
+**not** work, and this is by design — a box has no such metamethods, so a
+mistake fails *identically on every runtime* rather than working on Lua 5.4 and
+silently corrupting on LuaJIT (the trap the old string form had). Note also that
+`type(box)` is `"table"` and `math.type(box)` is `nil` — **`int64.is` is the
+only correct type test**. Use the `util/int64.lua` module for everything:
+
+- `int64.is(v)` — is this an int64 box?
+- `int64.of(v)` — normalize a string/number/box to a box (`nil, err` on failure)
+- `int64.tostring(box)` — the canonical decimal digits
+- `int64.compare` / `eq` / `lt` / `le` / `gt` / `ge` — ordering and equality
+- `int64.add` / `sub` / `neg` / `abs` / `sign` — arithmetic (`nil, err` on overflow)
+- `int64.toNumber(box)` — a Lua number (lossy beyond ±2^53; use sparingly)
+- `int64.toBytes` / `fromBytes` — 8 big-endian two's-complement bytes
+- `int64.MIN` / `int64.MAX` — the range bounds, as boxes
 
 Choose `long` when the data will only ever load on Lua 5.3+ and values should stay
 processable as native numbers (on LuaJIT a `long` column will not load at all); choose
@@ -1354,6 +1372,133 @@ Each group tuple has three elements: `{groupName, {allowedValues}, default}`. Th
 - No variant from a group (no default): `variant group 'platform' requires exactly one of: ios, android`
 - Multiple from same group: `variant group 'lang' has multiple selected variants: en, fr -- expected exactly one`
 
+## Unified type-tag vocabulary
+
+Some scalar Lua types cannot be represented natively in every export format, so
+the tagged formats wrap them. Wherever a wrapper is needed, **the tag name is the
+TabuLua type name** — the same word in typed JSON, XML, and the Lua literal — so
+one concept reads the same way everywhere:
+
+| Concept | Typed JSON | XML | Lua literal |
+|---------|-----------|-----|-------------|
+| integer | `{"integer":"123"}` | `<integer>123</integer>` | *(bare `123`)* |
+| float (special) | `{"float":"nan"}` / `inf` / `-inf` | `<float>nan</float>` | *(bare expression)* |
+| int64 | `{"int64":"…"}` | `<int64>…</int64>` | `{__int64="…"}` ¹ |
+
+- **integer** is wrapped as a *string* in typed JSON because most JSON toolchains
+  are JavaScript-derived and cannot hold an integer past 2^53 as a number. A
+  regular float is a bare JSON number; only the special floats (`nan`/`inf`/`-inf`,
+  which are not valid JSON tokens) need the `float` tag. In XML every non-integer
+  number is a `<float>`.
+- **int64** has its *own* tag, deliberately distinct from `integer`. Sharing one
+  tag would make every ordinary integer in an untyped container read back as an
+  int64 box — and a box has no arithmetic, which would break sandboxed code doing
+  math on the value. In these two formats the canonical digits are written as
+  *text* (the value of the JSON string, the body of the XML element), so the box
+  is rebuilt from that text with `int64.of` and no JSON/XML number parser ever
+  rounds it.
+- MessagePack and SQL carry the type structurally, with no named tag: a standard
+  `0xD3` int64 (8 exact bytes) and a `BIGINT` column with a bare literal (read
+  back from its digits, never `tonumber`), respectively.
+
+¹ **The Lua `{__int64="…"}` wrapper** appears only in an **untyped `table` / `raw`
+column**, where nothing else records that the value was an int64 (a declared
+`int64` or `{int64}` column keeps a plain quoted string, since the column type
+re-supplies the box on load). The name is `int64`; the `__` prefix is a
+Lua-specific safety affix, because in a Lua literal a wrapper is an ordinary
+table key and a bare `int64` could collide with a genuine user field. A
+hand-authored Lua data file may use this form to place an exact int64 in an
+untyped container. It is converted back to a box only when a table has exactly
+that one key with a canonical int64 string value.
+
+**Authoring an int64 inside a container.** Because `ltcn` (the cell reader) lexes
+a bare number literal before any int64 code runs, a bare `9007199254740993` in a
+container cell would already be rounded on LuaJIT. Such a literal is therefore
+**rejected** with a message naming the two safe forms: a quoted string
+(`"9007199254740993"`) or the `{__int64="9007199254740993"}` wrapper. A *scalar*
+`int64` column is unaffected — it receives the raw cell text and never goes
+through `ltcn`.
+
+## Round-trip type fidelity (`integer` / `long` / `int64`)
+
+The three integer-shaped types do **not** all survive every export/import cycle as
+the same type. The differences are subtle, version-dependent, and easy to get
+wrong from memory, so they are spelled out here in full.
+
+**The one rule that drives everything:** every serializer dispatches on the
+in-memory *value*, never on the declared column type. It asks `int64.is(v)` (a
+box?) or `math.type(v) == "integer"` (a native int?). This matters because:
+
+| In-memory type | What it actually is | Range | Usable on LuaJIT? |
+| --- | --- | --- | --- |
+| `integer` | native Lua integer | ±2^53 (enforced by the type) | yes (a double ≤ 2^53) |
+| `long` | native Lua integer | full 64-bit | **no** — fails at type *resolution* ("use `int64`") |
+| `int64` | interned box | full 64-bit | **yes**, exact |
+
+A `long` value and an `integer` value are **both plain native integers** — at
+serialization time they are indistinguishable, and only an `int64` box serializes
+as an int64. Because `integer` is capped at ±2^53, **the only way a bare integer
+can exceed 2^53 is a `long` value on Lua 5.3+.** That single fact is behind every
+asymmetry below.
+
+### Export: what each in-memory shape becomes on the wire
+
+| Format | `integer` / `long` value | `int64` box |
+| --- | --- | --- |
+| Typed JSON | `{"integer":"N"}` | `{"int64":"N"}` |
+| XML | `<integer>N</integer>` | `<int64>N</int64>` |
+| Lua literal | bare `N` | quoted `"N"` (declared col) / `{__int64="N"}` (untyped col) |
+| Natural JSON | bare number `N` | quoted string `"N"` |
+| TSV | text `N` | text `N` (canonical digits — looks like a string) |
+| MessagePack | int; **negatives < −2^31 use `0xD3`** (the int64 wire tag) | `0xD3` + 8 bytes |
+| SQL | `BIGINT` column, bare literal | `BIGINT` column, bare literal |
+
+Note the two overlaps that create the import-side surprises: SQL maps *both*
+`integer` and `int64` to `BIGINT`, and MessagePack reuses the same `0xD3` byte for
+ordinary large-magnitude negative integers.
+
+### Import: where the type changes
+
+**(A) `integer` / `long` in → comes back as an `int64` box.**
+MessagePack only, and only for a magnitude **> 2^53**. On read, a `0xD3` is boxed
+*only* when its value falls outside ±2^53; inside that range it is handed back as a
+plain number, so ordinary negatives that also ride `0xD3` are not re-typed. A big
+**`long`** (Lua 5.3+ only) therefore comes back as an **int64 box**, not a `long`.
+No other format does this.
+
+**(B) `int64` in → comes back as *not* an int64 (the reverse).**
+
+- MessagePack, **untyped** container, |value| ≤ 2^53: a small int64 box round-trips
+  as a **plain integer** — nothing below the threshold distinguishes it on the wire.
+- Natural JSON and TSV, **untyped** container: an int64 box is written as canonical
+  digit text and, with no column type to guide reconstruction, reads back as a
+  **plain string** (`"12345"`). (Natural JSON also coerces an exact scalar map key
+  `"1"` → `1`; use `:typed` to keep it exact.)
+- In every case a **declared `int64` column re-boxes on load**, so the loss only
+  happens in an untyped `table` / `raw` column. Typed JSON, XML, and the Lua
+  *literal* preserve int64-ness even in untyped containers — that is the whole
+  reason int64 has its own tag and the `{__int64}` wrapper.
+
+**(C) Silent corruption — comes back a number, but *rounded* (LuaJIT only).**
+Reading a `BIGINT` back through `lsqlite3` yields a Lua number, i.e. a **double** on
+LuaJIT, so any value past 2^53 is **rounded**. `buildInt64SafeSelect` exists to
+`CAST` int64 columns to `TEXT` and avoid this; the reformatter never reads SQL, so
+this bites only the opt-in SQLite import path. On Lua 5.3+ the same read is exact
+(a native integer).
+
+### Summary
+
+- **Only MessagePack changes an integer's *type* on round-trip:** a big `long`
+  becomes an int64 box (5.3+); a small int64 in an untyped column becomes a plain
+  number.
+- **Only natural JSON / TSV lose int64-ness to a *string*** — and only in an
+  untyped column.
+- **Typed JSON / XML / Lua literal are faithful in both directions**, even untyped.
+- **`long` is a 5.3+-only mirage on the wire:** it looks exactly like `integer`,
+  and the moment it exceeds 2^53 and survives a MessagePack trip it *becomes*
+  `int64`. On LuaJIT it never loads at all — `int64` is the only exact 64-bit
+  option there.
+
 ## Alternative Input Formats (Transcoders)
 
 A data file listed in `Files.tsv` does not have to be a TSV/CSV file. The engine
@@ -1424,7 +1569,7 @@ source of truth, so it is never written back over the original).
 - ¹ The JSON round-trip is **normalizing**, not byte-identical: the rewritten
   JSON is canonical (object keys in the schema's header order, canonical number
   and whitespace formatting) and parses back to the same data. The `:typed`
-  layouts are **value-lossless** (the self-describing `{"int":…}` form survives
+  layouts are **value-lossless** (the self-describing `{"integer":…}` form survives
   any JSON toolchain); the bare `json-natural` layouts carry the usual
   conventional-JSON caveats (an int above 2⁵³ only survives a JS-derived
   toolchain in the typed form; `NaN`/`±Inf` are not representable; an exact
@@ -1498,17 +1643,21 @@ with `typeName` `{name:identifier,skills:{string},stats:{string:integer}}` loads
 **Typed variants (`json:objects:typed` / `json:rows:typed` / `json:columns:typed`).**
 The same three row layouts, but cell values use TabuLua's **typed** JSON encoding —
 the self-describing read-back of `exportJSON`, where integers are the *string*
-`{"int":"…"}`, special floats `{"float":"nan"/"inf"/"-inf"}`, and tables
-`[size, …, [key, value]]`. The encoding carries the types, so values survive
-independently of the column type and of the JSON toolchain.
+`{"integer":"…"}`, special floats `{"float":"nan"/"inf"/"-inf"}`, `int64` values
+`{"int64":"…"}`, and tables `[size, …, [key, value]]`. Each tag name is the
+TabuLua **type name**, identical across typed JSON, XML, and the Lua `{__int64}`
+wrapper (see [Unified type-tag vocabulary](#unified-type-tag-vocabulary)). The
+encoding carries the types, so values survive independently of the column type and
+of the JSON toolchain.
 
 The main reason to use it is **64-bit integers**: most JSON producers/consumers are
 JavaScript-derived and cannot represent an integer above 2^53 as a number, so a
 natural `9223372036854775807` is corrupted before TabuLua ever sees it. The typed
-`{"int":"9223372036854775807"}` string form survives any toolchain. A secondary
-case is an **untyped `table` / `raw` column**, where natural has no key type to
-guide it (and would coerce a key `"1"` to the number `1`) but typed keeps the exact
-key `"1"`. For ordinary typed columns the result is identical to natural.
+`{"integer":"9223372036854775807"}` (for a `long`) or `{"int64":"…"}` (for an
+`int64`) string form survives any toolchain. A secondary case is an **untyped
+`table` / `raw` column**, where natural has no key type to guide it (and would
+coerce a key `"1"` to the number `1`) but typed keeps the exact key `"1"`. For
+ordinary typed columns the result is identical to natural.
 
 ### EAV (Entity–Attribute–Value) long format
 
@@ -1542,8 +1691,10 @@ shield	50
 
 The `xml:tabulua` transcoder reads TabuLua's **own** XML export format back in as
 data — the inverse of XML export. The document is `<file>/<header>/<row>`, with
-typed cell elements (`<integer>`, `<string>`, `<number>`, `<true/>`, `<null/>`,
-nested `<table>` for composite values):
+typed cell elements (`<integer>`, `<float>`, `<int64>`, `<string>`, `<true/>`,
+`<null/>`, nested `<table>` for composite values — each element name is the
+TabuLua type name, see
+[Unified type-tag vocabulary](#unified-type-tag-vocabulary)):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1586,7 +1737,7 @@ form:
 | `transcoder` | cell value example |
 |--------------|--------------------|
 | `tsv:lua` | `{attack=80,defense=40}` (a Lua literal) |
-| `tsv:json-typed` | `[0,["attack",{"int":"80"}],["defense",{"int":"40"}]]` (self-describing typed JSON) |
+| `tsv:json-typed` | `[0,["attack",{"integer":"80"}],["defense",{"integer":"40"}]]` (self-describing typed JSON) |
 | `tsv:json-natural` | `{"attack":80,"defense":40}` (conventional JSON) |
 
 In every variant the header cells are themselves serialised (`"name:identifier"`),

@@ -2,10 +2,15 @@
 
 ## Status
 
-**Planned, not started.** Supersedes two working documents, which are to be **deleted**
-once this plan is accepted (see *Supersedes* below). Requires largely rewriting
-[util/int64.lua](../util/int64.lua) (committed in `d672244`) and re-doing the export work
-that was planned but never started.
+**COMPLETE — all phases landed (2026-07-21).** int64 is an interned box, exact on every
+Lua version including LuaJIT, recognizable by value in every position (untyped containers,
+arrays, map keys), and round-trips through all six export formats. Cross-runtime golden-byte
+tests pass on both runtimes; docs (`DATA_FORMAT_README.md`, `CHANGELOG.md`, `REFORMATTER.md`)
+are updated. The two superseded working documents this plan replaced have been deleted.
+
+A follow-on change, done after the plan and also landed, **unified the type-tag names across
+formats** (typed JSON `{"int"}`→`{"integer"}`, `{"i64"}`→`{"int64"}`; XML `<number>`→`<float>`)
+so one concept reads the same word in typed JSON, XML and the Lua `{__int64}` wrapper.
 
 Everything marked *(measured)* below was actually run — on the host (Lua 5.4) or in the
 LuaJIT container.
@@ -31,16 +36,17 @@ and the metamethod indirection on payload access are **acceptable**.
 
 ## Supersedes
 
-Both to be deleted once this plan is accepted:
+Two working documents were folded into this plan and then **deleted** (2026-07-21) once
+their content was carried forward:
 
-- **`TODO/int64_export_representation.md`** — planned per-format export presentation on the
-  assumption that the representation stays a string. Its per-format *policy* decisions are
-  correct and are **carried forward into Phase 7 below**; its Phase 1 (the platform-
-  capability `tonumber` rule) and its Phase 7 (deferred nested int64) are **obsolete**,
-  because the box solves both by construction.
-- **`TODO/int64_representation_options.md`** — the options survey that led here. Option 1
-  ("uniform boxed representation") was chosen; the measured evidence is carried forward
-  into *Measured foundations* below so nothing is lost when it is deleted.
+- **`int64_export_representation.md`** (deleted) — planned per-format export presentation on
+  the assumption that the representation stays a string. Its per-format *policy* decisions
+  were carried forward into Phase 7 below; its Phase 1 (the platform-capability `tonumber`
+  rule) and its Phase 7 (deferred nested int64) were obsolete, because the box solves both
+  by construction.
+- **`int64_representation_options.md`** (deleted) — the options survey that led here. Option 1
+  ("uniform boxed representation") was chosen; the measured evidence was carried forward into
+  *Measured foundations* below, so nothing was lost.
 
 ## The design
 
