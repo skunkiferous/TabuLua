@@ -5,7 +5,7 @@ local NAME = "global_reset"
 local semver = require("semver")
 
 -- Module version
-local VERSION = semver(0, 32, 0)
+local VERSION = semver(0, 33, 0)
 
 -- Internal state: list of registered reset functions
 local resetFunctions = {}

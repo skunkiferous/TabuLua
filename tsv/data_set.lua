@@ -4,7 +4,7 @@
 
 -- Module versioning
 local semver = require("semver")
-local VERSION = semver(0, 32, 0)
+local VERSION = semver(0, 33, 0)
 local NAME = "data_set"
 
 local raw_tsv = require("tsv.raw_tsv")

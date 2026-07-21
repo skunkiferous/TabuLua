@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.33.0] - 2026-07-21
+
+### Added
+
 - **New `int64` built-in type: exact 64-bit signed integers on EVERY Lua version,
   including LuaJIT.** A true int64 cannot live in a LuaJIT number (doubles round
   past ±2^53, and `tonumber()` rounds before any parser code can react), so a parsed
@@ -115,8 +125,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   compat53, and one such stale gate in `parsers_simple_spec` was fixed); LuaJIT's
   `string.format` renders subnormal doubles as garbage. The `migration_spec`
   interpreter probe gained `luajit` as a final candidate.
-
-### Removed
 
 ### Fixed
 
