@@ -32,4 +32,16 @@ RUN luarocks install compat53 && \
     luarocks install --server=https://luarocks.org/dev ltcn && \
     luarocks install https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
 
+# lsqlite3 exercises importer.importSQLFileWithSQLite, which is otherwise DEAD
+# CODE in testing: without the rock it falls back to the text SQL parser and
+# logs "SQLite3 not available", so that path never runs.
+#
+# It matters most HERE. lsqlite3 returns a BIGINT as a Lua number, and on LuaJIT
+# every number is a double, so an int64 column past 2^53 comes back rounded --
+# after being stored exactly. buildInt64SafeSelect casts those columns to TEXT
+# to avoid it, and this is the only environment where that can be verified.
+RUN apk add --no-cache sqlite-dev && \
+    luarocks install lsqlite3 && \
+    luajit -e 'require("lsqlite3")'
+
 WORKDIR /app

@@ -685,11 +685,16 @@ local function serializeSQL(v, tableSerializer)
     elseif t == "boolean" then
         return v and "1" or "0"
     elseif int64.is(v) then
-        -- int64: a quoted SQL string literal, unchanged. The BIGINT column plus
-        -- bare literal is Phase 7 of TODO/boxed_int64.md, and the two halves
-        -- must land together -- sql_types maps int64 to TEXT today, so a bare
-        -- literal here would be a type mismatch against its own column.
-        return escapeSQLString(int64Digits(v))
+        -- int64: a BARE SQL integer literal, matching the BIGINT column that
+        -- colToSQL now emits. The two halves must stay together -- a quoted
+        -- literal in a BIGINT column, or a bare one in a TEXT column, is a type
+        -- mismatch against the column's own declaration.
+        --
+        -- Bare is safe here in a way it is NOT in JSON or Lua: SQLite stores a
+        -- BIGINT as an exact 64-bit integer, and the digits are read back from
+        -- the file's TEXT (never through tonumber, which rounds past 2^53 on
+        -- LuaJIT). See parseSQLContent and buildInt64SafeSelect on the way in.
+        return int64Digits(v)
     elseif t == "table" then
         -- Encode table as JSON/XML/... string
         local encoded = ser(v, false)

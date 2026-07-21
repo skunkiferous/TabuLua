@@ -91,6 +91,24 @@ production loader. This work makes the loader itself read them.)
 - **SQL** — nobody ships data as `.sql`; DB-to-DB transfer goes through CSV/TSV
   precisely so the source's DB vendor and schema don't gate reading the data. An
   exported `.sql` carries DDL we'd have to re-parse for no real input use case.
+
+  **If that is ever revisited: `BIGINT` is a trap on LuaJIT.** Since
+  [boxed_int64.md](boxed_int64.md) Phase 5e an `int64` column exports as `BIGINT`
+  with a bare literal (`('ironSword',9007199254740993,…)`), which is exact in the
+  file and exact in SQLite. It is the *reader* that loses it: `tonumber` and any
+  SQL binding that returns a Lua number hand back a **double** on LuaJIT, so
+  anything past 2^53 is silently rounded — `9007199254740993` becomes
+  `…992`, with no error. The digits must be read as **text**, never as a number.
+  Our own two readers already do this and are the reference:
+  [importer.parseSQLContent](../serde/importer.lua) reads the literal's digits and
+  boxes them via `int64.of`, and `buildInt64SafeSelect` wraps every int64 column in
+  `CAST(... AS TEXT)` for the `lsqlite3` path. Both need the
+  `-- tabulua-types:` comment to know which columns are int64 — SQL alone cannot
+  say whether a `BIGINT` was an int64 box or a plain number.
+
+  The same warning applies to **anything external** loading our `.sql` into a
+  database on a double-only runtime, which is the scenario
+  [improved-sql.txt](improved-sql.txt) contemplates.
 - **MessagePack** — a binary wire/cache format, not designed to be a human-authored
   or hand-edited *source* input.
 

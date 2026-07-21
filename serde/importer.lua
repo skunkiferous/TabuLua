@@ -22,6 +22,15 @@ local deserializeXML = deserialization.deserializeXML
 local deserializeMessagePack = deserialization.deserializeMessagePack
 
 local base64 = require("util.base64")
+local int64 = require("util.int64")
+
+-- True if a declared TabuLua column type is an int64 (or an alias of one). The
+-- type text comes from the "-- tabulua-types:" comment the exporter writes, so
+-- an alias arrives already resolved to its base name where one exists; the
+-- plain prefix test covers "int64" and "int64|nil".
+local function isInt64ColumnType(declared)
+    return declared ~= nil and declared:match("^int64") ~= nil
+end
 
 local string_utils = require("util.string_utils")
 local split = string_utils.split
@@ -383,6 +392,50 @@ end
 -- SQL FILE IMPORT
 -- ============================================================================
 
+-- Column names from a CREATE TABLE, in declaration order.
+-- Format: CREATE TABLE "tablename" (\n  "col1" TYPE,\n  "col2" TYPE\n)
+local function extractSQLColumns(content)
+    local colDefs = content:match('CREATE TABLE ".-"%s*(%b())')
+    if not colDefs then
+        return nil, "Could not find CREATE TABLE statement"
+    end
+    local columns = {}
+    colDefs = colDefs:sub(2, -2)  -- Remove outer parentheses
+    for colDef in colDefs:gmatch('[^,]+') do
+        local colName = colDef:match('"([^"]+)"')
+        if colName then
+            columns[#columns + 1] = colName
+        end
+    end
+    if #columns == 0 then
+        return nil, "Could not extract column names from CREATE TABLE"
+    end
+    return columns
+end
+
+-- Declared TabuLua types, from the self-describing comment the exporter writes.
+-- Absent in older files, so every caller treats it as optional.
+--
+-- Needed because SQL alone is ambiguous in both directions: "BLOB" cannot say
+-- whether the model value was hex text (hexbytes) or base64 (base64bytes), and
+-- a BIGINT literal cannot say whether it was an int64 box or a plain number.
+--
+-- NOTE the keys are MODEL column names, while the CREATE TABLE uses the
+-- sanitized form (sqlColumnName), so an exploded column such as "stats.attack"
+-- does not match its "stats_attack" column here. Harmless for the types that
+-- rely on this today, none of which explode.
+local function extractSQLColumnTypes(content)
+    local typeLine = content:match("%-%-%s*tabulua%-types:%s*(%b{})")
+    if not typeLine then
+        return nil
+    end
+    local columnTypes = {}
+    for name, spec in typeLine:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do
+        columnTypes[name] = spec
+    end
+    return columnTypes
+end
+
 --- Parses SQL file content and extracts data.
 --- This parses our specific SQL export format (CREATE TABLE + INSERT).
 --- @param content string The SQL file content
@@ -394,40 +447,11 @@ local function parseSQLContent(content, tableDeserializer)
 
     local result = {}
 
-    -- Extract column names from CREATE TABLE
-    -- Format: CREATE TABLE "tablename" (\n  "col1" TYPE,\n  "col2" TYPE\n)
-    local colDefs = content:match('CREATE TABLE ".-"%s*(%b())')
-    if not colDefs then
-        return nil, "Could not find CREATE TABLE statement"
+    local columns, colErr = extractSQLColumns(content)
+    if not columns then
+        return nil, colErr
     end
-
-    local columns = {}
-    colDefs = colDefs:sub(2, -2)  -- Remove outer parentheses
-    if colDefs then
-        for colDef in colDefs:gmatch('[^,]+') do
-            local colName = colDef:match('"([^"]+)"')
-            if colName then
-                columns[#columns + 1] = colName
-            end
-        end
-    end
-
-    if #columns == 0 then
-        return nil, "Could not extract column names from CREATE TABLE"
-    end
-
-    -- Declared TabuLua types, from the self-describing comment the exporter
-    -- writes. Absent in older files, so everything below treats it as optional.
-    -- Needed because SQL says only "BLOB": it cannot say whether the model
-    -- value was hex text (hexbytes) or base64 text (base64bytes).
-    local columnTypes = nil
-    local typeLine = content:match("%-%-%s*tabulua%-types:%s*(%b{})")
-    if typeLine then
-        columnTypes = {}
-        for name, spec in typeLine:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do
-            columnTypes[name] = spec
-        end
-    end
+    local columnTypes = extractSQLColumnTypes(content)
 
     -- Add header row
     result[1] = columns
@@ -590,7 +614,23 @@ local function parseSQLContent(content, tableDeserializer)
                     numStr = rowContent:sub(valPos)
                     valPos = #rowContent + 1
                 end
-                value = tonumber(numStr)
+                -- A BIGINT column is read from its DIGITS, never through
+                -- tonumber: tonumber("9007199254740993") is already rounded on
+                -- LuaJIT, where every number is a double, so the box would be
+                -- built from a value the file never contained.
+                local declaredNum = columnTypes
+                    and columnTypes[columns[colIdx] or ""] or nil
+                if isInt64ColumnType(declaredNum) then
+                    local box, boxErr = int64.of(numStr)
+                    if box == nil then
+                        return nil, "Failed to read int64 column '"
+                            .. tostring(columns[colIdx]) .. "': "
+                            .. tostring(boxErr)
+                    end
+                    value = box
+                else
+                    value = tonumber(numStr)
+                end
             else
                 -- Unknown, try to read until comma
                 local nextComma = rowContent:find(",", valPos)
@@ -631,8 +671,48 @@ local function importSQLFile(filePath, tableDeserializer)
     return parseSQLContent(content, tableDeserializer)
 end
 
---- Imports an SQL file using SQLite3 if available.
---- Falls back to parsing if SQLite is not available.
+--- Builds the SELECT for the SQLite import path, casting every int64 column to
+--- TEXT so its digits survive.
+---
+--- lsqlite3 hands a BIGINT back as a Lua number. On LuaJIT that is a double, so
+--- an id past 2^53 would be silently rounded on the way out of the database --
+--- after being stored exactly. CAST(... AS TEXT) makes SQLite render the digits
+--- itself, and int64.of() rebuilds the box from those exactly.
+---
+--- Exposed (and pure) because the environments this project is developed in
+--- have no lsqlite3, so this is the part of that path that can still be tested.
+--- @param tableName string The SQL table name
+--- @param columns table Sequence of column names, in CREATE TABLE order
+--- @param columnTypes table|nil name -> declared TabuLua type, if the file says
+--- @return string The SELECT statement
+local function buildInt64SafeSelect(tableName, columns, columnTypes)
+    if columnTypes == nil or #columns == 0 then
+        return 'SELECT * FROM "' .. tableName .. '"'
+    end
+    local parts = {}
+    for i, name in ipairs(columns) do
+        local quoted = '"' .. name .. '"'
+        if isInt64ColumnType(columnTypes[name]) then
+            parts[i] = "CAST(" .. quoted .. " AS TEXT) AS " .. quoted
+        else
+            parts[i] = quoted
+        end
+    end
+    return "SELECT " .. table.concat(parts, ", ") .. ' FROM "' .. tableName .. '"'
+end
+
+--- Imports an SQL file by loading it into an in-memory SQLite database, or
+--- falling back to the text parser when lsqlite3 is unavailable.
+---
+--- OPT-IN. `importFile` deliberately does NOT route here -- it uses the text
+--- parser directly -- because this path DIVERGES from it and carries none of
+--- the fixes the text path got: BLOB columns come back as raw bytes rather than
+--- their hex/base64 text, and table columns are deserialized by a single
+--- `val:sub(1,1)` heuristic instead of the caller's format. Nothing in
+--- production reads SQL, so that divergence was never shipped. Use this only
+--- when you specifically need a real engine to parse the DDL (its one proven
+--- job today: the SQL-executability check in exporter_spec). int64 columns ARE
+--- handled correctly here -- read as TEXT via buildInt64SafeSelect.
 --- @param filePath string Path to the .sql file
 --- @param tableDeserializer function|nil Function to deserialize table columns
 --- @return table|nil The imported data as a sequence of sequences
@@ -671,18 +751,33 @@ local function importSQLFileWithSQLite(filePath, tableDeserializer)
         return nil, "Could not extract table name"
     end
 
-    -- Query all data
-    local result = {}
-    local columns = nil
+    -- Query all data. int64 columns come back as TEXT (see
+    -- buildInt64SafeSelect) and are turned back into boxes below.
+    local columnTypes = extractSQLColumnTypes(content)
+    local declaredColumns = extractSQLColumns(content)
+    local query = buildInt64SafeSelect(tableName, declaredColumns or {},
+        columnTypes)
 
-    for row in db:nrows("SELECT * FROM \"" .. tableName .. "\"") do
+    local result = {}
+    -- Column order is the CREATE TABLE's DECLARATION order, not sorted.
+    -- db:nrows yields an unordered map, so the previous code sorted the keys
+    -- alphabetically -- which put the header in a different order from the
+    -- text parser and from the model, so every header comparison failed the
+    -- moment this path actually ran (it only does with lsqlite3 present).
+    local columns = declaredColumns
+    if columns and #columns > 0 then
+        result[1] = columns
+    end
+
+    for row in db:nrows(query) do
         if not columns then
-            -- Extract column names from first row
+            -- Fallback if the CREATE TABLE could not be parsed for names:
+            -- take them from the first row (order is then unspecified).
             columns = {}
             for k in pairs(row) do
                 columns[#columns + 1] = k
             end
-            table.sort(columns)  -- Ensure consistent order
+            table.sort(columns)
             result[1] = columns
         end
 
@@ -690,8 +785,16 @@ local function importSQLFileWithSQLite(filePath, tableDeserializer)
         local dataRow = {}
         for i, col in ipairs(columns) do
             local val = row[col]
+            if isInt64ColumnType(columnTypes and columnTypes[col]) then
+                local box, boxErr = int64.of(tostring(val))
+                if box == nil then
+                    db:close()
+                    return nil, "Failed to read int64 column '" .. col
+                        .. "': " .. tostring(boxErr)
+                end
+                val = box
             -- Deserialize table values if needed
-            if type(val) == "string" then
+            elseif type(val) == "string" then
                 if val:sub(1, 1) == "[" or val:sub(1, 1) == "{" or val:sub(1, 6) == "<table" then
                     local deserializer = tableDeserializer or deserializeJSON
                     local tableVal, tableErr = deserializer(val)
@@ -750,7 +853,15 @@ local function importFile(filePath, dataFormat)
         elseif dataFormat == "mpk" then
             deserializer = deserialization.deserializeMessagePackSQLBlob
         end
-        return importSQLFileWithSQLite(filePath, deserializer)
+        -- The TEXT parser, deliberately, not importSQLFileWithSQLite. The two
+        -- diverge (BLOB decoding, per-format table deserialization, column
+        -- order), and only the text path carries the fixes those needed --
+        -- the SQLite path is exercised by nothing in production (the loader
+        -- never reads SQL) so it never got them. Auto-detect must also behave
+        -- the SAME whether or not lsqlite3 happens to be installed, which the
+        -- SQLite path does not. importSQLFileWithSQLite stays as an explicit
+        -- opt-in for a caller that truly wants a real engine to parse the DDL.
+        return importSQLFile(filePath, deserializer)
     else
         return nil, "Unknown file extension"
     end
@@ -770,6 +881,7 @@ local API = {
     importMessagePackFile = importMessagePackFile,
     importNaturalJSONFile = importNaturalJSONFile,
     importNaturalJSONTSVFile = importNaturalJSONTSVFile,
+    buildInt64SafeSelect = buildInt64SafeSelect,
     importSQLFile = importSQLFile,
     importSQLFileWithSQLite = importSQLFileWithSQLite,
     importTypedJSONFile = importTypedJSONFile,

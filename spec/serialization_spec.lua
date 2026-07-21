@@ -54,18 +54,31 @@ describe("serialization", function()
 
     it("should serialize like the digit string in the untagged formats",
         function()
-      -- Typed JSON and XML are excluded: they now carry an int64 tag, which is
-      -- what lets the value be reconstructed as an int64 on re-read. The
-      -- others carry quoted digits, by design.
+      -- Typed JSON, XML and MessagePack are excluded: each carries its own
+      -- int64 tag, which is what lets the value be reconstructed on re-read.
+      -- SQL is excluded too, but for the opposite reason -- it is BARE, not
+      -- quoted, because the BIGINT column already types it (see below).
       for _, digits in ipairs({MAX, MIN, "0", "42", "-7"}) do
         local box = int64.of(digits)
         assert.are.equal(serialization.serialize(digits),
             serialization.serialize(box))
         assert.are.equal(serialization.serializeNaturalJSON(digits),
             serialization.serializeNaturalJSON(box))
-        assert.are.equal(serialization.serializeSQL(digits),
-            serialization.serializeSQL(box))
       end
+    end)
+
+    it("should emit a BARE SQL literal, to match its BIGINT column", function()
+      -- The column type and the literal are one decision: a quoted literal in
+      -- a BIGINT column, or a bare one in a TEXT column, is a mismatch against
+      -- the column's own declaration. Bare is safe in SQL where it is not in
+      -- JSON or Lua, because SQLite stores BIGINT as an exact 64-bit integer
+      -- and the importer reads the digits as TEXT, never through tonumber.
+      for _, digits in ipairs({MAX, MIN, "0", "-7"}) do
+        assert.are.equal(digits, serialization.serializeSQL(int64.of(digits)))
+      end
+      -- ...and a genuine STRING of digits still quotes, so the two stay
+      -- distinguishable in the file
+      assert.are.equal("'" .. MAX .. "'", serialization.serializeSQL(MAX))
     end)
 
     it("should wrap int64 in a Lua literal only when asked", function()
@@ -103,8 +116,9 @@ describe("serialization", function()
       -- The failure mode this phase exists to prevent
       local box = int64.of(MAX)
       assert.are.equal('"' .. MAX .. '"', serialization.serialize(box))
-      assert.are.equal("'" .. MAX .. "'", serialization.serializeSQL(box))
+      assert.are.equal(MAX, serialization.serializeSQL(box))
       for _, out in ipairs({serialization.serialize(box),
+                            serialization.serializeSQL(box),
                             serialization.serializeJSON(box),
                             serialization.serializeNaturalJSON(box),
                             serialization.serializeXML(box)}) do

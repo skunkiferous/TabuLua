@@ -357,14 +357,22 @@ local function validateImport(imported, expected, formatConfig, _filePath)
         -- by name in that case.
         if rowIdx == 1 and formatConfig.untypedHeader then
             local expectedNames = {}
+            -- The model names of this header, needed below: an exploded map's
+            -- key/value pair is suffixed _k/_v, and telling that pair from a
+            -- lone array element takes the whole header, not one name.
+            local modelNames = {}
             for i, cell in ipairs(expectedRow) do
-                local name = tostring(cell):match("^([^:]*)") or tostring(cell)
+                modelNames[i] = tostring(cell):match("^([^:]*)")
+                    or tostring(cell)
+            end
+            local siblings = exporter.sqlColumnNameSet(modelNames)
+            for i, name in ipairs(modelNames) do
                 -- SQL cannot spell an exploded column's name: stats.attack and
                 -- materials[1] are not legal unquoted identifiers, so the
                 -- exporter rewrites them. Apply the exporter's own rule rather
                 -- than restating it here.
                 if formatConfig.sqlNames then
-                    name = exporter.sqlColumnName(name)
+                    name = exporter.sqlColumnName(name, siblings)
                 end
                 expectedNames[i] = name
             end

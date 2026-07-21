@@ -727,9 +727,33 @@ local function exportTSV(process_files, exportParams, serializer)
                     export_cols[#export_cols].is_last = true
                 end
 
+                -- A joined or transformed header is BUILT here, so it carries
+                -- none of the original header's metadata -- no __source, no
+                -- __dataset. Both are things the SQL prefix needs, so they are
+                -- passed explicitly rather than read back off the header.
+                local hasDataRows = false
+                if useJoinedData or useTransformedData then
+                    for _, row in ipairs(dataRows) do
+                        if type(row) == "table" then
+                            hasDataRows = true
+                            break
+                        end
+                    end
+                else
+                    for i, row in ipairs(tsv) do
+                        if i > 1 and type(row) == "table" then
+                            hasDataRows = true
+                            break
+                        end
+                    end
+                end
+
                 -- Generate file prefix (e.g., CREATE TABLE for SQL)
                 if type(filePrefix) == "function" then
-                    table.insert(cnt, filePrefix(header, export_cols))
+                    table.insert(cnt, filePrefix(header, export_cols, {
+                        hasDataRows = hasDataRows,
+                        sourceName = header.__source or file_name,
+                    }))
                 else
                     table.insert(cnt, filePrefix)
                 end
@@ -903,12 +927,59 @@ end
 --- `stats.attack` and `stats_attack` are the same column.
 --- @param name string The model column name
 --- @return string The SQL-safe column name
-local function sqlColumnName(name)
-    return (name:gsub("[%.%[%]%=]", "_"):gsub("_+$", ""))
+local function sqlColumnName(name, siblings)
+    local base, isValue = name, false
+    if name:sub(-1) == "=" then
+        base = name:sub(1, -2)
+        isValue = true
+    end
+    local sanitized = (base:gsub("[%.%[%]%=]", "_"):gsub("_+$", ""))
+    -- An exploded MAP contributes two model columns per slot -- the key
+    -- `prices[iron]` and the value `prices[iron]=` -- which sanitize to the
+    -- SAME name once the trailing `=`-turned-`_` is stripped. SQLite refuses
+    -- the table outright ("duplicate column name"), so the pair is suffixed
+    -- _k / _v. Both sides are suffixed, not just one: `prices_iron` next to
+    -- `prices_iron_v` reads like two unrelated columns, and a bare trailing
+    -- underscore reads like a typo.
+    --
+    -- Only a genuine PAIR is suffixed. An exploded array element is a lone
+    -- `materials[1]` with no `materials[1]=` beside it, and keeps its plain
+    -- name -- which is why this needs the sibling names, not just its own.
+    if isValue then
+        return sanitized .. "_v"
+    end
+    if siblings and siblings[name .. "="] then
+        return sanitized .. "_k"
+    end
+    return sanitized
+end
+
+--- Builds the sibling-name lookup sqlColumnName needs, from model column names.
+--- @param names table Sequence of model column names
+--- @return table Set of those names
+local function sqlColumnNameSet(names)
+    local set = {}
+    for _, n in ipairs(names) do
+        set[n] = true
+    end
+    return set
+end
+
+-- The same lookup, taken straight from a header's columns.
+local function headerSiblings(header)
+    local names = {}
+    for _, col in ipairs(header) do
+        if col.name then
+            names[#names + 1] = col.name
+        end
+    end
+    return sqlColumnNameSet(names)
 end
 
 -- Converts TSV column model to SQL column string
-local function colToSQL(sql_types, col)
+-- siblings: set of the table's model column names, so an exploded map's
+--   key/value pair can be told apart from a lone array element (sqlColumnName)
+local function colToSQL(sql_types, col, siblings)
     local colType = col.type
     local optional = false
     local key = colType .. ":" .. tostring(optional)
@@ -925,12 +996,12 @@ local function colToSQL(sql_types, col)
         -- int64 must be pinned BEFORE the BASE_TYPES scan below. It extends
         -- "number" now, so that scan would map it to REAL -- silently narrowing
         -- a 64-bit id to a double, the exact loss the type exists to prevent.
-        -- TEXT matches what serializeSQL emits (a quoted digit string), and it
-        -- is what this column was before int64 became a number type.
-        -- Phase 7 of TODO/boxed_int64.md moves BOTH halves together: a BIGINT
-        -- column AND a bare literal. Changing either one alone is a mismatch.
+        -- BIGINT is exact for the whole int64 range (SQLite gives it INTEGER
+        -- affinity, a 64-bit signed integer) and pairs with the bare literal
+        -- serializeSQL emits. Both halves moved together; either alone would be
+        -- a type mismatch against this column.
         elseif (colType == "int64") or extendsOrRestrict(colType, "int64") then
-            sqlType = optional and "TEXT" or "TEXT NOT NULL"
+            sqlType = optional and "BIGINT" or "BIGINT NOT NULL"
         else
             for _, b in ipairs(BASE_TYPES) do
                 if (colType == b) or extendsOrRestrict(colType, b) then
@@ -969,7 +1040,7 @@ local function colToSQL(sql_types, col)
         sql_types[key] = sqlType
         logger:info("Mapping column type " .. col.type .. " to SQL type " .. sqlType)
     end
-    local result = '"' .. sqlColumnName(col.name) .. '" ' .. sqlType
+    local result = '"' .. sqlColumnName(col.name, siblings) .. '" ' .. sqlType
     if col.idx == 1 then
         result = result .. " PRIMARY KEY"
     end
@@ -978,8 +1049,13 @@ end
 
 -- Builds the SQL CREATE TABLE statement followed by the INSERT statement
 -- export_cols: optional array of {col_idx, is_root, root_name, structure} for collapsed column export
-local function createTableInsertSQL(sql_types, header, export_cols)
-    local source_path = splitPath(header.__source or "")
+-- fileInfo: optional {hasDataRows, sourceName} from the export loop. A JOINED or
+--   TRANSFORMED header is built during export and carries neither __source nor
+--   __dataset, so without this Item and Files came out as CREATE TABLE
+--   "unknown" with their INSERT commented out -- files no SQL engine could run.
+local function createTableInsertSQL(sql_types, header, export_cols, fileInfo)
+    local source_path = splitPath(
+        header.__source or (fileInfo and fileInfo.sourceName) or "")
     local file = source_path[#source_path] or "unknown"
     local file_without_ext = file:match("^(.*)%.[^%.]+$") or file
     local tableName = '"' .. file_without_ext .. '"'
@@ -1006,6 +1082,8 @@ local function createTableInsertSQL(sql_types, header, export_cols)
     local sep = "(\n  "
     local is_first = true
 
+    local siblings = headerSiblings(header)
+
     if export_cols then
         -- Use export_cols to determine columns (handles collapsed exploded columns)
         for _, ec in ipairs(export_cols) do
@@ -1018,7 +1096,7 @@ local function createTableInsertSQL(sql_types, header, export_cols)
                 end
                 result = result .. sep .. colDef
             else
-                result = result .. sep .. colToSQL(sql_types, col)
+                result = result .. sep .. colToSQL(sql_types, col, siblings)
             end
             sep = ",\n  "
             is_first = false
@@ -1026,19 +1104,32 @@ local function createTableInsertSQL(sql_types, header, export_cols)
     else
         -- Original behavior: iterate all columns
         for _, col in ipairs(header) do
-            result = result .. sep .. colToSQL(sql_types, col)
+            result = result .. sep .. colToSQL(sql_types, col, siblings)
             sep = ",\n  "
         end
     end
 
     result = result .. ")"
-    local dataset = header.__dataset or {}
-    local rows = #dataset
-    local not_empty = (rows > 1)
-    if not_empty then
+    -- Does this file have any DATA row (row 1 is the header)?
+    --
+    -- Scanned with pairs, not # or ipairs: a dataset with a stripped comment
+    -- row is HOLED, and both of those stop at the first hole. MEASURED: Item
+    -- and Files -- the two tutorial files with comment rows -- were declared
+    -- empty despite having data, so the INSERT was emitted as a COMMENT and
+    -- every data row followed it as a bare "(...)" tuple. The result was not
+    -- valid SQL at all ("near \"(\": syntax error" from sqlite3), and nothing
+    -- caught it: our own parseSQLContent finds the "VALUES" text without
+    -- noticing it sits inside a comment, so the round-trip test passed.
+    local not_empty
+    if fileInfo ~= nil then
+        not_empty = fileInfo.hasDataRows
+    else
+        -- No caller-supplied info (direct callers, and the specs): fall back to
+        -- the header's own dataset.
+        local dataset = header.__dataset or {}
         not_empty = false
-        for i, row in ipairs(dataset) do
-            if i > 1 and type(row) == "table" then
+        for i, row in pairs(dataset) do
+            if type(i) == "number" and i > 1 and type(row) == "table" then
                 not_empty = true
                 break
             end
@@ -1069,7 +1160,23 @@ local function exportSQL(process_files, exportParams)
         ["boolean"] = "SMALLINT", -- BOOLEAN is not available everywhere, so use SMALLINT with values 0/1
         ["table"] = "TEXT", -- tables are encoded as JSON, and therefore become strings
     }
-    copy.filePrefix = function(header, export_cols) return createTableInsertSQL(sql_types, header, export_cols) end
+    -- Whether the file being written has any data row, decided ONCE by the
+    -- prefix and reused by the header-row serializer below. They must agree:
+    -- the column list belongs to the INSERT, so emitting one without the other
+    -- is what produced the broken files. Set per file, and the export loop
+    -- writes the prefix immediately before that file's header row.
+    local hasDataRows = true
+    -- Captured for the header row below, so the INSERT's column list is spelled
+    -- by the SAME rule as the CREATE TABLE's. They used to disagree: the DDL
+    -- sanitized dots, brackets and '=', while the column list replaced only
+    -- dots, so an exploded column was declared as "materials_1" and then
+    -- inserted into as "materials[1]" -- a column that does not exist.
+    local siblings = {}
+    copy.filePrefix = function(header, export_cols, fileInfo)
+        hasDataRows = (fileInfo == nil) or (fileInfo.hasDataRows ~= false)
+        siblings = headerSiblings(header)
+        return createTableInsertSQL(sql_types, header, export_cols, fileInfo)
+    end
     copy.fileSuffix = "\n;\n"
     copy.linePrefix = "("
     copy.lineSuffix = ")"
@@ -1080,14 +1187,16 @@ local function exportSQL(process_files, exportParams)
     assert(type(tableSerializer) == "function", "tableSerializer must be a function")
     local function ser(rowIdx, col, value, ec)
         if rowIdx == 1 then
-            local header = col.header
-            local rows = #header.__dataset
-            if rows == 1 then
+            -- Header-only file: the INSERT was not emitted, so neither is its
+            -- column list. Decided by filePrefix above, NOT from
+            -- header.__dataset -- a joined/transformed header has none.
+            if not hasDataRows then
                 return ""
             end
-            -- Use ec.root_name for collapsed columns, otherwise col.name
-            -- Replace dots with underscores for SQL-safe column names
-            local colName = (ec and ec.is_root) and ec.root_name or col.name:gsub("%.", "_")
+            -- Use ec.root_name for collapsed columns, otherwise the exporter's
+            -- own SQL name rule -- the same one the CREATE TABLE above used
+            local colName = (ec and ec.is_root) and ec.root_name
+                or sqlColumnName(col.name, siblings)
             local result = '"' .. colName .. '"'
             -- Check if this is the last column (ec.is_last is set by export loop)
             if ec and ec.is_last then
@@ -1599,6 +1708,7 @@ local API = {
     computeExportPath = computeExportPath,
     exportedShape = exportedShape,
     sqlColumnName = sqlColumnName,
+    sqlColumnNameSet = sqlColumnNameSet,
     exportJSON = exportJSON,
     exportJSONTSV = exportJSONTSV,
     exportLua = exportLua,

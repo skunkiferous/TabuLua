@@ -517,6 +517,71 @@ INSERT INTO "test" ("name","bitmap","raw") VALUES --
             assert.are.same({alpha = 1, beta = 2}, result[2][2])
         end)
 
+        it("should CAST int64 columns to TEXT in the SQLite query", function()
+            -- lsqlite3 hands a BIGINT back as a Lua NUMBER, which on LuaJIT is
+            -- a double: an id past 2^53 would be rounded on the way OUT of the
+            -- database, after being stored exactly. Neither environment this
+            -- project is developed in has lsqlite3, so the query builder is
+            -- the part of that path that can still be tested here.
+            local columns = {"name", "catalogId", "price"}
+            local types = {name = "name", catalogId = "int64", price = "gold"}
+            assert.equals(
+                'SELECT "name", CAST("catalogId" AS TEXT) AS "catalogId", '
+                    .. '"price" FROM "Item"',
+                importer.buildInt64SafeSelect("Item", columns, types))
+            -- An optional int64 is still an int64
+            assert.equals(
+                'SELECT CAST("catalogId" AS TEXT) AS "catalogId" FROM "Item"',
+                importer.buildInt64SafeSelect("Item", {"catalogId"},
+                    {catalogId = "int64|nil"}))
+            -- A file with no type line (an older export) keeps the plain query
+            assert.equals('SELECT * FROM "Item"',
+                importer.buildInt64SafeSelect("Item", columns, nil))
+        end)
+
+        it("should read a BIGINT column from its digits, not tonumber",
+            function()
+            -- tonumber("9007199254740993") is ALREADY rounded on LuaJIT, where
+            -- every number is a double, so the box would be built from a value
+            -- the file never contained. The digits are read as text instead,
+            -- which is exact on every runtime.
+            local int64 = require("util.int64")
+            local sql = table.concat({
+                '-- tabulua-types: {"name":"name","catalogId":"int64"}',
+                'CREATE TABLE "test" (',
+                '  "name" TEXT NOT NULL PRIMARY KEY,',
+                '  "catalogId" BIGINT NOT NULL);',
+                'INSERT INTO "test" ("name","catalogId") VALUES --',
+                "('ironSword',9007199254740993),",
+                "('oakShield',-9223372036854775808)",
+                ";",
+            }, "\n")
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.is_true(int64.is(result[2][2]))
+            assert.equals("9007199254740993", int64.tostring(result[2][2]))
+            assert.equals("-9223372036854775808", int64.tostring(result[3][2]))
+        end)
+
+        it("should leave a plain integer column a number", function()
+            -- Only a column the type line CALLS an int64 is boxed. Without
+            -- that, a BIGINT-looking literal is just a number, as before.
+            local int64 = require("util.int64")
+            local sql = table.concat({
+                '-- tabulua-types: {"name":"name","price":"gold"}',
+                'CREATE TABLE "test" (',
+                '  "name" TEXT NOT NULL PRIMARY KEY,',
+                '  "price" INTEGER NOT NULL);',
+                'INSERT INTO "test" ("name","price") VALUES --',
+                "('ironSword',150)",
+                ";",
+            }, "\n")
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.is_false(int64.is(result[2][2]))
+            assert.equals(150, result[2][2])
+        end)
+
         it("should decode an XML table cell, not leave it as text", function()
             -- REGRESSION: deserializeXML used to return (value, POSITION, err),
             -- so passed straight in as the table deserializer the position was

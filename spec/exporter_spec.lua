@@ -9,11 +9,19 @@ local lfs = require("lfs")
 -- Import the functions we'll use from busted
 local describe = busted.describe
 local it = busted.it
+local pending = busted.pending
 local before_each = busted.before_each
 local after_each = busted.after_each
 
 local exporter = require("serde.exporter")
 local file_util = require("infra.file_util")
+
+-- lsqlite3 lets us check that an exported .sql actually RUNS in a real engine,
+-- not merely that our own parser reads it back. It is absent in the dev
+-- environments (only the LuaJIT Docker image installs it), so the SQL-execution
+-- tests below become `pending` there rather than failing.
+local HAS_SQLITE, sqlite3 = pcall(require, "lsqlite3")
+local it_sqlite = HAS_SQLITE and it or pending
 
 -- Simple path join function
 local function path_join(...)
@@ -203,6 +211,37 @@ describe("exporter", function()
         end)
     end)
 
+    describe("sqlColumnName", function()
+        it("should keep a plain or exploded-array name unchanged", function()
+            assert.equals("name", exporter.sqlColumnName("name"))
+            -- Dots and brackets become underscores, trailing ones stripped
+            assert.equals("stats_attack", exporter.sqlColumnName("stats.attack"))
+            -- A lone array element has no '=' sibling, so no _k/_v suffix
+            local set = exporter.sqlColumnNameSet({"materials[1]"})
+            assert.equals("materials_1",
+                exporter.sqlColumnName("materials[1]", set))
+        end)
+
+        it("should suffix an exploded map's key/value pair _k/_v", function()
+            -- prices[iron] (key) and prices[iron]= (value) both sanitize to
+            -- prices_iron -- SQLite rejects the duplicate. Both sides are
+            -- suffixed so neither reads like a bare or typo'd name.
+            local set = exporter.sqlColumnNameSet({"prices[iron]", "prices[iron]="})
+            assert.equals("prices_iron_k",
+                exporter.sqlColumnName("prices[iron]", set))
+            assert.equals("prices_iron_v",
+                exporter.sqlColumnName("prices[iron]=", set))
+            -- The pair is now distinct...
+            assert.are_not.equal(
+                exporter.sqlColumnName("prices[iron]", set),
+                exporter.sqlColumnName("prices[iron]=", set))
+            -- ...and a value column is _v even if its own set is not supplied,
+            -- because the trailing '=' is intrinsic to it
+            assert.equals("prices_iron_v",
+                exporter.sqlColumnName("prices[iron]="))
+        end)
+    end)
+
     describe("exportLuaTSV", function()
         it("should export files in Lua TSV format", function()
             local process_files = createProcessFiles(temp_dir)
@@ -378,6 +417,76 @@ describe("exporter", function()
             assert.is_not_nil(content)
             -- Should contain CREATE TABLE statement
             assert.is_truthy(content:match("CREATE TABLE"))
+        end)
+
+        it("should emit a real INSERT when the header has no metadata",
+            function()
+            -- REGRESSION, and a silent one. A JOINED or TRANSFORMED header is
+            -- built during export and carries neither __source nor __dataset,
+            -- which is where the table name and the "has any rows?" test used
+            -- to come from. Item and Files (the two tutorial files that are
+            -- joined/transformed) therefore exported as CREATE TABLE "unknown"
+            -- with the INSERT emitted as a COMMENT -- every data row following
+            -- it as a bare "(...)" tuple. sqlite3 rejects that outright
+            -- ("near \"(\": syntax error"), but our own round-trip PASSED,
+            -- because parseSQLContent finds the "VALUES" text without noticing
+            -- it sits inside a comment.
+            local header = {
+                {name = "id", type = "string", idx = 1, parsed = "id"},
+                {name = "value", type = "integer", idx = 2, parsed = "value"},
+            }
+            -- Deliberately NO __source and NO __dataset, as a joined header
+            for _, col in ipairs(header) do col.header = header end
+            local tsv = {header, {{parsed = "item1"}, {parsed = 42}}}
+
+            local success = exporter.exportSQL({
+                tsv_files = {["joined.tsv"] = tsv},
+                raw_files = {["joined.tsv"] = "id:string\tvalue:integer"},
+            }, {exportDir = temp_dir})
+            assert.is_true(success)
+
+            local content = file_util.readFile(path_join(temp_dir, "joined.sql"))
+            assert.is_truthy(content:match('CREATE TABLE "joined"'))
+            assert.is_truthy(content:match('INSERT INTO "joined"'))
+            -- The INSERT must not be commented out, and the DDL must be
+            -- terminated -- the two halves of what made the file unrunnable
+            assert.is_nil(content:match("\n%-%-%("))
+            assert.is_truthy(content:match("%);\nINSERT INTO"))
+        end)
+
+        it_sqlite("should emit SQL a real engine can execute", function()
+            -- The two bugs above BOTH round-tripped through our own
+            -- parseSQLContent while being un-runnable in SQLite: a commented-out
+            -- INSERT, and an exploded map's key/value columns colliding on one
+            -- name. Only a real engine catches that class, which is why the
+            -- LuaJIT image now carries lsqlite3.
+            local header = {
+                {name = "name", type = "string", idx = 1, parsed = "name"},
+                -- an exploded map: key + value, the collision case
+                {name = "prices[iron]", type = "string", idx = 2,
+                 parsed = "prices[iron]"},
+                {name = "prices[iron]=", type = "integer", idx = 3,
+                 parsed = "prices[iron]="},
+            }
+            header.__source = path_join(temp_dir, "goods.tsv")
+            for _, col in ipairs(header) do col.header = header end
+            local tsv = {header,
+                {{parsed = "sword"}, {parsed = "ore"}, {parsed = 12}}}
+            header.__dataset = tsv
+
+            assert.is_true(exporter.exportSQL({
+                tsv_files = {["goods.tsv"] = tsv},
+                raw_files = {["goods.tsv"] =
+                    "name:string\tprices[iron]:string\tprices[iron]=:integer"},
+            }, {exportDir = temp_dir}))
+
+            local sql = file_util.readFile(path_join(temp_dir, "goods.sql"))
+            local db = sqlite3.open_memory()
+            local rc = db:exec(sql)
+            local msg = db:errmsg()
+            db:close()
+            assert.equals(sqlite3.OK, rc,
+                "sqlite rejected the export: " .. tostring(msg))
         end)
 
         it("should map union of basic types to TEXT column", function()

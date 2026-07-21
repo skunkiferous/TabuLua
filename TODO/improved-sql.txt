@@ -7,3 +7,15 @@ Also, I was wondering something, and decided that loading the exported data in s
 I'm also wondering if we should support specific DB flavors; for example if we specified sqlite or postgres, we could by default add support for the array plugin/extension (sqlite), and import array-style data of basic types natively, instead of as JSON/...
 
 Alternatively, while generating "generic SQL", we could create separate tables, for columns that are either arrays, or maps with basic types keys. That would reduce the amount of JSOM/... that needs to be parsed.
+
+---
+
+Note (added while implementing boxed_int64.md Phase 5e): an int64 column now exports as
+BIGINT with a bare literal, e.g. ('ironSword',9007199254740993,...). That is exact in the
+file and exact once stored in SQLite. The hazard is on the way OUT: on LuaJIT every Lua
+number is a double, so reading such a column through tonumber -- or through any SQL
+binding that returns a Lua number, such as lsqlite3 -- silently rounds anything past 2^53
+(9007199254740993 comes back as ...992, with no error). Read the digits as TEXT instead:
+CAST(col AS TEXT), or parse the literal's characters. This matters for the "load the
+exported data in sqlite" idea above, and for any external tool doing the same.
+See TODO/export_format_reimport.md (Scope) for the longer version.
