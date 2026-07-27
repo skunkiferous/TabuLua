@@ -57,4 +57,5 @@ instead, which is why this file exists.
 
 | File | Summary |
 | --- | --- |
+| [sql_input_round_trip.md](sql_input_round_trip.md) | Make `.sql` an input format (`sql:json-typed` / `:json-natural` / `:xml` / `:mpk` id-selected transcoders) and round-trip it in the reformatter, plus `lsqlite3` as an optional, explicitly-selected second engine. Reverses the "SQL won't be an input" ruling in export_format_reimport.md — the int64/LuaJIT blocker that motivated it is solved. Text parser stays normative; a differential parity spec enforces "loads the same with or without the rock". |
 | [improved-sql.txt](improved-sql.txt) | Brainstorm on improving SQL export: foreign-key constraints (would need a defined file-load order), creating a whole DB from the file set, DB-flavour-specific output (sqlite/postgres array extensions to import array data natively), and emitting separate tables for array / basic-keyed-map columns to reduce embedded JSON. |
