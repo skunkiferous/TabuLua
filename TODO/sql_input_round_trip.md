@@ -2,7 +2,16 @@
 
 ## Status
 
-**PLANNED — not started (2026-07-24; retrimmed 2026-07-27).**
+**IN PROGRESS (2026-07-24; retrimmed 2026-07-27).**
+
+- **Phase 0 — DONE (2026-07-28), pending user review/commit.** `serde/sql_schema.lua`
+  extracted; verified a pure move by exporting the tutorial with the HEAD exporter and with
+  the split one and diffing: **byte-identical** across all 30 tables plus `schema.sql`.
+  Full suite green (3376/3376). `MODULES.md` carries the new module.
+- **Correction to Phase 1's plan text:** there are no *committed* `.sql` goldens to churn —
+  `exported/` is `.gitignore`d (line 9), so those 31 files are local build output. The
+  Phase 1 diff-review is therefore a manual before/after regeneration (the technique Phase 0
+  used: run the old code from `git show HEAD:…` on a prepended `LUA_PATH`), not a `git diff`.
 
 ## What we want
 

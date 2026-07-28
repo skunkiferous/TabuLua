@@ -11,7 +11,7 @@ The engine's library modules live in topical sub-directories and are required by
 | `util/` | Leaf primitives (no/few deps) | table_utils, read_only, string_utils, sparse_sequence, comparators, predicates, table_parsing, number_identifiers, base64, regex_utils, glob, global_reset |
 | `infra/` | Cross-cutting infrastructure | named_logger, error_reporting, file_util, sandbox_env |
 | `tsv/` | Core TSV data model | raw_tsv, raw_eav, tsv_model, exploded_columns, file_joining, data_set |
-| `serde/` | Serialize ↔ deserialize / import / export | serialization, deserialization, importer, round_trip, schema_validator, exporter, svg_render |
+| `serde/` | Serialize ↔ deserialize / import / export | serialization, deserialization, importer, round_trip, schema_validator, exporter, sql_schema, svg_render |
 | `content/` | Pre-parse content pipeline + transcoders | content_pipeline, builtin_content_stages, compression, archive_formats, lua_cog, cog_discovery, doc_generator, eav_transcoder, json_transcoders, xml_transcoder, tsv_transcoders, lua_transcoder |
 | `wiring/` | Type wiring, validation, processors | type_wiring, builtin_wiring, graph_helpers, graph_wiring, graph_layout, validator_executor, validator_helpers, processor_executor |
 | `overrides/` | Mod-override engine | patch_executor, patch_lineage, schema_overlay |
@@ -67,7 +67,8 @@ The engine's library modules live in topical sub-directories and are required by
 | [importer](#importer) | File import system for various formats | deserialization, file_util, named_logger, read_only, string_utils |
 | [round_trip](#round_trip) | Round-trip serialization/deserialization testing | deserialization, read_only, serialization |
 | [schema_validator](#schema_validator) | Validates typed JSON and XML export formats | read_only |
-| [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, tsv_model |
+| [exporter](#exporter) | Exports parsed data to multiple formats | base64, error_reporting, exploded_columns, file_joining, file_util, named_logger, parsers, predicates, raw_tsv, read_only, serialization, sql_schema, tsv_model |
+| [sql_schema](#sql_schema) | The DDL half of the SQL format (column-name sanitizer, type mapping, CREATE TABLE/INSERT preamble), as a leaf module both the exporter and the `.sql` reader can require | file_util, named_logger, parsers, read_only |
 | [svg_render](#svg_render) | Renders a laid-out graph (from graph_layout) to a self-contained, deterministic SVG string; knows nothing about graph families or the engine | read_only |
 
 **`content/`**
@@ -272,7 +273,7 @@ Exports parsed TSV data to multiple formats including JSON, Lua tables, XML, SQL
 
 `exportSVG` (`--file=svg`, `TODO/graph_svg_export.md`) is the one *selective* exporter: it walks the processed files, and for each one whose type belongs to a graph node family (detected via [graph_wiring](#graph_wiring) `detectRole` over `joinMeta.lcFn2Type` / `extends`) it builds the directed adjacency from the file's `graphChildren`, lays it out with [graph_layout](#graph_layout), renders it with [svg_render](#svg_render), and writes `svg-svg/<name>.svg` (mirroring the source layout). Non-graph files are skipped with an info log and a summary count — a graph-only picture of a non-graph file is meaningless. Directed families (`graph_node` / `tree_node`) draw with arrowheads and root/leaf tinting; undirected (`basic_graph_node`) files are laid out via `graph_layout.bfsLayering` and drawn without arrowheads.
 
-**Dependencies:** base64, error_reporting, exploded_columns, file_joining, file_util, graph_layout, graph_wiring, named_logger, parsers, predicates, raw_tsv, read_only, serialization, svg_render, tsv_model
+**Dependencies:** base64, error_reporting, exploded_columns, file_joining, file_util, graph_layout, graph_wiring, named_logger, parsers, predicates, raw_tsv, read_only, serialization, sql_schema, svg_render, tsv_model
 
 ---
 
@@ -399,6 +400,17 @@ Four stages: **layer assignment** (longest-path from the roots, via Kahn relaxat
 For undirected input (which has no inherent layering), `bfsLayering(nodes, neighbours)` synthesizes one: a deterministic BFS from the smallest node name sets each node's layer to its BFS distance, disconnected components are stacked below one another (ordered by smallest member), and each undirected edge is oriented lower-layer → higher-layer exactly once. Feed its result back through `layout` with `opts.layers` (an override that skips the longest-path ranking) to reuse the whole crossing-reduction / coordinate machinery — the renderer then draws the edges without arrowheads.
 
 **Dependencies:** read_only
+
+---
+
+### sql_schema
+**File:** [sql_schema.lua](../serde/sql_schema.lua)
+
+The DDL half of the SQL format: everything that maps the TabuLua column model onto SQL *declarations*, as opposed to the values, which [serialization](#serialization) writes. `sqlColumnName` sanitizes a model column name into a legal SQL one (`stats.attack` → `stats_attack`, `materials[1]` → `materials_1`), suffixing an exploded map's key/value pair `_k` / `_v` — the pair sanitizes to the same name otherwise, which SQLite refuses outright; `sqlColumnNameSet` / `headerSiblings` build the sibling lookup that tells such a pair from a lone array element. `colToSQL` maps a column type to its SQL type through `newTypeCache()`'s seeded, per-export cache (pinning `int64` to `BIGINT` *before* the base-type scan, which would otherwise narrow it to `REAL`), and `createTableInsertSQL` assembles the `CREATE TABLE` + `INSERT INTO` preamble each exported `.sql` file starts with.
+
+It is a deliberate **leaf**, extracted from [exporter](#exporter) (`TODO/sql_input_round_trip.md` Phase 0) because `.sql` is becoming an *input* format too: a content-pipeline transcoder needs these same rules to *read* a file, and since the exporter requires [content_pipeline](#content_pipeline), a transcoder requiring the exporter back would risk a partially-initialized module. Nothing here requires the exporter, the importer, or the content pipeline — keep it that way.
+
+**Dependencies:** file_util, named_logger, parsers, read_only
 
 ---
 
