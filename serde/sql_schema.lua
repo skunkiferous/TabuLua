@@ -41,8 +41,67 @@ local parsers = require("parsers")
 local extendsOrRestrict = parsers.extendsOrRestrict
 local unionTypes = parsers.unionTypes
 
+-- Only the two SQL literal writers are needed here (every metadata value is a
+-- string, a small integer or NULL); escaping lives in ONE place, with the data
+-- rows, so a name or a type_spec containing a quote is escaped identically.
+local serialization = require("serde.serialization")
+local serializeSQL = serialization.serializeSQL
+local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
+
 -- Lua base types
 local BASE_TYPES = {"boolean", "integer", "number", "string", "table"}
+
+-- Compound extension the model treats as ONE extension (see modelDatasetName).
+local TRANSPOSED_EXT = ".transposed.tsv"
+
+--- The embedded metadata table: name, sentinel, and version marker.
+---
+--- The wide-TSV header (`name:type[:default]`) cannot be rebuilt from the DDL
+--- alone -- column names are sanitized (`stats.attack` -> `stats_attack`) and
+--- SQL types are coarser than ours (`BIGINT` is `integer` AND `int64`; `TEXT`
+--- is `string`, `table`, unions, ...) -- so the schema has to ride in the file.
+--- A `--` comment would round-trip a FILE, but it is a lexeme every engine
+--- discards on load, so the metadata is a real table the database keeps and
+--- re-dumps. See TODO/sql_input_round_trip.md.
+local METADATA_TABLE = "tabulua_schema"
+
+--- Row 0 (the table-info row) carries sentinels rather than NULLs in
+--- column_name / sql_name / type, so every row stays fully populated and the
+--- primary key stays total. Angle brackets never appear in exported names.
+local TABLE_ROW_SENTINEL = "<TABLE>"
+
+--- Provenance, NOT a gate: TabuLua's own major.minor, as a STRING compared
+--- component-wise ("0.15" vs "0.5" compares wrong as a float). Compatibility is
+--- enforced structurally -- does the file carry the shape the reader needs? --
+--- and this only sharpens the message when that fails.
+local SCHEMA_VERSION = tostring(VERSION.major) .. "." .. tostring(VERSION.minor)
+
+--- Upper bound on one `attributes` cell, enforced on READ.
+---
+--- The bag is a preserved payload, not a queryable field, and an unbounded one
+--- in a file the reader does not control is an invitation. Generous for
+--- descriptive metadata (labels, units, provenance) and nowhere near what a
+--- data column carries.
+local MAX_ATTRIBUTES_BYTES = 64 * 1024
+
+--- The metadata table's DDL, emitted byte-identically at the top of EVERY
+--- exported .sql. `IF NOT EXISTS` makes it a no-op in every file after the
+--- first, so a whole export concatenated into one database creates it once and
+--- each file then contributes its own rows. Every construct here works on
+--- SQLite, MySQL and PostgreSQL (9.1+).
+local METADATA_DDL = table.concat({
+    'CREATE TABLE IF NOT EXISTS "' .. METADATA_TABLE .. '" (',
+    '  "table_name"  TEXT    NOT NULL,',
+    '  "column_name" TEXT    NOT NULL,   -- model name (stats.attack)',
+    '  "sql_name"    TEXT    NOT NULL,   -- physical column in the data table',
+    '  "position"    INTEGER NOT NULL,   -- 0 = table-info row; 1..N = column order',
+    '  "type"        TEXT    NOT NULL,   -- type_spec (int64, {integer}, foo|nil)',
+    '  "default"     TEXT,               -- NULL when the column had none',
+    '  "attributes"  TEXT,               -- NULL, or a JSON object',
+    '  PRIMARY KEY ("table_name","column_name"),',
+    '  UNIQUE      ("table_name","position"),',
+    '  UNIQUE      ("table_name","sql_name"));',
+}, "\n")
 
 --- A fresh "our types" -> SQL types cache, seeded with the base mappings.
 ---
@@ -203,6 +262,150 @@ local function sqlTableName(header, fileInfo)
     return file:match("^(.*)%.[^%.]+$") or file
 end
 
+--- The MODEL's name for this dataset, which can differ from the SQL table name.
+---
+--- `Manifest.transposed.tsv` is one dataset called `Manifest`, but its SQL
+--- table is `Manifest.transposed` (sqlTableName strips one extension, and the
+--- table must be named after the file it round-trips to). The model peels
+--- `.transposed.tsv` as a single compound extension -- the same rule
+--- loader/files_desc.lua applies when it checks a typeName against its file
+--- name -- so the two names legitimately diverge, and the reader cannot
+--- recompute one from the other. Hence it rides in the file, on row 0.
+--- @param header table The header, whose __source is preferred
+--- @param fileInfo table|nil {hasDataRows, sourceName} from the export loop
+--- @return string The model dataset name
+local function modelDatasetName(header, fileInfo)
+    local source_path = splitPath(
+        header.__source or (fileInfo and fileInfo.sourceName) or "")
+    local file = source_path[#source_path] or "unknown"
+    if file:sub(-#TRANSPOSED_EXT) == TRANSPOSED_EXT then
+        return file:sub(1, -#TRANSPOSED_EXT - 1)
+    end
+    return file:match("^(.*)%.[^%.]+$") or file
+end
+
+--- The columns this file's data table actually has, described once.
+---
+--- The DDL and the tabulua_schema rows are BOTH built from this list, so they
+--- cannot drift: "the metadata describes exactly the physical columns" is the
+--- invariant the reader checks, and building the two from separate loops is
+--- how you break it. (The retired `-- tabulua-types:` comment did exactly
+--- that -- it walked the whole header, so it listed comment columns the
+--- CREATE TABLE had already dropped.)
+---
+--- @param header table The model header
+--- @param export_cols table|nil Export loop's column selection; nil = all
+--- @return table Sequence of {col, name, sqlName, typeSpec, default, isRoot}
+local function exportedColumns(header, export_cols)
+    local siblings = headerSiblings(header)
+    local entries = {}
+    local function add(col, name, sqlName, typeSpec, isRoot)
+        entries[#entries + 1] = {
+            col = col,
+            name = name,
+            sqlName = sqlName,
+            -- NOT NULL in the metadata table, so it must never be empty.
+            -- type_spec is the DECLARED spec (`Rarity`, `{name}`, `http|nil`),
+            -- which is what the header line has to be rebuilt from; col.type is
+            -- the resolved fallback for a synthetic header that carries no
+            -- spec.
+            typeSpec = typeSpec or col and (col.type_spec or col.type) or "string",
+            default = col and col.default_expr or nil,
+            isRoot = isRoot or false,
+        }
+    end
+    if export_cols then
+        for _, ec in ipairs(export_cols) do
+            local col = header[ec.col_idx]
+            if ec.is_root then
+                -- A collapsed exploded group (--collapse-exploded): one TEXT
+                -- column holding the whole composite, named for the root. Its
+                -- spec is the one the collapsed TSV header would carry.
+                add(col, ec.root_name, ec.root_name,
+                    ec.structure and ec.structure.type_spec, true)
+            else
+                add(col, col.name, sqlColumnName(col.name, siblings))
+            end
+        end
+    else
+        for _, col in ipairs(header) do
+            add(col, col.name, sqlColumnName(col.name, siblings))
+        end
+    end
+    return entries
+end
+
+--- The self-describing metadata block that opens every exported .sql file.
+---
+--- Self-contained per file (importing one table means reading one file) AND
+--- non-conflicting when concatenated (loading a whole export into one database
+--- creates the table once, and each file contributes its own rows). The
+--- DELETE-before-INSERT is what makes a reload idempotent, portably -- there is
+--- no `INSERT OR REPLACE` / `ON CONFLICT` spelling common to SQLite, MySQL and
+--- PostgreSQL.
+--- @param tableName string The SQL table name these rows describe
+--- @param modelName string The model's own name for the dataset
+--- @param entries table exportedColumns() output
+--- @return string The block, newline-terminated
+local function metadataSQL(tableName, modelName, entries)
+    local rows = {}
+    -- Was this written with --collapse-exploded? Each exploded group is one TEXT
+    -- column holding the whole composite, so the file describes a DIFFERENT
+    -- shape from the source TSV it came from -- one `stats` column, not
+    -- `stats.attack` and `stats.defense`. The metadata describes that collapsed
+    -- shape accurately (it is built from the same list as the DDL), so nothing
+    -- about the file is self-contradicting and a reader cannot tell from the
+    -- counts. It is therefore stated outright, and the sql:* transcoders refuse
+    -- on it rather than quietly loading a model whose header is spelled
+    -- differently from the author's source (TODO/sql_input_round_trip.md OQ1).
+    local collapsed = nil
+    for _, e in ipairs(entries) do
+        if e.isRoot then
+            collapsed = true
+            break
+        end
+    end
+    -- Row 0 is the table itself: sentinels in the three NOT NULL name/type
+    -- columns, and the only attributes v1 defines -- the version marker and the
+    -- model name. The bag is TEXT holding JSON by convention, never a JSON
+    -- column type (SQLite has none), and is written with the NATURAL JSON
+    -- serializer whatever --data the export uses: the metadata must not change
+    -- shape with the cell encoding, or the reader would need to know which one
+    -- wrote it. That serializer sorts its keys, so the bag is deterministic.
+    rows[1] = "  (" .. table.concat({
+        serializeSQL(tableName),
+        serializeSQL(TABLE_ROW_SENTINEL),
+        serializeSQL(TABLE_ROW_SENTINEL),
+        "0",
+        serializeSQL(TABLE_ROW_SENTINEL),
+        "NULL",
+        serializeSQL(serializeTableNaturalJSON({
+            tabulua = {version = SCHEMA_VERSION, model_name = modelName,
+                collapsed = collapsed},
+        }, false)),
+    }, ",") .. ")"
+    for i, e in ipairs(entries) do
+        rows[#rows + 1] = "  (" .. table.concat({
+            serializeSQL(tableName),
+            serializeSQL(e.name),
+            serializeSQL(e.sqlName),
+            tostring(i),
+            serializeSQL(e.typeSpec),
+            serializeSQL(e.default),
+            -- v1 defines no per-column attribute. A key is added with its first
+            -- real use case, bumping the minor version.
+            "NULL",
+        }, ",") .. ")"
+    end
+    return table.concat({
+        METADATA_DDL,
+        'DELETE FROM "' .. METADATA_TABLE .. '" WHERE "table_name" = '
+            .. serializeSQL(tableName) .. ";",
+        'INSERT INTO "' .. METADATA_TABLE .. '" VALUES',
+        table.concat(rows, ",\n") .. ";",
+    }, "\n") .. "\n"
+end
+
 -- Builds the SQL CREATE TABLE statement followed by the INSERT statement
 -- export_cols: optional array of {col_idx, is_root, root_name, structure} for collapsed column export
 -- fileInfo: optional {hasDataRows, sourceName} from the export loop. A JOINED or
@@ -210,55 +413,35 @@ end
 --   __dataset, so without this Item and Files came out as CREATE TABLE
 --   "unknown" with their INSERT commented out -- files no SQL engine could run.
 local function createTableInsertSQL(sql_types, header, export_cols, fileInfo)
-    local tableName = '"' .. sqlTableName(header, fileInfo) .. '"'
-    -- Self-describing type line, so the file can be re-imported on its own.
-    --
-    -- SQL declares a bytes column BLOB and says nothing more, but the model
-    -- value behind it is TEXT: hex digits for hexbytes, base64 for
-    -- base64bytes. Those are indistinguishable from the BLOB alone, so without
-    -- this the importer cannot reconstruct the original value. A `--` comment
-    -- is ignored by every SQL engine, and a file lacking it still imports (the
-    -- importer falls back), so old exports keep working.
-    local typeParts = {}
-    for _, col in ipairs(header) do
-        if col.name and col.type_spec then
-            typeParts[#typeParts + 1] = string.format("%q:%q",
-                col.name, col.type_spec)
-        end
-    end
-    local result = ""
-    if #typeParts > 0 then
-        result = "-- tabulua-types: {" .. table.concat(typeParts, ",") .. "}\n"
-    end
+    local bareName = sqlTableName(header, fileInfo)
+    local tableName = '"' .. bareName .. '"'
+    local siblings = headerSiblings(header)
+    local entries = exportedColumns(header, export_cols)
+
+    -- The file describes itself in a real TABLE, not a `--` comment. The
+    -- comment form (`-- tabulua-types: {...}`) round-tripped a FILE but was
+    -- discarded the moment the file was loaded into a database, carried no
+    -- default and no SQL-name mapping, and -- because it walked the whole
+    -- header rather than the exported columns -- listed comment columns the
+    -- CREATE TABLE had already dropped.
+    local result = metadataSQL(bareName, modelDatasetName(header, fileInfo),
+        entries)
+
     result = result .. "CREATE TABLE " .. tableName .. " "
     local sep = "(\n  "
-    local is_first = true
 
-    local siblings = headerSiblings(header)
-
-    if export_cols then
-        -- Use export_cols to determine columns (handles collapsed exploded columns)
-        for _, ec in ipairs(export_cols) do
-            local col = header[ec.col_idx]
-            if ec.is_root then
-                -- Collapsed column: use root_name and TEXT type (serialized JSON/XML/etc)
-                local colDef = '"' .. ec.root_name .. '" TEXT NOT NULL'
-                if is_first then
-                    colDef = colDef .. " PRIMARY KEY"
-                end
-                result = result .. sep .. colDef
-            else
-                result = result .. sep .. colToSQL(sql_types, col, siblings)
+    for i, e in ipairs(entries) do
+        if e.isRoot then
+            -- Collapsed column: use root_name and TEXT type (serialized JSON/XML/etc)
+            local colDef = '"' .. e.sqlName .. '" TEXT NOT NULL'
+            if i == 1 then
+                colDef = colDef .. " PRIMARY KEY"
             end
-            sep = ",\n  "
-            is_first = false
+            result = result .. sep .. colDef
+        else
+            result = result .. sep .. colToSQL(sql_types, e.col, siblings)
         end
-    else
-        -- Original behavior: iterate all columns
-        for _, col in ipairs(header) do
-            result = result .. sep .. colToSQL(sql_types, col, siblings)
-            sep = ",\n  "
-        end
+        sep = ",\n  "
     end
 
     result = result .. ")"
@@ -312,7 +495,16 @@ local API = {
     headerSiblings = headerSiblings,
     colToSQL = colToSQL,
     sqlTableName = sqlTableName,
+    modelDatasetName = modelDatasetName,
+    exportedColumns = exportedColumns,
+    metadataSQL = metadataSQL,
     createTableInsertSQL = createTableInsertSQL,
+    -- Shared with the READER (serde/importer.lua), which must spell the table
+    -- name, the row-0 sentinel and the version marker exactly as the writer did
+    METADATA_TABLE = METADATA_TABLE,
+    TABLE_ROW_SENTINEL = TABLE_ROW_SENTINEL,
+    SCHEMA_VERSION = SCHEMA_VERSION,
+    MAX_ATTRIBUTES_BYTES = MAX_ATTRIBUTES_BYTES,
 }
 
 local function apiCall(_, operation, ...)

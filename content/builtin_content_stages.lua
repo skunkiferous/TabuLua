@@ -39,6 +39,12 @@ local tsv_transcoders = require("content.tsv_transcoders")
 -- transcoder=lua:tabulua — it never auto-fires (see lua_transcoder.lua).
 local lua_transcoder = require("content.lua_transcoder")
 
+-- SQL (our export format) -> TSV transcoders, one per cell encoding. Id-selected,
+-- schema-free (the file's own embedded tabulua_schema table carries the model
+-- column names, types and defaults), and pure-Lua — lsqlite3 is never involved
+-- (see sql_transcoder.lua).
+local sql_transcoder = require("content.sql_transcoder")
+
 -- Codec registry. The decode stage calls compression.decompress("gzip", …)
 -- lazily, so the libdeflate rock is only loaded if a .gz is actually processed
 -- (see compression.lua). Requiring this module has no side effects and pulls in
@@ -316,6 +322,50 @@ content_pipeline.register(NAME, {
     reversible = true,
     encode = lua_transcoder.tsvToLua,
     transform = lua_transcoder.luaToTSV,
+})
+
+-- SQL transcoders (TODO/sql_input_round_trip.md). `--file=sql` accepts four
+-- `--data` cell encodings and the encoding is NOT sniffable from the SQL, so the
+-- id names it — mirroring tsv:*. Id-only (no `extensions`): a .sql is opted in
+-- with transcoder=sql:json-natural in Files.tsv, never auto-interpreted;
+-- inputExtensions={"sql"} is the Step-2 guard, not a matcher. The forward
+-- transform is schema-free — the model column names, type_specs and defaults come
+-- from the file's own embedded tabulua_schema table, which is also the file's own
+-- answer to "is this SQL ours?" (SQL has no xmlns to ask with).
+--
+-- FORWARD ONLY for now: `reversible` is deliberately absent until Phase 3 adds
+-- the matching `encode`, so the reformatter reads a .sql without claiming it can
+-- rewrite one.
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "sql:json-typed",
+    inputExtensions = {"sql"},
+    outputKind = "text",
+    transform = sql_transcoder.sqlJsonTypedToTSV,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "sql:json-natural",
+    inputExtensions = {"sql"},
+    outputKind = "text",
+    transform = sql_transcoder.sqlJsonNaturalToTSV,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "sql:xml",
+    inputExtensions = {"sql"},
+    outputKind = "text",
+    transform = sql_transcoder.sqlXmlToTSV,
+})
+
+content_pipeline.register(NAME, {
+    phase = "transcode",
+    id = "sql:mpk",
+    inputExtensions = {"sql"},
+    outputKind = "text",
+    transform = sql_transcoder.sqlMpkToTSV,
 })
 
 -- Extensions the macro-phase COG scan is eligible to process (cog_markdown.md

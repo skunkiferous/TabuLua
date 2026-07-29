@@ -145,7 +145,12 @@ local TSV = "tsv"
 -- (file_util.expandArchives); the zip itself streams as an asset, while a
 -- collectable member (`utilmod.zip/data/Item.tsv`) participates like a loose file.
 -- Manifest files use .transposed.tsv, which is covered by TSV.
-local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav", "zip"}
+-- `sql` is collected because .sql is an INPUT format (the sql:* transcoders,
+-- TODO/sql_input_round_trip.md); a file the loader does not collect cannot be
+-- declared in Files.tsv at all, which is what "does not exist on disk" meant for
+-- every .sql before this.
+local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav",
+    "zip", "sql"}
 
 -- The extensions that make a collected file LOOK like data, and therefore
 -- something Files.tsv must declare. This is only ever a GUESS, consulted for a
@@ -155,7 +160,16 @@ local EXTENSIONS = {TSV, CSV, "txt", "md", "json", "xml", "lua", "gz", "eav", "z
 -- never changes what a file IS. Everything else the loader collects (.md, .txt,
 -- .lua, .zip, and a .gz wrapping a non-data name) looks like an asset: it needs
 -- no declaration and is copied/streamed through untouched.
-local DATA_EXTENSIONS = {tsv = true, csv = true, json = true, xml = true, eav = true}
+--
+-- `sql` sits with the data extensions, alongside `xml` and for the same reason:
+-- both are export formats that became input formats, both need an explicit
+-- Files.tsv `transcoder` to be READ (neither auto-fires), but a loose one in a
+-- data directory is a dump of the data, not an asset — so an undeclared one is
+-- worth a "declare it, or mark it an asset, or ignore it" than silently copying
+-- it into every export. (`lua` is the counter-example: it is a code library by
+-- default, so it stays out of this set.)
+local DATA_EXTENSIONS = {tsv = true, csv = true, json = true, xml = true,
+    eav = true, sql = true}
 
 --- True iff `file_name` LOOKS like a data file: its final extension, after the
 --- content pipeline peels any decode layers, is one of DATA_EXTENSIONS.

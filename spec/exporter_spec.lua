@@ -242,6 +242,100 @@ describe("exporter", function()
         end)
     end)
 
+    describe("the embedded tabulua_schema", function()
+        local sql_schema = require("serde.sql_schema")
+
+        -- The header the exporter's own test data uses, with a COMMENT column
+        -- (dropped from every export) and an exploded map (renamed _k/_v).
+        local function headerWithComment(dir)
+            local header = {
+                {name = "name", type = "string", type_spec = "name", idx = 1,
+                 parsed = "name"},
+                {name = "devNotes", type = "comment", type_spec = "comment",
+                 idx = 2, parsed = "devNotes"},
+                {name = "price", type = "integer", type_spec = "gold", idx = 3,
+                 default_expr = "0", parsed = "price"},
+            }
+            header.__source = path_join(dir, "Goods.tsv")
+            for _, col in ipairs(header) do col.header = header end
+            local tsv = {header, {{parsed = "sword"}, {parsed = "n/a"},
+                {parsed = 5}}}
+            header.__dataset = tsv
+            return header, tsv
+        end
+
+        it("should describe exactly the columns the CREATE TABLE has",
+            function()
+            -- The invariant the reader rests on. The retired `-- tabulua-types`
+            -- comment broke it by construction: it walked the whole header, so
+            -- it listed comment columns the CREATE TABLE had already dropped.
+            local header, tsv = headerWithComment(temp_dir)
+            assert.is_true(exporter.exportSQL({
+                tsv_files = {["Goods.tsv"] = tsv},
+                raw_files = {["Goods.tsv"] = "name:string\tdevNotes:comment\tprice:gold:0"},
+            }, {exportDir = temp_dir}))
+            local content = file_util.readFile(path_join(temp_dir, "Goods.sql"))
+
+            -- The comment column is in neither half
+            assert.is_nil(content:match("devNotes"))
+            -- One metadata row per data column, plus the table-info row
+            local rows = 0
+            for _ in content:gmatch("\n  %('Goods'") do rows = rows + 1 end
+            assert.equals(3, rows)
+            assert.is_truthy(content:match("%('Goods','<TABLE>','<TABLE>',0,"))
+            assert.is_truthy(content:match("%('Goods','name','name',1,'name',NULL,NULL%)"))
+            -- The default is carried in its own column -- no longer a loss
+            assert.is_truthy(content:match("%('Goods','price','price',2,'gold','0',NULL%)"))
+            -- and the type comment is gone
+            assert.is_nil(content:match("tabulua%-types"))
+            -- The DDL is built from the same description, so it agrees
+            assert.equals(#sql_schema.exportedColumns(header, nil) - 1, rows - 1)
+        end)
+
+        it("should carry the model dataset name when it differs", function()
+            -- Manifest.transposed.tsv is ONE dataset named Manifest; the SQL
+            -- table has to be named for the file, so the two diverge and the
+            -- model's name has to ride in the file.
+            local header = {
+                {name = "package_id", type = "string", type_spec = "name",
+                 idx = 1, parsed = "package_id"},
+            }
+            header.__source = path_join(temp_dir, "Manifest.transposed.tsv")
+            for _, col in ipairs(header) do col.header = header end
+            local tsv = {header, {{parsed = "tutorial.core"}}}
+            header.__dataset = tsv
+
+            assert.is_true(exporter.exportSQL({
+                tsv_files = {["Manifest.transposed.tsv"] = tsv},
+                raw_files = {["Manifest.transposed.tsv"] = "package_id:name"},
+            }, {exportDir = temp_dir}))
+            local content = file_util.readFile(
+                path_join(temp_dir, "Manifest.transposed.sql"))
+            assert.is_truthy(content:match('CREATE TABLE "Manifest.transposed"'))
+            assert.is_truthy(content:match('"model_name":"Manifest"'))
+            assert.is_truthy(content:match('"version":"'
+                .. sql_schema.SCHEMA_VERSION:gsub("%.", "%%.") .. '"'))
+        end)
+
+        it("should emit the metadata DDL byte-identically in every file",
+            function()
+            -- `IF NOT EXISTS` makes the first file win when a whole export is
+            -- concatenated, which is only safe if every file agrees on the
+            -- shape. A per-file difference would be silently ignored.
+            local _, tsv = headerWithComment(temp_dir)
+            assert.is_true(exporter.exportSQL({
+                tsv_files = {["Goods.tsv"] = tsv},
+                raw_files = {["Goods.tsv"] = "name:string"},
+            }, {exportDir = temp_dir}))
+            local a = file_util.readFile(path_join(temp_dir, "Goods.sql"))
+            local ddl = a:match('^(CREATE TABLE IF NOT EXISTS.-%);\n)')
+            assert.is_not_nil(ddl)
+            assert.equals(ddl,
+                sql_schema.metadataSQL("X", "X", {}):match(
+                    '^(CREATE TABLE IF NOT EXISTS.-%);\n)'))
+        end)
+    end)
+
     describe("exportLuaTSV", function()
         it("should export files in Lua TSV format", function()
             local process_files = createProcessFiles(temp_dir)
@@ -484,9 +578,81 @@ describe("exporter", function()
             local db = sqlite3.open_memory()
             local rc = db:exec(sql)
             local msg = db:errmsg()
-            db:close()
             assert.equals(sqlite3.OK, rc,
                 "sqlite rejected the export: " .. tostring(msg))
+
+            -- The schema is a real TABLE the database KEEPS, which is the whole
+            -- reason it is not a `--` comment: a comment survives a file
+            -- round-trip but is discarded the moment the file is loaded.
+            local stored = {}
+            for row in db:nrows(
+                'SELECT * FROM "tabulua_schema" ORDER BY "position"') do
+                stored[#stored + 1] = row
+            end
+            db:close()
+            assert.equals(4, #stored)  -- the table-info row plus three columns
+            assert.equals(0, stored[1].position)
+            assert.equals("<TABLE>", stored[1].column_name)
+            -- Both names, so an exploded column can be read back by either
+            assert.equals("prices[iron]", stored[3].column_name)
+            assert.equals("prices_iron_k", stored[3].sql_name)
+            assert.equals("prices[iron]=", stored[4].column_name)
+            assert.equals("prices_iron_v", stored[4].sql_name)
+        end)
+
+        it_sqlite("should concatenate into one database, table by table",
+            function()
+            -- Each file carries its OWN metadata, so importing one table means
+            -- reading one file -- and the files must still not collide when the
+            -- whole export is loaded into a single database. That is what
+            -- `CREATE TABLE IF NOT EXISTS` (first file wins, rest are no-ops)
+            -- plus a per-table DELETE-then-INSERT buys, portably.
+            local function oneFile(name)
+                local header = {
+                    {name = "name", type = "string", idx = 1, parsed = "name"},
+                }
+                header.__source = path_join(temp_dir, name .. ".tsv")
+                for _, col in ipairs(header) do col.header = header end
+                local tsv = {header, {{parsed = name .. "-row"}}}
+                header.__dataset = tsv
+                assert.is_true(exporter.exportSQL({
+                    tsv_files = {[name .. ".tsv"] = tsv},
+                    raw_files = {[name .. ".tsv"] = "name:string"},
+                }, {exportDir = temp_dir}))
+                return file_util.readFile(path_join(temp_dir, name .. ".sql"))
+            end
+            local both = oneFile("Alpha") .. "\n" .. oneFile("Beta")
+
+            local db = sqlite3.open_memory()
+            local rc = db:exec(both)
+            local msg = db:errmsg()
+            assert.equals(sqlite3.OK, rc,
+                "sqlite rejected the concatenated export: " .. tostring(msg))
+
+            -- Re-applying a file's METADATA block is idempotent -- that is what
+            -- the DELETE-before-INSERT is for, and it is the half that would
+            -- otherwise hit a primary-key violation. (Re-running a whole file
+            -- is NOT: its data table is a plain CREATE TABLE, so reloading an
+            -- export wants a fresh database or a DROP first. That is unchanged
+            -- by the metadata table, which only had to avoid making it worse.)
+            local metaOnly = oneFile("Alpha"):match('^(.-)CREATE TABLE "Alpha"')
+            assert.is_not_nil(metaOnly)
+            assert.equals(sqlite3.OK, db:exec(metaOnly),
+                "re-applying a file's metadata failed: " .. tostring(db:errmsg()))
+
+            local names = {}
+            for row in db:nrows('SELECT DISTINCT "table_name" '
+                .. 'FROM "tabulua_schema" ORDER BY "table_name"') do
+                names[#names + 1] = row.table_name
+            end
+            local total = 0
+            for row in db:nrows(
+                'SELECT COUNT(*) AS n FROM "tabulua_schema"') do
+                total = row.n
+            end
+            db:close()
+            assert.are.same({"Alpha", "Beta"}, names)
+            assert.equals(4, total)  -- two files x (table-info row + 1 column)
         end)
 
         it("should map union of basic types to TEXT column", function()

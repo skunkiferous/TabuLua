@@ -8,10 +8,60 @@
   extracted; verified a pure move by exporting the tutorial with the HEAD exporter and with
   the split one and diffing: **byte-identical** across all 30 tables plus `schema.sql`.
   Full suite green (3376/3376). `MODULES.md` carries the new module.
+- **Phase 1 — DONE (2026-07-28), pending user review/commit.** Writer and reader both
+  moved to the embedded table; the `-- tabulua-types:` comment and `extractSQLColumnTypes`
+  are gone, with no fallback. Verified: all four `sql:*` exports round-trip through
+  `export_tester` at 30/30 each; the whole suite is green on Lua 5.4 (3391/3391) **and**
+  LuaJIT (3391, 0 failures), where `lsqlite3` exercises the two `it_sqlite` gates;
+  `pre_commit_check` green (38/38 bad-input fixtures). Diff-review of the regenerated
+  `.sql`: the only churn is the comment out, the metadata block in.
 - **Correction to Phase 1's plan text:** there are no *committed* `.sql` goldens to churn —
   `exported/` is `.gitignore`d (line 9), so those 31 files are local build output. The
-  Phase 1 diff-review is therefore a manual before/after regeneration (the technique Phase 0
+  diff-review is therefore a manual before/after regeneration (the technique Phase 0
   used: run the old code from `git show HEAD:…` on a prepended `LUA_PATH`), not a `git diff`.
+
+- **Phase 2 — DONE (2026-07-29), pending user review/commit.** `content/sql_transcoder.lua`
+  plus four id-only stages. **Open question 1 is answered (user, 2026-07-29): the row-0 bag
+  carries `tabulua.collapsed`, and the reader REFUSES on it**, naming `--collapse-exploded`
+  — so the marker is explicit rather than inferred from a count, and the refusal can be
+  lifted later without a format change. Verified end-to-end on a real collapsed export.
+  Full suite green on Lua 5.4 (3404/3404) and LuaJIT (3404, 0 failures);
+  `pre_commit_check` green.
+- **Phase 2 needed one thing the plan did not list: `.sql` had to join the loader's
+  collectable `EXTENSIONS`** ([manifest_loader.lua:148](../loader/manifest_loader.lua#L148)).
+  A file the loader never collects cannot be declared in `Files.tsv` at all — every `.sql`
+  came back "does not exist on disk". It also joined `DATA_EXTENSIONS`, alongside `xml` and
+  for the same reason: a loose `.sql` in a data directory is a dump of the data, not an
+  asset, so an undeclared one now asks to be declared/marked/ignored instead of being
+  silently copied into every export. **Document in Phase 4** — anyone exporting SQL *into*
+  their data directory will meet this.
+
+### What Phase 1 settled, that later phases must not re-decide
+
+1. **The metadata is built from the EXPORTED columns, never the whole header.** It has to
+   be: the DDL already drops comment columns, so a header-driven metadata block would
+   disagree with the CREATE TABLE on `Item`, `Files` and `Manifest` — every file with a
+   comment row. Both halves are now built from one `sql_schema.exportedColumns()` list, so
+   they cannot drift.
+2. **This voids Phase 2's stated `--collapse-exploded` refusal.** That refusal rested on
+   "the counts disagree", and they no longer do: a collapsed export describes its collapsed
+   root columns accurately (`stats` / the group's `type_spec`). Writing deliberately-wrong
+   metadata to preserve a detection trick was not defensible. **Open question 1 is
+   therefore live and must be answered in Phase 2** — either accept collapsed input (the
+   metadata is already sufficient) or mark it explicitly (e.g. a `tabulua.collapsed` flag
+   on row 0) and refuse on the mark.
+3. **A reload of a whole export still needs a fresh database.** The metadata half is
+   idempotent (`IF NOT EXISTS` + `DELETE`-then-`INSERT`, asserted in `exporter_spec`), but
+   each data table is a plain `CREATE TABLE`, so re-running a file against a database that
+   already has it fails there. Unchanged by this work — it only had to avoid making it
+   worse — but worth stating in the Phase 4 docs.
+4. **Two readers, one header.** `importSQLFileWithSQLite` was updated alongside the text
+   parser (its old extractors were retired), and now reports the same model-named,
+   position-ordered header. One fewer divergence for the deferred `lsqlite3` work below.
+5. **`isInt64ColumnType` still only recognizes a literal `int64` spec**, so a user type
+   *extending* int64 is read as a plain number. Pre-existing — the type comment had the
+   same limit — and invisible to Phase 2, which re-parses cells through the real column
+   parser. Left alone deliberately.
 
 ## What we want
 
@@ -223,14 +273,20 @@ from [improved-sql.txt](improved-sql.txt).
 
 ## Open questions
 
-1. **`--collapse-exploded`: refuse (Phase 2) or emit metadata for the collapsed shape** so
-   those exports become re-importable too? Cheap, but changes that flag's output — separate
-   decision.
-2. **The v1 `attributes` vocabulary.** v1 defines **two table-level** reserved keys —
-   `tabulua.version`, `tabulua.model_name` (both on row 0) — and **no per-column keys**
-   (emit NULL). Add the first per-column key (`description`, `unit`, `label`, …) with a real
-   use case, bumping the minor. Open sub-decision: the exact reserved-vs-`app` namespace
-   spelling.
+1. ~~**`--collapse-exploded`: refuse or emit metadata for the collapsed shape?**~~
+   **ANSWERED 2026-07-29 (user): both.** The file describes its collapsed shape accurately
+   *and* says so outright — `tabulua.collapsed = true` on row 0, emitted only when true —
+   and the `sql:*` reader **refuses** on that marker, naming the flag. Detection is explicit
+   rather than inferred from a count mismatch (which Phase 1 removed), so supporting
+   collapsed *import* later needs no format change. Not supported now because a collapsed
+   file loads a model whose header is spelled differently from the source TSV it came from
+   (`stats`, not `stats.attack` / `stats.defense`), which changes every downstream export —
+   its own decision, not a side effect of this plan.
+2. **The v1 `attributes` vocabulary.** v1 defines **three table-level** reserved keys —
+   `tabulua.version`, `tabulua.model_name`, `tabulua.collapsed` (all on row 0) — and **no
+   per-column keys** (emit NULL). Add the first per-column key (`description`, `unit`,
+   `label`, …) with a real use case, bumping the minor. Open sub-decision: the exact
+   reserved-vs-`app` namespace spelling.
 
 ## Deferred — optional `lsqlite3` engine (future multi-dialect work)
 

@@ -105,7 +105,6 @@ local FORMAT_CONFIGS = {
         dataFormat = "json-typed",
         tolerant = false,
         untypedHeader = true,
-        sqlNames = true,
         booleanAsNumber = true,
     },
     ["sql-json-natural"] = {
@@ -113,7 +112,6 @@ local FORMAT_CONFIGS = {
         dataFormat = "json-natural",
         tolerant = true,
         untypedHeader = true,
-        sqlNames = true,
         booleanAsNumber = true,
     },
     ["sql-xml"] = {
@@ -121,7 +119,6 @@ local FORMAT_CONFIGS = {
         dataFormat = "xml",
         tolerant = false,
         untypedHeader = true,
-        sqlNames = true,
         booleanAsNumber = true,
     },
     ["sql-mpk"] = {
@@ -129,7 +126,6 @@ local FORMAT_CONFIGS = {
         dataFormat = "mpk",
         tolerant = false,
         untypedHeader = true,
-        sqlNames = true,
         booleanAsNumber = true,
     },
 }
@@ -356,25 +352,16 @@ local function validateImport(imported, expected, formatConfig, _filePath)
         -- difference the format is not meant to carry, so compare the header
         -- by name in that case.
         if rowIdx == 1 and formatConfig.untypedHeader then
+            -- SQL cannot spell an exploded column's name -- stats.attack and
+            -- materials[1] are not legal identifiers, so the exporter rewrites
+            -- them -- and this used to have to rewrite the model's names the
+            -- same way to compare them. It no longer does: the embedded
+            -- tabulua_schema stores BOTH names, so an imported .sql comes back
+            -- labelled with the model's own names and meets them unchanged.
             local expectedNames = {}
-            -- The model names of this header, needed below: an exploded map's
-            -- key/value pair is suffixed _k/_v, and telling that pair from a
-            -- lone array element takes the whole header, not one name.
-            local modelNames = {}
             for i, cell in ipairs(expectedRow) do
-                modelNames[i] = tostring(cell):match("^([^:]*)")
+                expectedNames[i] = tostring(cell):match("^([^:]*)")
                     or tostring(cell)
-            end
-            local siblings = exporter.sqlColumnNameSet(modelNames)
-            for i, name in ipairs(modelNames) do
-                -- SQL cannot spell an exploded column's name: stats.attack and
-                -- materials[1] are not legal unquoted identifiers, so the
-                -- exporter rewrites them. Apply the exporter's own rule rather
-                -- than restating it here.
-                if formatConfig.sqlNames then
-                    name = exporter.sqlColumnName(name, siblings)
-                end
-                expectedNames[i] = name
             end
             expectedRow = expectedNames
         end

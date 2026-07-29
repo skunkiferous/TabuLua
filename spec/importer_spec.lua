@@ -15,10 +15,19 @@ local after_each = busted.after_each
 local importer = require("serde.importer")
 local file_util = require("infra.file_util")
 local serialization = require("serde.serialization")
+local sql_schema = require("serde.sql_schema")
 
 -- Simple path join function
 local function path_join(...)
     return (table.concat({...}, "/"):gsub("//+", "/"))
+end
+
+-- The embedded tabulua_schema block for a hand-written .sql fixture, built by
+-- the WRITER the reader is paired with -- so a change to the metadata layout
+-- cannot pass here while breaking real files.
+-- @param entries {name, sqlName, typeSpec, default} per column, in order
+local function meta(tableName, entries, modelName)
+    return sql_schema.metadataSQL(tableName, modelName or tableName, entries)
 end
 
 describe("importer", function()
@@ -475,9 +484,13 @@ INSERT INTO "test" ("id","value") VALUES --
             -- silent corruption, not a visible failure.
             --
             -- Which text to rebuild depends on the declared type, which SQL
-            -- alone cannot express (both are just "BLOB"), hence the
-            -- tabulua-types line the exporter now writes.
-            local sql = [[-- tabulua-types: {"name":"name","bitmap":"hexbytes","raw":"base64bytes"}
+            -- alone cannot express (both are just "BLOB"), hence the embedded
+            -- tabulua_schema table the exporter now writes.
+            local sql = meta("test", {
+                {name = "name", sqlName = "name", typeSpec = "name"},
+                {name = "bitmap", sqlName = "bitmap", typeSpec = "hexbytes"},
+                {name = "raw", sqlName = "raw", typeSpec = "base64bytes"},
+            }) .. [[
 CREATE TABLE "test" (
   "name" TEXT NOT NULL PRIMARY KEY,
   "bitmap" BLOB NOT NULL,
@@ -547,7 +560,11 @@ INSERT INTO "test" ("name","bitmap","raw") VALUES --
             -- which is exact on every runtime.
             local int64 = require("util.int64")
             local sql = table.concat({
-                '-- tabulua-types: {"name":"name","catalogId":"int64"}',
+                meta("test", {
+                    {name = "name", sqlName = "name", typeSpec = "name"},
+                    {name = "catalogId", sqlName = "catalogId",
+                     typeSpec = "int64"},
+                }),
                 'CREATE TABLE "test" (',
                 '  "name" TEXT NOT NULL PRIMARY KEY,',
                 '  "catalogId" BIGINT NOT NULL);',
@@ -564,11 +581,14 @@ INSERT INTO "test" ("name","bitmap","raw") VALUES --
         end)
 
         it("should leave a plain integer column a number", function()
-            -- Only a column the type line CALLS an int64 is boxed. Without
+            -- Only a column the METADATA calls an int64 is boxed. Without
             -- that, a BIGINT-looking literal is just a number, as before.
             local int64 = require("util.int64")
             local sql = table.concat({
-                '-- tabulua-types: {"name":"name","price":"gold"}',
+                meta("test", {
+                    {name = "name", sqlName = "name", typeSpec = "name"},
+                    {name = "price", sqlName = "price", typeSpec = "gold"},
+                }),
                 'CREATE TABLE "test" (',
                 '  "name" TEXT NOT NULL PRIMARY KEY,',
                 '  "price" INTEGER NOT NULL);',
@@ -675,6 +695,226 @@ INSERT INTO "test" ("id","data") VALUES --
             assert.is_not_nil(err)
             -- The parser encounters unmatched parenthesis before detecting BLOB issue
             assert.matches("Unmatched parenthesis", err)
+        end)
+    end)
+
+    describe("parseSQLContent with an embedded tabulua_schema", function()
+        -- A data table whose physical columns are the SANITIZED names, and
+        -- whose metadata carries the model names -- the case the whole
+        -- embedded-schema design exists for. SQL cannot spell "stats.attack".
+        local function explodedFixture()
+            return meta("Creature", {
+                {name = "name", sqlName = "name", typeSpec = "name"},
+                {name = "stats.attack", sqlName = "stats_attack",
+                 typeSpec = "integer"},
+                {name = "prices[iron]", sqlName = "prices_iron_k",
+                 typeSpec = "name", default = "'iron'"},
+                {name = "prices[iron]=", sqlName = "prices_iron_v",
+                 typeSpec = "integer"},
+            }) .. [[
+CREATE TABLE "Creature" (
+  "name" TEXT NOT NULL PRIMARY KEY,
+  "stats_attack" BIGINT NOT NULL,
+  "prices_iron_k" TEXT NOT NULL,
+  "prices_iron_v" BIGINT NOT NULL);
+INSERT INTO "Creature" ("name","stats_attack","prices_iron_k","prices_iron_v") VALUES --
+('goblin',7,'ore',12)
+;
+]]
+        end
+
+        it("should label the header with the MODEL column names", function()
+            local result, err, schema =
+                importer.parseSQLContent(explodedFixture())
+            assert.is_nil(err)
+            assert.are.same(
+                {"name", "stats.attack", "prices[iron]", "prices[iron]="},
+                result[1])
+            assert.are.same({"goblin", 7, "ore", 12}, result[2])
+            -- and the schema is handed back for the caller to inspect
+            assert.equals("Creature", schema.tableName)
+            assert.equals("Creature", schema.modelName)
+            assert.equals(sql_schema.SCHEMA_VERSION, schema.version)
+            assert.equals("integer", schema.columns[2].typeSpec)
+            -- the default is carried, which the retired type comment could not
+            assert.equals("'iron'", schema.columns[3].default)
+        end)
+
+        it("should locate values by the STORED sql_name, not by position",
+            function()
+            -- The physical column order is reversed against the metadata's.
+            -- Reading by position would silently transpose every value; reading
+            -- by sql_name is what makes an old file survive a change to the
+            -- exporter's name sanitizer.
+            local sql = meta("test", {
+                {name = "name", sqlName = "name", typeSpec = "name"},
+                {name = "count", sqlName = "count", typeSpec = "integer"},
+            }) .. [[
+CREATE TABLE "test" (
+  "count" BIGINT NOT NULL,
+  "name" TEXT NOT NULL);
+INSERT INTO "test" ("count","name") VALUES --
+(42,'sword')
+;
+]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.are.same({"name", "count"}, result[1])
+            assert.are.same({"sword", 42}, result[2])
+        end)
+
+        it("should carry a model name that differs from the table name",
+            function()
+            -- Manifest.transposed.tsv is ONE dataset called Manifest, but its
+            -- SQL table is "Manifest.transposed" -- the model peels the
+            -- compound extension and sqlTableName does not, so the two names
+            -- legitimately diverge and the reader cannot recompute one.
+            local sql = meta("Manifest.transposed", {
+                {name = "package_id", sqlName = "package_id",
+                 typeSpec = "package_id"},
+            }, "Manifest") .. [[
+CREATE TABLE "Manifest.transposed" (
+  "package_id" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err, schema = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.are.same({"package_id"}, result[1])
+            assert.equals(1, #result)  -- header only, no data rows
+            assert.equals("Manifest.transposed", schema.tableName)
+            assert.equals("Manifest", schema.modelName)
+        end)
+
+        it("should refuse metadata that does not match the data table",
+            function()
+            -- The invariant the reader rests on: the metadata describes exactly
+            -- the physical columns. A count mismatch means the file is not
+            -- describing itself, so it is refused rather than half-read.
+            local sql = meta("test", {
+                {name = "name", sqlName = "name", typeSpec = "name"},
+                {name = "extra", sqlName = "extra", typeSpec = "integer"},
+            }) .. [[
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("describes 2 column", err)
+        end)
+
+        it("should refuse metadata naming a column the table lacks", function()
+            local sql = meta("test", {
+                {name = "name", sqlName = "misspelled", typeSpec = "name"},
+            }) .. [[
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("misspelled", err)
+        end)
+
+        it("should refuse a file with two data tables", function()
+            -- A whole export concatenated into one script is a DATABASE, not a
+            -- dataset. Picking one of its tables silently would import a file
+            -- the caller never named.
+            local sql = meta("a", {
+                {name = "name", sqlName = "name", typeSpec = "name"},
+            }) .. [[
+CREATE TABLE "a" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--
+CREATE TABLE "b" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("found at least two", err)
+        end)
+
+        it("should refuse a file that declares the table but fills nothing",
+            function()
+            -- Falling back to the physical column names here would read the
+            -- file as if headerless were intended, when it plainly is not.
+            local sql = [[
+CREATE TABLE IF NOT EXISTS "tabulua_schema" (
+  "table_name" TEXT NOT NULL);
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("carries no rows", err)
+        end)
+
+        it("should refuse metadata with no table-info row", function()
+            -- Hand-built: row 0 carries the version and the model name, so a
+            -- file without it is not one of ours.
+            local sql = [[
+CREATE TABLE IF NOT EXISTS "tabulua_schema" (
+  "table_name" TEXT NOT NULL);
+INSERT INTO "tabulua_schema" VALUES
+  ('test','name','name',1,'name',NULL,NULL);
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("table%-info row", err)
+        end)
+
+        it("should refuse an attributes bag that is not a JSON object",
+            function()
+            local sql = [[
+CREATE TABLE IF NOT EXISTS "tabulua_schema" (
+  "table_name" TEXT NOT NULL);
+INSERT INTO "tabulua_schema" VALUES
+  ('test','<TABLE>','<TABLE>',0,'<TABLE>',NULL,'[1,2,3]'),
+  ('test','name','name',1,'name',NULL,NULL);
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("must be a JSON object", err)
+        end)
+
+        it("should preserve unknown keys in the attributes bag", function()
+            -- Forward compatibility: v1 interprets tabulua.version and
+            -- tabulua.model_name and touches nothing else, so a file from a
+            -- later version still reads.
+            local sql = [[
+CREATE TABLE IF NOT EXISTS "tabulua_schema" (
+  "table_name" TEXT NOT NULL);
+INSERT INTO "tabulua_schema" VALUES
+  ('test','<TABLE>','<TABLE>',0,'<TABLE>',NULL,'{"app":{"owner":"pipeline"},"tabulua":{"model_name":"test","version":"0.33"}}'),
+  ('test','name','name',1,'name',NULL,NULL);
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err, schema = importer.parseSQLContent(sql)
+            assert.is_nil(err)
+            assert.are.same({"name"}, result[1])
+            assert.equals("pipeline", schema.attributes.app.owner)
+        end)
+
+        it("should name the writing version when the shape is wrong",
+            function()
+            -- The version is provenance, not a gate: it never decides whether
+            -- to read a file, it only sharpens the message when the STRUCTURE
+            -- is what fails.
+            local sql = [[
+CREATE TABLE IF NOT EXISTS "tabulua_schema" (
+  "table_name" TEXT NOT NULL);
+INSERT INTO "tabulua_schema" VALUES
+  ('test','<TABLE>','<TABLE>',0,'<TABLE>',NULL,'{"tabulua":{"model_name":"test","version":"99.7"}}'),
+  ('test','name','name',1,'name',NULL,NULL),
+  ('test','future','future',2,'integer',NULL,NULL);
+CREATE TABLE "test" (
+  "name" TEXT NOT NULL PRIMARY KEY)
+--]]
+            local result, err = importer.parseSQLContent(sql)
+            assert.is_nil(result)
+            assert.matches("written by TabuLua 99%.7", err)
         end)
     end)
 

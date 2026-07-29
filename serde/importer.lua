@@ -24,10 +24,20 @@ local deserializeMessagePack = deserialization.deserializeMessagePack
 local base64 = require("util.base64")
 local int64 = require("util.int64")
 
+-- The reader's half of the SQL format. sql_schema is a LEAF (it requires
+-- neither the exporter nor the content pipeline), and sharing it is the point:
+-- the metadata table's name, its row-0 sentinel and the version marker have to
+-- be spelled here exactly as the writer spelled them, and two copies of a
+-- constant is how that stops being true.
+local sql_schema = require("serde.sql_schema")
+local METADATA_TABLE = sql_schema.METADATA_TABLE
+local SCHEMA_VERSION = sql_schema.SCHEMA_VERSION
+
 -- True if a declared TabuLua column type is an int64 (or an alias of one). The
--- type text comes from the "-- tabulua-types:" comment the exporter writes, so
--- an alias arrives already resolved to its base name where one exists; the
--- plain prefix test covers "int64" and "int64|nil".
+-- type text comes from the embedded tabulua_schema table, which stores the
+-- DECLARED type_spec, so a user type extending int64 is not recognized here --
+-- as it was not by the type comment this replaced; the plain prefix test covers
+-- "int64" and "int64|nil".
 local function isInt64ColumnType(declared)
     return declared ~= nil and declared:match("^int64") ~= nil
 end
@@ -392,99 +402,95 @@ end
 -- SQL FILE IMPORT
 -- ============================================================================
 
--- Column names from a CREATE TABLE, in declaration order.
--- Format: CREATE TABLE "tablename" (\n  "col1" TYPE,\n  "col2" TYPE\n)
-local function extractSQLColumns(content)
-    local colDefs = content:match('CREATE TABLE ".-"%s*(%b())')
-    if not colDefs then
-        return nil, "Could not find CREATE TABLE statement"
+-- Every CREATE TABLE in the file, in declaration order: {name, body}.
+-- Matches both `CREATE TABLE "x" (...)` and the metadata table's
+-- `CREATE TABLE IF NOT EXISTS "x" (...)`.
+local function extractSQLTableDefs(content)
+    local defs = {}
+    for name, body in
+        content:gmatch('CREATE%s+TABLE%s+[%a%s]*"([^"]+)"%s*(%b())') do
+        defs[#defs + 1] = {name = name, body = body}
     end
+    return defs
+end
+
+-- Column names from a CREATE TABLE body, in declaration order.
+-- Format: (\n  "col1" TYPE,\n  "col2" TYPE\n)
+local function columnNamesFromBody(body)
     local columns = {}
-    colDefs = colDefs:sub(2, -2)  -- Remove outer parentheses
-    for colDef in colDefs:gmatch('[^,]+') do
+    for colDef in body:sub(2, -2):gmatch('[^,]+') do
         local colName = colDef:match('"([^"]+)"')
         if colName then
             columns[#columns + 1] = colName
         end
     end
-    if #columns == 0 then
-        return nil, "Could not extract column names from CREATE TABLE"
-    end
     return columns
 end
 
--- Declared TabuLua types, from the self-describing comment the exporter writes.
--- Absent in older files, so every caller treats it as optional.
+-- The one DATA table in the file: the CREATE TABLE that is not the embedded
+-- metadata table.
 --
--- Needed because SQL alone is ambiguous in both directions: "BLOB" cannot say
--- whether the model value was hex text (hexbytes) or base64 (base64bytes), and
--- a BIGINT literal cannot say whether it was an int64 box or a plain number.
---
--- NOTE the keys are MODEL column names, while the CREATE TABLE uses the
--- sanitized form (sqlColumnName), so an exploded column such as "stats.attack"
--- does not match its "stats_attack" column here. Harmless for the types that
--- rely on this today, none of which explode.
-local function extractSQLColumnTypes(content)
-    local typeLine = content:match("%-%-%s*tabulua%-types:%s*(%b{})")
-    if not typeLine then
-        return nil
+-- Which table holds the data can no longer be answered with "the first
+-- CREATE TABLE" -- every exported file now opens with the tabulua_schema DDL --
+-- so it is answered by NAME. Two data tables is a refusal rather than a guess:
+-- a whole-export concatenation is a database, not a dataset, and picking one of
+-- its tables silently would import the wrong file.
+local function findDataTable(defs)
+    if #defs == 0 then
+        return nil, "Could not find CREATE TABLE statement"
     end
-    local columnTypes = {}
-    for name, spec in typeLine:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do
-        columnTypes[name] = spec
+    local data, declared = nil, false
+    for _, d in ipairs(defs) do
+        if d.name == METADATA_TABLE then
+            declared = true
+        else
+            if data then
+                return nil, "Expected a single data table, found at least two: '"
+                    .. data.name .. "' and '" .. d.name
+                    .. "' (a concatenated export is a database, not a dataset)"
+            end
+            data = d
+        end
     end
-    return columnTypes
+    if not data then
+        return nil, "The file declares only the '" .. METADATA_TABLE
+            .. "' metadata table, and no data table"
+    end
+    local columns = columnNamesFromBody(data.body)
+    if #columns == 0 then
+        return nil, "Could not extract column names from CREATE TABLE"
+    end
+    data.columns = columns
+    data.declaresMetadata = declared
+    return data
 end
 
---- Parses SQL file content and extracts data.
---- This parses our specific SQL export format (CREATE TABLE + INSERT).
---- @param content string The SQL file content
---- @param tableDeserializer function|nil Function to deserialize table columns (default: deserializeJSON)
---- @return table|nil The extracted data as a sequence of sequences
---- @return string|nil Error message if parsing failed
-local function parseSQLContent(content, tableDeserializer)
-    local deserializeTable = tableDeserializer or deserializeJSON
-
-    local result = {}
-
-    local columns, colErr = extractSQLColumns(content)
-    if not columns then
-        return nil, colErr
-    end
-    local columnTypes = extractSQLColumnTypes(content)
-
-    -- Add header row
-    result[1] = columns
-
-    -- Find INSERT statement and VALUES
-    local valuesStart = content:find("VALUES")
-    if not valuesStart then
-        -- No data, just return header
-        return result, nil
-    end
-
-    -- Parse each row of values
-    local valuesSection = content:sub(valuesStart + 6)
-
-    -- Find each row: (value1, value2, ...)
+--- Splits a VALUES section into its `(...)` tuples, as raw text.
+---
+--- Stops at the `;` that terminates the statement, so a file holding several
+--- INSERTs -- every exported file now does: the metadata one, then the data
+--- one -- does not bleed from one into the next.
+--- @param section string The text following the VALUES keyword
+--- @return table|nil Sequence of tuple bodies (the text between parentheses)
+--- @return string|nil Error message
+local function scanTuples(section)
+    local tuples = {}
     local pos = 1
     while true do
-        local rowStart = valuesSection:find("%(", pos)
+        local rowStart = section:find("%(", pos)
         if not rowStart then break end
 
         -- Find matching closing paren, accounting for nested parens and strings
         local depth = 1
         local rowEnd = rowStart + 1
         local inString = false
-        local stringChar = nil
 
-        while rowEnd <= #valuesSection and depth > 0 do
-            local char = valuesSection:sub(rowEnd, rowEnd)
+        while rowEnd <= #section and depth > 0 do
+            local char = section:sub(rowEnd, rowEnd)
             if inString then
-                if char == stringChar then
+                if char == "'" then
                     -- Check for escaped quote
-                    local nextChar = valuesSection:sub(rowEnd + 1, rowEnd + 1)
-                    if nextChar == stringChar then
+                    if section:sub(rowEnd + 1, rowEnd + 1) == "'" then
                         rowEnd = rowEnd + 1  -- Skip escaped quote
                     else
                         inString = false
@@ -493,7 +499,6 @@ local function parseSQLContent(content, tableDeserializer)
             else
                 if char == "'" then
                     inString = true
-                    stringChar = "'"
                 elseif char == "(" then
                     depth = depth + 1
                 elseif char == ")" then
@@ -507,154 +512,446 @@ local function parseSQLContent(content, tableDeserializer)
             return nil, "Unmatched parenthesis in VALUES"
         end
 
-        -- Extract row content (between parens)
-        local rowContent = valuesSection:sub(rowStart + 1, rowEnd - 2)
+        tuples[#tuples + 1] = section:sub(rowStart + 1, rowEnd - 2)
+        pos = rowEnd
+        if section:match("^%s*;", pos) then break end
+    end
+    return tuples
+end
 
-        -- Parse values
-        local row = {}
-        local valPos = 1
-        local colIdx = 1
+--- Parses one tuple's comma-separated SQL literals.
+--- @param rowContent string The text between the tuple's parentheses
+--- @param deserializeTable function|nil Deserializer for composite cells; nil
+---   keeps them as their raw text, which is what the metadata rows want
+--- @param typeAt function|nil i -> declared TabuLua type of the i-th value
+--- @return table|nil The values (a sequence, with holes where NULL)
+--- @return string|nil Error message
+--- @return number|nil How many values -- `#` cannot say, over holes
+local function parseValueList(rowContent, deserializeTable, typeAt)
+    local row = {}
+    local valPos = 1
+    local colIdx = 1
 
-        while valPos <= #rowContent do
-            -- Skip whitespace
-            valPos = rowContent:match("^%s*()", valPos)
-            if valPos > #rowContent then break end
+    while valPos <= #rowContent do
+        -- Skip whitespace
+        valPos = rowContent:match("^%s*()", valPos)
+        if valPos > #rowContent then break end
 
-            local char = rowContent:sub(valPos, valPos)
-            local value
+        local char = rowContent:sub(valPos, valPos)
+        local value
 
-            if char == "'" then
-                -- String value - find closing quote
-                local strEnd = valPos + 1
-                local strContent = {}
-                while strEnd <= #rowContent do
-                    local c = rowContent:sub(strEnd, strEnd)
-                    if c == "'" then
-                        local nextC = rowContent:sub(strEnd + 1, strEnd + 1)
-                        if nextC == "'" then
-                            -- Escaped quote
-                            strContent[#strContent + 1] = "'"
-                            strEnd = strEnd + 2
-                        else
-                            -- End of string
-                            break
-                        end
+        if char == "'" then
+            -- String value - find closing quote
+            local strEnd = valPos + 1
+            local strContent = {}
+            while strEnd <= #rowContent do
+                local c = rowContent:sub(strEnd, strEnd)
+                if c == "'" then
+                    local nextC = rowContent:sub(strEnd + 1, strEnd + 1)
+                    if nextC == "'" then
+                        -- Escaped quote
+                        strContent[#strContent + 1] = "'"
+                        strEnd = strEnd + 2
                     else
-                        strContent[#strContent + 1] = c
-                        strEnd = strEnd + 1
-                    end
-                end
-                local str = table.concat(strContent)
-
-                -- A MessagePack cell: the mpk bytes hex-wrapped as X'...' and
-                -- stored as a STRING (a bytes COLUMN is instead an unquoted
-                -- BLOB literal, handled below -- the two are distinct, and
-                -- were previously handled the wrong way round).
-                if str:match("^X'%x*'$") and #str % 2 == 1 then
-                    local mpkVal, mpkErr =
-                        deserialization.deserializeMessagePackSQLBlob(str)
-                    if mpkErr then
-                        value = str  -- Not ours after all; keep the text
-                    else
-                        value = mpkVal
-                    end
-                -- Check if this looks like a serialized table (JSON, XML, etc.)
-                elseif str:sub(1, 1) == "[" or str:sub(1, 1) == "{" or str:sub(1, 6) == "<table" then
-                    local tableVal, tableErr = deserializeTable(str)
-                    if tableErr then
-                        value = str  -- Fall back to string if deserialization fails
-                    else
-                        value = tableVal
+                        -- End of string
+                        break
                     end
                 else
-                    value = str
-                end
-                valPos = strEnd + 1
-            elseif char == "X" and rowContent:sub(valPos, valPos + 1) == "X'" then
-                -- An unquoted BLOB literal is a BYTES COLUMN: raw bytes, NOT
-                -- MessagePack. Decoding it as mpk was not merely wrong, it was
-                -- silently wrong -- X'18' decoded to the number 24 and
-                -- X'C3' to true, with no error.
-                --
-                -- The model value behind those bytes is TEXT, and which text
-                -- depends on the declared type: hex digits for hexbytes,
-                -- base64 for base64bytes. That is why the type line matters --
-                -- the BLOB alone cannot say which.
-                local blobEnd = rowContent:find("'", valPos + 2)
-                if blobEnd then
-                    local blob = rowContent:sub(valPos, blobEnd)
-                    local binary, blobErr =
-                        deserialization.deserializeSQLBlob(blob)
-                    if blobErr then
-                        return nil, "Failed to deserialize BLOB: " .. tostring(blobErr)
-                    end
-                    local declared = columnTypes
-                        and columnTypes[columns[colIdx] or ""] or nil
-                    if declared and declared:match("^base64bytes") then
-                        value = base64.encode(binary)
-                    else
-                        -- hexbytes, or unknown: the hex digits as written
-                        value = blob:sub(3, -2)
-                    end
-                    valPos = blobEnd + 1
-                else
-                    return nil, "Unterminated BLOB literal"
-                end
-            elseif rowContent:sub(valPos, valPos + 3) == "NULL" then
-                value = nil
-                valPos = valPos + 4
-            elseif char:match("[%d%-]") then
-                -- Number
-                local numEnd = rowContent:find("[^%d%.%-eE]", valPos)
-                local numStr
-                if numEnd then
-                    numStr = rowContent:sub(valPos, numEnd - 1)
-                    valPos = numEnd
-                else
-                    numStr = rowContent:sub(valPos)
-                    valPos = #rowContent + 1
-                end
-                -- A BIGINT column is read from its DIGITS, never through
-                -- tonumber: tonumber("9007199254740993") is already rounded on
-                -- LuaJIT, where every number is a double, so the box would be
-                -- built from a value the file never contained.
-                local declaredNum = columnTypes
-                    and columnTypes[columns[colIdx] or ""] or nil
-                if isInt64ColumnType(declaredNum) then
-                    local box, boxErr = int64.of(numStr)
-                    if box == nil then
-                        return nil, "Failed to read int64 column '"
-                            .. tostring(columns[colIdx]) .. "': "
-                            .. tostring(boxErr)
-                    end
-                    value = box
-                else
-                    value = tonumber(numStr)
-                end
-            else
-                -- Unknown, try to read until comma
-                local nextComma = rowContent:find(",", valPos)
-                if nextComma then
-                    value = rowContent:sub(valPos, nextComma - 1)
-                    valPos = nextComma
-                else
-                    value = rowContent:sub(valPos)
-                    valPos = #rowContent + 1
+                    strContent[#strContent + 1] = c
+                    strEnd = strEnd + 1
                 end
             end
+            local str = table.concat(strContent)
 
-            row[colIdx] = value
-            colIdx = colIdx + 1
-
-            -- Skip comma and whitespace
-            valPos = rowContent:match("^%s*,?%s*()", valPos)
+            -- A MessagePack cell: the mpk bytes hex-wrapped as X'...' and
+            -- stored as a STRING (a bytes COLUMN is instead an unquoted
+            -- BLOB literal, handled below -- the two are distinct, and
+            -- were previously handled the wrong way round).
+            if deserializeTable and str:match("^X'%x*'$") and #str % 2 == 1 then
+                local mpkVal, mpkErr =
+                    deserialization.deserializeMessagePackSQLBlob(str)
+                if mpkErr then
+                    value = str  -- Not ours after all; keep the text
+                else
+                    value = mpkVal
+                end
+            -- Check if this looks like a serialized table (JSON, XML, etc.)
+            elseif deserializeTable and (str:sub(1, 1) == "["
+                or str:sub(1, 1) == "{" or str:sub(1, 6) == "<table") then
+                local tableVal, tableErr = deserializeTable(str)
+                if tableErr then
+                    value = str  -- Fall back to string if deserialization fails
+                else
+                    value = tableVal
+                end
+            else
+                value = str
+            end
+            valPos = strEnd + 1
+        elseif char == "X" and rowContent:sub(valPos, valPos + 1) == "X'" then
+            -- An unquoted BLOB literal is a BYTES COLUMN: raw bytes, NOT
+            -- MessagePack. Decoding it as mpk was not merely wrong, it was
+            -- silently wrong -- X'18' decoded to the number 24 and
+            -- X'C3' to true, with no error.
+            --
+            -- The model value behind those bytes is TEXT, and which text
+            -- depends on the declared type: hex digits for hexbytes, base64
+            -- for base64bytes. That is why the embedded schema matters -- the
+            -- BLOB alone cannot say which.
+            local blobEnd = rowContent:find("'", valPos + 2)
+            if blobEnd then
+                local blob = rowContent:sub(valPos, blobEnd)
+                local binary, blobErr =
+                    deserialization.deserializeSQLBlob(blob)
+                if blobErr then
+                    return nil, "Failed to deserialize BLOB: " .. tostring(blobErr)
+                end
+                local declared = typeAt and typeAt(colIdx) or nil
+                if declared and declared:match("^base64bytes") then
+                    value = base64.encode(binary)
+                else
+                    -- hexbytes, or unknown: the hex digits as written
+                    value = blob:sub(3, -2)
+                end
+                valPos = blobEnd + 1
+            else
+                return nil, "Unterminated BLOB literal"
+            end
+        elseif rowContent:sub(valPos, valPos + 3) == "NULL" then
+            value = nil
+            valPos = valPos + 4
+        elseif char:match("[%d%-]") then
+            -- Number
+            local numEnd = rowContent:find("[^%d%.%-eE]", valPos)
+            local numStr
+            if numEnd then
+                numStr = rowContent:sub(valPos, numEnd - 1)
+                valPos = numEnd
+            else
+                numStr = rowContent:sub(valPos)
+                valPos = #rowContent + 1
+            end
+            -- A BIGINT column is read from its DIGITS, never through
+            -- tonumber: tonumber("9007199254740993") is already rounded on
+            -- LuaJIT, where every number is a double, so the box would be
+            -- built from a value the file never contained.
+            if isInt64ColumnType(typeAt and typeAt(colIdx) or nil) then
+                local box, boxErr = int64.of(numStr)
+                if box == nil then
+                    return nil, "Failed to read int64 column " .. colIdx
+                        .. ": " .. tostring(boxErr)
+                end
+                value = box
+            else
+                value = tonumber(numStr)
+            end
+        else
+            -- Unknown, try to read until comma
+            local nextComma = rowContent:find(",", valPos)
+            if nextComma then
+                value = rowContent:sub(valPos, nextComma - 1)
+                valPos = nextComma
+            else
+                value = rowContent:sub(valPos)
+                valPos = #rowContent + 1
+            end
         end
 
-        result[#result + 1] = row
-        pos = rowEnd
+        row[colIdx] = value
+        colIdx = colIdx + 1
+
+        -- Skip comma and whitespace
+        valPos = rowContent:match("^%s*,?%s*()", valPos)
     end
 
-    return result, nil
+    return row, nil, colIdx - 1
+end
+
+--- The tuple bodies of every `INSERT INTO "<tableName>" ... VALUES` in a file.
+--- @param content string The SQL file content
+--- @param tableName string The table being inserted into
+--- @return table|nil Sequence of tuple bodies
+--- @return string|nil Error message
+local function insertedTuples(content, tableName)
+    local tuples = {}
+    local needle = 'INSERT INTO "' .. tableName .. '"'
+    local from = 1
+    while true do
+        local s, e = content:find(needle, from, true)
+        if not s then break end
+        local v = content:find("VALUES", e + 1, true)
+        if v then
+            local found, err = scanTuples(content:sub(v + 6))
+            if not found then
+                return nil, err
+            end
+            for _, t in ipairs(found) do
+                tuples[#tuples + 1] = t
+            end
+        end
+        from = e + 1
+    end
+    return tuples
+end
+
+-- A tabulua_schema row: table_name, column_name, sql_name, position, type,
+-- default, attributes.
+local METADATA_COLUMN_COUNT = 7
+
+-- The v1 `tabulua` vocabulary: table-level keys the reader knows, and the Lua
+-- type each must have. Anything else under `tabulua` is preserved and ignored,
+-- as is everything under `app` (application-owned, carried verbatim, never
+-- interpreted) and under any other top-level key (reserved).
+--
+-- Nothing here is BEHAVIORAL in the dangerous sense: no entry changes how a
+-- cell is parsed, validated or evaluated, and nothing in the bag is ever handed
+-- to the sandbox or to `load`. That is the property that stops a hand-authored
+-- .sql from becoming a code-injection surface.
+local TABULUA_ATTRIBUTES = {
+    version = "string",
+    model_name = "string",
+    collapsed = "boolean",
+}
+
+--- Reads row 0's `attributes` bag.
+---
+--- NULL, or a JSON OBJECT -- an array, a scalar or unparseable text is a hard
+--- error rather than a silent shrug, because everything the reader is about to
+--- do rests on this file being what it claims to be. Unknown keys are preserved
+--- untouched (forward compatibility); v1 interprets only the three keys above,
+--- and none of them gates whether the file is read.
+--- @param raw string|nil The cell text
+--- @return table|nil The decoded bag ({} when NULL)
+--- @return string|nil Error message
+local function parseAttributes(raw)
+    if raw == nil then
+        return {}
+    end
+    if type(raw) ~= "string" then
+        return nil, "attributes must be TEXT holding a JSON object"
+    end
+    -- Bounded: a preserved payload from a file the reader does not control.
+    if #raw > sql_schema.MAX_ATTRIBUTES_BYTES then
+        return nil, "attributes is " .. #raw .. " bytes, over the "
+            .. sql_schema.MAX_ATTRIBUTES_BYTES .. "-byte cap"
+    end
+    local decoded, err = deserializeNaturalJSON(raw)
+    if err or type(decoded) ~= "table" then
+        return nil, "attributes is not valid JSON: " .. tostring(err or raw)
+    end
+    if decoded[1] ~= nil then
+        return nil, "attributes must be a JSON object, not an array"
+    end
+    -- An empty object is the same as NULL.
+    local tabulua = decoded.tabulua
+    if tabulua ~= nil then
+        if type(tabulua) ~= "table" or tabulua[1] ~= nil then
+            return nil, "attributes.tabulua must be a JSON object"
+        end
+        for key, expected in pairs(TABULUA_ATTRIBUTES) do
+            local v = tabulua[key]
+            if v ~= nil and type(v) ~= expected then
+                return nil, "attributes.tabulua." .. key .. " must be a "
+                    .. expected .. ", found " .. type(v)
+            end
+        end
+    end
+    return decoded
+end
+
+--- Reads the embedded tabulua_schema rows describing one data table.
+---
+--- @param content string The SQL file content
+--- @param dataTable table findDataTable's result
+--- @return table|nil {version, modelName, columns = {{name, sqlName, typeSpec,
+---   default, attributes}}}; nil with no error when the file carries no
+---   metadata table at all
+--- @return string|nil Error message
+local function readSQLMetadata(content, dataTable)
+    local tuples, err = insertedTuples(content, METADATA_TABLE)
+    if not tuples then
+        return nil, err
+    end
+    if #tuples == 0 then
+        -- No metadata AND no claim to have any: an older or foreign export,
+        -- read for what SQL alone says. But a file that DECLARES the table and
+        -- then describes nothing is malformed, and falling back silently would
+        -- read it under physical column names as if that were intended.
+        if dataTable.declaresMetadata then
+            return nil, "The file declares '" .. METADATA_TABLE
+                .. "' but carries no rows in it"
+        end
+        return nil, nil
+    end
+
+    local tableRow, columns, seen = nil, {}, {}
+    for _, body in ipairs(tuples) do
+        local v, vErr, count = parseValueList(body, nil, nil)
+        if not v then
+            return nil, "Malformed " .. METADATA_TABLE .. " row: " .. tostring(vErr)
+        end
+        if count ~= METADATA_COLUMN_COUNT then
+            return nil, "Malformed " .. METADATA_TABLE .. " row: expected "
+                .. METADATA_COLUMN_COUNT .. " values, found " .. tostring(count)
+        end
+        -- Rows for another table are another file's, concatenated in; skip them.
+        if v[1] == dataTable.name then
+            local position = v[4]
+            if type(position) ~= "number" then
+                return nil, "Malformed " .. METADATA_TABLE
+                    .. " row: position must be an integer, found "
+                    .. tostring(position)
+            end
+            if position == 0 then
+                tableRow = v
+            elseif seen[position] then
+                return nil, "Duplicate " .. METADATA_TABLE .. " position "
+                    .. position .. " for table '" .. dataTable.name .. "'"
+            else
+                seen[position] = true
+                columns[position] = {
+                    name = v[2], sqlName = v[3], typeSpec = v[5],
+                    default = v[6], attributes = v[7],
+                }
+            end
+        end
+    end
+
+    if not tableRow then
+        return nil, "No " .. METADATA_TABLE .. " table-info row (position 0) "
+            .. "for table '" .. dataTable.name .. "'"
+    end
+
+    -- Column order is recoverable ONLY from the stored position: rows dumped
+    -- out of a database come back unordered, so a gap is a lost column, not a
+    -- cosmetic problem.
+    local n = 0
+    for position in pairs(seen) do
+        if position > n then n = position end
+    end
+    for i = 1, n do
+        if not columns[i] then
+            return nil, "Missing " .. METADATA_TABLE .. " row for position "
+                .. i .. " of table '" .. dataTable.name .. "'"
+        end
+    end
+
+    local attrs, attrErr = parseAttributes(tableRow[7])
+    if not attrs then
+        return nil, attrErr
+    end
+    local tabulua = type(attrs.tabulua) == "table" and attrs.tabulua or {}
+
+    -- The metadata describes exactly the physical columns, or the file is not
+    -- describing itself. Reported with the version, because "written by a newer
+    -- TabuLua" is the likeliest cause of a shape the reader does not know --
+    -- provenance sharpening a structural failure, never gating on its own.
+    local hint = ""
+    if tabulua.version ~= nil and tabulua.version ~= SCHEMA_VERSION then
+        hint = " (file written by TabuLua " .. tostring(tabulua.version)
+            .. ", this is " .. SCHEMA_VERSION .. ")"
+    end
+    if n ~= #dataTable.columns then
+        return nil, string.format(
+            "%s describes %d column(s) but table '%s' has %d%s",
+            METADATA_TABLE, n, dataTable.name, #dataTable.columns, hint)
+    end
+
+    -- Values are located by the STORED sql_name, never by re-running the
+    -- exporter's name sanitizer and never by assuming physical order: a change
+    -- to sqlColumnName then cannot mis-read a file written before it, and a
+    -- hand-edited or length-capped physical name still imports.
+    local physical = {}
+    for i, name in ipairs(dataTable.columns) do
+        physical[name] = i
+    end
+    for i = 1, n do
+        local at = physical[columns[i].sqlName]
+        if not at then
+            return nil, string.format(
+                "%s names column '%s' (sql_name '%s'), which table '%s' does not have%s",
+                METADATA_TABLE, tostring(columns[i].name),
+                tostring(columns[i].sqlName), dataTable.name, hint)
+        end
+        columns[i].at = at
+    end
+
+    return {
+        version = tabulua.version,
+        modelName = tabulua.model_name,
+        collapsed = tabulua.collapsed or false,
+        tableName = dataTable.name,
+        attributes = attrs,
+        columns = columns,
+    }
+end
+
+--- Parses SQL file content and extracts data.
+--- This parses our specific SQL export format (CREATE TABLE + INSERT).
+---
+--- When the file carries the embedded `tabulua_schema` table, that is the
+--- source of truth: the header is labelled with the MODEL column names, ordered
+--- by the stored position, and each value is located by its stored sql_name.
+--- Without it, only the physical CREATE TABLE names are available and no
+--- declared types are known -- so a BLOB cannot be told from base64 and a
+--- BIGINT cannot be told from an int64.
+--- @param content string The SQL file content
+--- @param tableDeserializer function|nil Function to deserialize table columns (default: deserializeJSON)
+--- @return table|nil The extracted data as a sequence of sequences
+--- @return string|nil Error message if parsing failed
+--- @return table|nil The embedded schema, when the file carries one
+local function parseSQLContent(content, tableDeserializer)
+    local deserializeTable = tableDeserializer or deserializeJSON
+
+    local dataTable, tableErr = findDataTable(extractSQLTableDefs(content))
+    if not dataTable then
+        return nil, tableErr
+    end
+
+    local schema, metaErr = readSQLMetadata(content, dataTable)
+    if metaErr then
+        return nil, metaErr
+    end
+
+    local result = {}
+    local typeAt
+    if schema then
+        local header, typeByPosition = {}, {}
+        for i, col in ipairs(schema.columns) do
+            header[i] = col.name
+            typeByPosition[col.at] = col.typeSpec
+        end
+        result[1] = header
+        typeAt = function(i) return typeByPosition[i] end
+    else
+        result[1] = dataTable.columns
+    end
+
+    local tuples, scanErr = insertedTuples(content, dataTable.name)
+    if not tuples then
+        return nil, scanErr
+    end
+
+    for _, body in ipairs(tuples) do
+        local values, valErr = parseValueList(body, deserializeTable, typeAt)
+        if not values then
+            return nil, valErr
+        end
+        if schema then
+            -- Physical order -> model order. Identical for our own exports, but
+            -- the mapping is what lets a file whose columns were reordered, or
+            -- whose names were rewritten, still read correctly.
+            local row = {}
+            for i, col in ipairs(schema.columns) do
+                row[i] = values[col.at]
+            end
+            result[#result + 1] = row
+        else
+            result[#result + 1] = values
+        end
+    end
+
+    return result, nil, schema
 end
 
 --- Imports an SQL file.
@@ -744,19 +1041,31 @@ local function importSQLFileWithSQLite(filePath, tableDeserializer)
         return nil, "SQL execution error: " .. tostring(errMsg)
     end
 
-    -- Get table name from CREATE TABLE statement
-    local tableName = content:match('CREATE TABLE "([^"]+)"')
-    if not tableName then
+    -- The DATA table, by name -- not "the first CREATE TABLE", which is now the
+    -- embedded tabulua_schema in every exported file.
+    local dataTable, tableErr = findDataTable(extractSQLTableDefs(content))
+    if not dataTable then
         db:close()
-        return nil, "Could not extract table name"
+        return nil, tableErr
+    end
+    local tableName = dataTable.name
+    local schema, metaErr = readSQLMetadata(content, dataTable)
+    if metaErr then
+        db:close()
+        return nil, metaErr
     end
 
     -- Query all data. int64 columns come back as TEXT (see
     -- buildInt64SafeSelect) and are turned back into boxes below.
-    local columnTypes = extractSQLColumnTypes(content)
-    local declaredColumns = extractSQLColumns(content)
-    local query = buildInt64SafeSelect(tableName, declaredColumns or {},
-        columnTypes)
+    local declaredColumns = dataTable.columns
+    local columnTypes
+    if schema then
+        columnTypes = {}
+        for _, col in ipairs(schema.columns) do
+            columnTypes[col.sqlName] = col.typeSpec
+        end
+    end
+    local query = buildInt64SafeSelect(tableName, declaredColumns, columnTypes)
 
     local result = {}
     -- Column order is the CREATE TABLE's DECLARATION order, not sorted.
@@ -764,23 +1073,23 @@ local function importSQLFileWithSQLite(filePath, tableDeserializer)
     -- alphabetically -- which put the header in a different order from the
     -- text parser and from the model, so every header comparison failed the
     -- moment this path actually ran (it only does with lsqlite3 present).
+    --
+    -- With an embedded schema the header is the MODEL names in stored position
+    -- order, exactly as the text parser reports them -- one fewer way for the
+    -- two readers to disagree (see TODO/sql_input_round_trip.md's deferred
+    -- lsqlite3 section, which lists their divergences).
     local columns = declaredColumns
-    if columns and #columns > 0 then
-        result[1] = columns
+    local labels = columns
+    if schema then
+        columns, labels = {}, {}
+        for i, col in ipairs(schema.columns) do
+            columns[i] = col.sqlName
+            labels[i] = col.name
+        end
     end
+    result[1] = labels
 
     for row in db:nrows(query) do
-        if not columns then
-            -- Fallback if the CREATE TABLE could not be parsed for names:
-            -- take them from the first row (order is then unspecified).
-            columns = {}
-            for k in pairs(row) do
-                columns[#columns + 1] = k
-            end
-            table.sort(columns)
-            result[1] = columns
-        end
-
         -- Extract values in column order
         local dataRow = {}
         for i, col in ipairs(columns) do
