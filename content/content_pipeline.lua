@@ -478,7 +478,14 @@ end
 -- transcode stage applies to this file, else nil. The reformatter uses it to
 -- rewrite a reversible transcoded source from the reformatted wide TSV
 -- (content_pipeline.md §3.6).
---   encode(content, env, badVal) -> (text) | (nil, reason)
+--   encode(content, env, badVal, file_name) -> (text) | (nil, reason)
+--
+-- The file_name is bound in here rather than left to the caller, because the
+-- forward `transform` receives it and an encoder that has to reproduce anything
+-- derived from it otherwise cannot: an .sql names its table after the file it
+-- lives in, so an encoder without the name would rename the user's table on
+-- every reformat. Encoders that do not need it (xml, eav, tsv:*) ignore the
+-- extra argument.
 --
 -- Two ways a stage is selected, mirroring runTranscode's dispatch:
 --   * opt_transcoderId (the per-file Files.tsv `transcoder` id) — resolves an
@@ -490,10 +497,16 @@ end
 -- If an id is given but its stage isn't reversible, we fall through to the
 -- extension lookup, so the call is always as permissive as the un-id'd form.
 local function reversibleTranscode(file_name, opt_transcoderId)
+    -- Binds file_name as the encoder's 4th argument (see the contract above).
+    local function bound(encode)
+        return function(content, env, badVal)
+            return encode(content, env, badVal, file_name)
+        end
+    end
     if opt_transcoderId then
         local spec = findStageById("transcode", opt_transcoderId)
         if spec and spec.transform and spec.reversible and spec.encode then
-            return {encode = spec.encode}
+            return {encode = bound(spec.encode)}
         end
         -- else: fall through to the extension-keyed lookup below.
     end
@@ -516,7 +529,7 @@ local function reversibleTranscode(file_name, opt_transcoderId)
         end
     end
     if not best or not (best.reversible and best.encode) then return nil end
-    return {encode = best.encode}
+    return {encode = bound(best.encode)}
 end
 
 -- decode: loop with extension peeling. Each iteration runs the highest-priority

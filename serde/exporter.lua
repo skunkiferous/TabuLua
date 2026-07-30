@@ -36,11 +36,9 @@ local serialization = require("serde.serialization")
 local serialize = serialization.serialize
 local serializeJSON = serialization.serializeJSON
 local serializeNaturalJSON = serialization.serializeNaturalJSON
-local serializeSQL = serialization.serializeSQL
 local serializeTableJSON = serialization.serializeTableJSON
 local serializeXML = serialization.serializeXML
 local serializeMessagePack = serialization.serializeMessagePack
-local serializeSQLBlob = serialization.serializeSQLBlob
 
 local base64 = require("util.base64")
 
@@ -54,6 +52,9 @@ local sqlColumnName = sql_schema.sqlColumnName
 local sqlColumnNameSet = sql_schema.sqlColumnNameSet
 local headerSiblings = sql_schema.headerSiblings
 local createTableInsertSQL = sql_schema.createTableInsertSQL
+local cellSQL = sql_schema.cellSQL
+local isHexBytesColumn = sql_schema.isHexBytesColumn
+local isBytesColumn = sql_schema.isBytesColumn
 
 local parsers = require("parsers")
 local extendsOrRestrict = parsers.extendsOrRestrict
@@ -115,24 +116,10 @@ local function isCommentColumn(col)
     return baseType == "comment" or extendsOrRestrict(baseType, "comment")
 end
 
--- Returns true if a column is of type hexbytes (or extending it), stripping |nil suffix.
-local function isHexBytesColumn(col)
-    local colType = col.type
-    local baseType = colType:match("^(.+)|nil$") or colType
-    return baseType == "hexbytes" or extendsOrRestrict(baseType, "hexbytes")
-end
-
--- Returns true if a column is of type base64bytes (or extending it), stripping |nil suffix.
-local function isBase64BytesColumn(col)
-    local colType = col.type
-    local baseType = colType:match("^(.+)|nil$") or colType
-    return baseType == "base64bytes" or extendsOrRestrict(baseType, "base64bytes")
-end
-
--- Returns true if a column is a bytes type (hexbytes or base64bytes).
-local function isBytesColumn(col)
-    return isHexBytesColumn(col) or isBase64BytesColumn(col)
-end
+-- The bytes-column predicates live in sql_schema (which needs them to decide
+-- BLOB, and to write a cell as one). Imported rather than re-stated: the
+-- MessagePack export below asks the same hex-vs-base64 question, and a second
+-- copy is how the two answers drift apart.
 
 -- Returns true if a column is an UNTYPED container: 'table' or 'raw' (or a user
 -- type extending either), with any |nil suffix stripped.
@@ -980,16 +967,10 @@ local function exportSQL(process_files, exportParams)
             end
             return result
         end
-        -- Convert bytes types to SQL BLOB literals
-        if value ~= nil and isBytesColumn(col) then
-            if isHexBytesColumn(col) then
-                return "X'" .. value .. "'"
-            else
-                local binary = base64.decode(value)
-                return serializeSQLBlob(binary)
-            end
-        end
-        return serializeSQL(value, tableSerializer)
+        -- One shared cell writer with the reversible `encode` the sql:*
+        -- transcoders use (sql_schema.cellSQL), so an exported .sql and a
+        -- reformatted one spell the same value the same way.
+        return cellSQL(col, value, tableSerializer)
     end
     return exportTSV(process_files, copy, ser)
 end

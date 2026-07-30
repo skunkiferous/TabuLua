@@ -1543,6 +1543,10 @@ There are two ways a file is routed through a transcoder:
 | `tsv:json-typed` | `.tsv` | explicit | yes² | the file's own header |
 | `tsv:json-natural` | `.tsv` | explicit | yes² | the file's own header |
 | `lua:tabulua` | `.lua` | explicit | yes | the file's own header (row 1) |
+| `sql:json-typed` | `.sql` | explicit | yes³ | the file's own `tabulua_schema` table |
+| `sql:json-natural` | `.sql` | explicit | yes³ | the file's own `tabulua_schema` table |
+| `sql:xml` | `.sql` | explicit | yes³ | the file's own `tabulua_schema` table |
+| `sql:mpk` | `.sql` | explicit | yes³ | the file's own `tabulua_schema` table |
 
 > A transcode stage may declare an **input-extension guard**: an explicitly
 > selected transcoder verifies the file actually has the expected extension and
@@ -1557,8 +1561,15 @@ on-disk source back in its own format from the reformatted wide table; a
 source of truth, so it is never written back over the original).
 
 - `.eav`, `.xml` (`xml:tabulua`), `.tsv.gz` / `.csv.gz`, the `json:*`, the
-  `tsv:*`, and `lua:tabulua` transcoders are reversible — the reformatter rewrites
-  the source in its own format from the reformatted wide table.
+  `tsv:*`, `lua:tabulua`, and the `sql:*` transcoders are reversible — the
+  reformatter rewrites the source in its own format from the reformatted wide table.
+- ³ The `sql:*` round-trip is **normalizing and mildly lossy** — a step below
+  JSON/XML, which lose only formatting. Comment *rows* (the `#` lines a native TSV
+  keeps as `__comment` placeholders) have no SQL representation and are dropped;
+  see [SQL round-trip format](#sql-round-trip-format-sqljson-typed--sqljson-natural--sqlxml--sqlmpk).
+  Column *defaults* are **not** lost. In practice the rewrite is byte-identical to
+  what `--file=sql` produced, because the reformatter re-emits through the same
+  writer the exporter uses.
 - ² The `tsv:*` files share the `.tsv` extension with native data, so the
   reformatter routes a `transcoder`-assigned `.tsv` to the transcoder's `encode`
   (re-rendering each cell as a Lua literal / typed-JSON / natural-JSON value)
@@ -1781,6 +1792,134 @@ with this stage. Two things make it distinct:
   with an instruction quota that code libraries use, so a data file that loops
   instead of returning a literal table aborts rather than hanging the load. It is
   **schema-free** (row 1 carries the column types) and **reversible**.
+
+### SQL round-trip format (`sql:json-typed` / `sql:json-natural` / `sql:xml` / `sql:mpk`)
+
+The `sql:*` transcoders read TabuLua's **own** `--file=sql` export back in as data.
+Like `--file=sql` itself, they come in four variants because a SQL export has two
+independent axes: the container is always `CREATE TABLE` + `INSERT`, but each
+composite cell is encoded by the `--data` flag (`json-typed`, `json-natural`,
+`xml`, `mpk`). That encoding is **not detectable** from the SQL, so the transcoder
+id names it — exactly as `tsv:*` does. Read a file exported with
+`--file=sql --data=xml` using `transcoder=sql:xml`.
+
+Everything here uses the **pure-Lua text parser**. `lsqlite3` is never involved, so
+a `.sql` loads identically on Lua 5.3/5.4/5.5 and LuaJIT, installed or not.
+
+#### The embedded `tabulua_schema` table
+
+SQL alone cannot describe a TabuLua table. Column names are sanitized on export
+(`stats.attack` → `stats_attack`; `prices[iron]` / `prices[iron]=` → `prices_iron_k`
+/ `prices_iron_v`), and SQL types are coarser than TabuLua's (`BIGINT` is both
+`integer` and `int64`; `TEXT` is `string`, `table`, unions, …; `BLOB` cannot say
+whether the model value was hex or base64 text). The schema therefore rides **in
+the file**, as a real table the database keeps and re-dumps — not a `--` comment,
+which every engine discards on load:
+
+```sql
+CREATE TABLE IF NOT EXISTS "tabulua_schema" (
+  "table_name"  TEXT    NOT NULL,
+  "column_name" TEXT    NOT NULL,   -- model name (stats.attack)
+  "sql_name"    TEXT    NOT NULL,   -- physical column in the data table
+  "position"    INTEGER NOT NULL,   -- 0 = table-info row; 1..N = column order
+  "type"        TEXT    NOT NULL,   -- type_spec (int64, {integer}, foo|nil)
+  "default"     TEXT,               -- NULL when the column had none
+  "attributes"  TEXT,               -- NULL, or a JSON object
+  PRIMARY KEY ("table_name","column_name"),
+  UNIQUE      ("table_name","position"),
+  UNIQUE      ("table_name","sql_name"));
+DELETE FROM "tabulua_schema" WHERE "table_name" = 'Creature';
+INSERT INTO "tabulua_schema" VALUES
+  ('Creature','<TABLE>','<TABLE>',0,'<TABLE>',NULL,'{"tabulua":{"model_name":"Creature","version":"0.33"}}'),
+  ('Creature','name','name',1,'name',NULL,NULL),
+  ('Creature','stats.attack','stats_attack',2,'integer',NULL,NULL),
+  ('Creature','resistances[1]','resistances_1_k',3,'Element',NULL,NULL);
+CREATE TABLE "Creature" ( … );
+INSERT INTO "Creature" ( … ) VALUES … ;
+```
+
+The layout is deliberate:
+
+- **Self-contained per file, and safe to concatenate.** Importing one table means
+  reading one file; loading a whole export into one database creates the metadata
+  table once (`IF NOT EXISTS`) and each file contributes its own rows. The
+  `DELETE`-before-`INSERT` makes re-applying a file's metadata idempotent, portably
+  — there is no `INSERT OR REPLACE` spelling common to SQLite, MySQL and
+  PostgreSQL. (Re-running a whole export against a database that already has its
+  *data* tables still fails on their plain `CREATE TABLE`; use a fresh database or
+  drop them first.)
+- **Both names are stored.** The reader locates each value by the stored
+  `sql_name` and labels it with `column_name`, so it never re-runs the exporter's
+  sanitizer — a change to that rule cannot mis-read an older file, and a
+  hand-edited or length-capped physical name still imports.
+- **`position` is the column order.** Rows dumped out of a database come back
+  unordered, so order is recoverable only from an explicit position. `0` is the
+  table-info row; real columns are `1..N`.
+- **Row 0 uses the sentinel `'<TABLE>'`**, not NULLs, so every row stays fully
+  populated and the primary key stays total. Angle brackets never appear in
+  exported names.
+- **`table_name` is the SQL table name** (the file's basename). The model's own
+  dataset name can differ — `Manifest.transposed.sql` is the dataset `Manifest` —
+  and rides row 0's `attributes` as `tabulua.model_name`.
+- Every construct works on SQLite, MySQL and PostgreSQL (9.1+).
+
+#### The `attributes` bag
+
+`TEXT` holding a JSON **object** by convention (never a `JSON`/`jsonb` column type
+— SQLite has none): a preserved payload, not a portably-queryable field. On read it
+is validated structurally — NULL or an object, bounded by a per-cell size cap; an
+array, a scalar or unparseable text is a hard error rather than a silent shrug.
+
+It is **descriptive, never behavioral**: nothing in it changes how a cell is
+parsed, validated or evaluated, and nothing is handed to the sandbox or `load`.
+That is what stops a hand-authored `.sql` from becoming a code-injection surface.
+Units, labels, descriptions, provenance — yes; validators, defaults, expressions —
+no.
+
+Keys are namespaced and unknown ones are preserved: `tabulua` is TabuLua-defined,
+`app` is application-owned and carried verbatim, and any other top-level key is
+reserved (preserved and ignored). v1 defines three **table-level** keys, all on
+row 0, and no per-column keys:
+
+| key | meaning |
+| --- | --- |
+| `tabulua.version` | The writing TabuLua's `major.minor`, as a **string** (compared component-wise: `"0.15"` vs `"0.5"` compares wrong as a float). **Provenance, not a gate** — compatibility is enforced *structurally* (does the file carry the shape the reader needs?), and the version only sharpens the message when that fails. |
+| `tabulua.model_name` | The model's dataset name, when it differs from the SQL table name. |
+| `tabulua.collapsed` | Present (`true`) only on a `--collapse-exploded` export. See below. |
+
+#### What the SQL round-trip loses
+
+**Comment rows.** The `#` lines a native TSV keeps as `__comment` placeholders have
+no SQL representation, so they are dropped. This makes the SQL round-trip
+**normalizing and mildly lossy**, a step below JSON/XML. Column **defaults** are
+*not* lost — the metadata table has a column for them.
+
+#### When a `.sql` is refused
+
+The reader would rather fail loudly than import a shape you did not mean. It
+refuses, naming the reason, when the file:
+
+- has **no `tabulua_schema` table** (an older export, or SQL from another tool):
+  the model column names and types simply are not in it;
+- declares that table but **carries no rows** for its data table;
+- has metadata that **does not match** the data table — a different column count,
+  or an `sql_name` the table does not have;
+- contains **two data tables** (a whole-export concatenation is a database, not a
+  dataset, and silently picking one of its tables would import a file you never
+  named);
+- was written with **`--collapse-exploded`** (`tabulua.collapsed`). Such a file
+  describes its collapsed shape accurately, but loading it would give the model a
+  header spelled differently from the source it came from — one `stats` column, not
+  `stats.attack` / `stats.defense` — changing every downstream export. Re-export
+  without the flag to import it.
+- contains a **malformed literal** (e.g. an unterminated string).
+
+> **`.sql` files are now collected as data.** Because `.sql` is an input format, the
+> loader collects `.sql` files from your data directories and treats an undeclared
+> one the way it treats an undeclared `.tsv` / `.json` / `.xml`: it asks you to
+> declare it in `Files.tsv`, mark it an asset (`typeName=asset_file`), or exclude it
+> with an `ignored_files` glob. If you export SQL **into** a directory the loader
+> scans, either point `--export-dir` elsewhere or add an `ignored_files` glob.
 
 ### Compressed data files (gzip)
 

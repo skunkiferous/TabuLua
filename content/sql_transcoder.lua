@@ -41,10 +41,24 @@ local parsers = require("parsers")
 local parseType = parsers.parseType
 local extendsOrRestrict = parsers.extendsOrRestrict
 
+local tsv_model = require("tsv.tsv_model")
+local processTSV = tsv_model.processTSV
+local defaultOptionsExtractor = tsv_model.defaultOptionsExtractor
+local expressionEvaluatorGenerator = tsv_model.expressionEvaluatorGenerator
+
 local raw_tsv = require("tsv.raw_tsv")
 local rawTSVToString = raw_tsv.rawTSVToString
+local stringToRawTSV = raw_tsv.stringToRawTSV
 
+-- The writer half. tableSQL emits the metadata block, the CREATE TABLE and the
+-- INSERT exactly as exporter.exportSQL assembles them, so a reformatted .sql is
+-- byte-identical to the exported one it came from.
 local sql_schema = require("serde.sql_schema")
+local tableSQL = sql_schema.tableSQL
+
+-- The composite-cell serialisers, one per --data encoding: the forward pairing
+-- of the four deserialisers above, and the same functions exportSQL is handed.
+local serialization = require("serde.serialization")
 
 -- Returns the module version as a string.
 local function getVersion()
@@ -77,14 +91,19 @@ local function failer(name, badVal)
     end
 end
 
--- A private badVal that collects messages, used to drive parseType without
--- touching the loader's badVal (in particular its col_types stack); the forward
--- path calls parsers directly, which read col_types[1]. Mirrors xml_transcoder.
-local function privateBadVal()
+-- A private badVal that collects messages, used to drive parseType / processTSV
+-- without touching the loader's badVal (in particular its col_types stack). Pass
+-- seedColType=true for the forward path (calling parsers directly, which read
+-- col_types[1]); leave it false for processTSV, which pushes its own col_type
+-- via withColType and asserts the stack is empty on entry. Mirrors
+-- xml_transcoder / tsv_transcoders.
+local function privateBadVal(seedColType)
     local msgs = {}
     local bv = error_reporting.badValGen(function(_self, m) msgs[#msgs + 1] = m end)
     bv.logger = error_reporting.nullLogger
-    bv.col_types = {''}
+    if seedColType then
+        bv.col_types = {''}
+    end
     return bv, msgs
 end
 
@@ -144,7 +163,7 @@ local function makeTranscoder(tableDeserializer)
                 .. "to import it")
         end
 
-        local pbad, pmsgs = privateBadVal()
+        local pbad, pmsgs = privateBadVal(true)
         local parserCache = {}      -- column index -> parser (or false if none)
         local function getParser(colIdx)
             local cached = parserCache[colIdx]
@@ -201,6 +220,70 @@ local function makeTranscoder(tableDeserializer)
     end
 end
 
+-- ------------------------------------------------------------
+-- Reverse: native wide TSV -> .sql (the reversible `encode`).
+-- ------------------------------------------------------------
+
+-- Factory: wraps a composite-cell serialiser in the content-pipeline encode
+-- signature (content, env, badVal, fileName).
+--
+-- The reformatter hands back the REFORMATTED wide TSV, which is parsed with the
+-- loader's own machinery (so every cell's parsed Lua value is available) and
+-- re-emitted through sql_schema.tableSQL -- the same writer exporter.exportSQL
+-- assembles, so reformatting an exported .sql is a no-op rather than a
+-- reshuffle. The table is named for the file, which is why the file name is
+-- part of the encode contract.
+--
+-- NORMALIZING, not byte-preserving, as for json/xml: a `.sql` has no
+-- representation for the `__comment` placeholder rows the native TSV
+-- reformatter keeps, so comment ROWS are lost. (Column defaults are not: the
+-- metadata table carries them.)
+local function makeEncoder(tableSerializer)
+    return function(content, _env, _badVal, fileName)
+        local ok, rawtsv = pcall(stringToRawTSV, content)
+        if not ok then return nil, "cannot parse TSV: " .. tostring(rawtsv) end
+
+        local pbad, msgs = privateBadVal()
+        local expr_eval = expressionEvaluatorGenerator({files = {}})
+        local file = processTSV(defaultOptionsExtractor, expr_eval, parseType,
+            fileName or "sql-encode", rawtsv, pbad, {}, false, nil)
+        if not file then
+            return nil, "cannot parse wide TSV: " .. (msgs[1] or "unknown error")
+        end
+        if pbad.errors > 0 then
+            return nil, "wide TSV did not validate: " .. (msgs[1] or "unknown error")
+        end
+        local header = file[1]
+        if not header then
+            return nil, "wide TSV has no header"
+        end
+
+        local rows = {}
+        for r = 2, #file do
+            local row = file[r]
+            if type(row) == "table" then
+                local values = {}
+                for i = 1, #header do
+                    local cell = row[i]
+                    -- NOT `cell and cell.parsed or nil`: a parsed FALSE is a
+                    -- value, and that idiom turns it into nil -- which wrote
+                    -- NULL into a NOT NULL boolean column, so the file no
+                    -- longer re-read. Holes stay holes (cellSQL -> NULL).
+                    if cell ~= nil then
+                        values[i] = cell.parsed
+                    end
+                end
+                rows[#rows + 1] = values
+            end
+        end
+
+        local ok2, text = pcall(tableSQL, header, rows, fileName or "",
+            tableSerializer)
+        if not ok2 then return nil, "cannot serialise SQL: " .. tostring(text) end
+        return text
+    end
+end
+
 -- The forward transforms (one per cell codec), pairing with the --data flag
 -- that produced the file: exportSQL's tableSerializer and this deserializer are
 -- the two halves of one encoding.
@@ -208,6 +291,13 @@ local sqlJsonTypedToTSV   = makeTranscoder(deserializeJSON)
 local sqlJsonNaturalToTSV = makeTranscoder(deserializeNaturalJSON)
 local sqlXmlToTSV         = makeTranscoder(deserializeXML)
 local sqlMpkToTSV         = makeTranscoder(deserializeMessagePackSQLBlob)
+
+-- The reverse encoders: the same serialisers reformatter.lua hands exportSQL
+-- for each --data (its DATA_FORMATS[...].sqlTableSerializer).
+local tsvToSqlJsonTyped   = makeEncoder(serialization.serializeTableJSON)
+local tsvToSqlJsonNatural = makeEncoder(serialization.serializeTableNaturalJSON)
+local tsvToSqlXml         = makeEncoder(serialization.serializeTableXML)
+local tsvToSqlMpk         = makeEncoder(serialization.serializeMessagePackSQLBlob)
 
 -- ============================================================
 -- Public API
@@ -223,6 +313,10 @@ local API = {
     sqlJsonNaturalToTSV = sqlJsonNaturalToTSV,
     sqlXmlToTSV = sqlXmlToTSV,
     sqlMpkToTSV = sqlMpkToTSV,
+    tsvToSqlJsonTyped = tsvToSqlJsonTyped,
+    tsvToSqlJsonNatural = tsvToSqlJsonNatural,
+    tsvToSqlXml = tsvToSqlXml,
+    tsvToSqlMpk = tsvToSqlMpk,
 }
 
 local function apiCall(_, operation, ...)

@@ -10,12 +10,24 @@ Alternatively, while generating "generic SQL", we could create separate tables, 
 
 ---
 
-Note (added while implementing boxed_int64.md Phase 5e): an int64 column now exports as
-BIGINT with a bare literal, e.g. ('ironSword',9007199254740993,...). That is exact in the
-file and exact once stored in SQLite. The hazard is on the way OUT: on LuaJIT every Lua
-number is a double, so reading such a column through tonumber -- or through any SQL
-binding that returns a Lua number, such as lsqlite3 -- silently rounds anything past 2^53
-(9007199254740993 comes back as ...992, with no error). Read the digits as TEXT instead:
-CAST(col AS TEXT), or parse the literal's characters. This matters for the "load the
-exported data in sqlite" idea above, and for any external tool doing the same.
-See TODO/export_format_reimport.md (Scope) for the longer version.
+Note (added while implementing boxed_int64.md Phase 5e; updated 2026-07-29): an int64
+column exports as BIGINT with a bare literal, e.g. ('ironSword',9007199254740993,...).
+That is exact in the file and exact once stored in SQLite. The hazard is on the way OUT:
+on LuaJIT every Lua number is a double, so reading such a column through tonumber -- or
+through any SQL binding that returns a Lua number, such as lsqlite3 -- silently rounds
+anything past 2^53 (9007199254740993 comes back as ...992, with no error). Read the digits
+as TEXT instead: CAST(col AS TEXT), or parse the literal's characters.
+
+OUR OWN readers no longer have this problem: .sql is now an input format (see
+TODO/sql_input_round_trip.md), each exported file carries an embedded tabulua_schema table
+naming its int64 columns, and both readers take the digits as text. The warning stands for
+ANY EXTERNAL tool loading our .sql into a database on a double-only runtime -- which is
+the "load the exported data in sqlite" idea above.
+
+That doc also settles two things this file wonders about: reading a .sql back needs no DB
+engine at all (it uses a pure-Lua text parser, so it works with or without lsqlite3), and
+the DB-flavour work below -- plus using an actual engine as a second, more tolerant reader
+-- is explicitly deferred to here rather than done there. Its "Deferred" section records
+the known costs of the engine path (two readers diverging, unspecified row order without
+ORDER BY, explicit-not-presence-based selection, a differential parity spec) so they are
+not rediscovered.

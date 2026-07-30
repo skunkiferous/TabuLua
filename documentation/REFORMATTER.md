@@ -71,6 +71,13 @@ The `--file=<format>` option specifies the output file type. Each file format su
 summary count. See [SVG diagram export](DATA_FORMAT_README.md#svg-diagram-export---filesvg)
 for the layout and determinism details.
 
+`sql` output is **re-importable**: an exported `.sql` can be listed in `Files.tsv`
+with `transcoder=sql:<data>` (matching the `--data` it was exported with) and read
+straight back, and the reformatter then rewrites it in place. Each file carries its
+own schema in an embedded `tabulua_schema` table, using the pure-Lua parser — no
+`lsqlite3` involved. The round-trip is normalizing and drops comment rows; see
+[SQL round-trip format](DATA_FORMAT_README.md#sql-round-trip-format-sqljson-typed--sqljson-natural--sqlxml--sqlmpk).
+
 ### SVG tuning flags (only affect `--file=svg`)
 
 | Flag | Effect |
@@ -382,6 +389,13 @@ item1      {level="zone_a",position={10,20}}
 | Compact export for external systems | `--collapse-exploded` |
 | Human editing of exported files | Default (no flag) |
 | Programmatic consumption | Either works |
+
+`--collapse-exploded` makes an export **not re-importable** as the same shape: the
+collapsed file describes one `location` column where the source had
+`location.level` and `location.position._1`. The `sql:*` transcoders detect this
+(the export records it as `tabulua.collapsed`) and refuse the file, naming the
+flag, rather than loading a model whose header is spelled differently from the
+source it came from.
 
 ### Using exportExploded in Code
 

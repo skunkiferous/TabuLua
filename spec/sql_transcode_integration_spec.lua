@@ -19,6 +19,7 @@ local after_each = busted.after_each
 local lfs = require("lfs")
 local file_util = require("infra.file_util")
 local manifest_loader = require("loader.manifest_loader")
+local reformatter = require("reformatter")
 local exporter = require("serde.exporter")
 local serialization = require("serde.serialization")
 local sql_schema = require("serde.sql_schema")
@@ -256,6 +257,182 @@ describe("manifest_loader - SQL transcode (Files.tsv-selected)", function()
         local tsv = findTsv(result, "data.sql")
         assert.is_not_nil(tsv)
         assert.equals("7", tsv[1].n.default_expr)
+    end)
+
+    -- ------------------------------------------------------------------
+    -- Reversibility: the reformatter rewrites the .sql in place.
+    -- ------------------------------------------------------------------
+
+    it("reformatter rewrites data.sql via the sql:* encode, unchanged",
+        function()
+        -- The strongest statement available: the encode re-emits through the
+        -- SAME writer exportSQL uses, so reformatting an exported .sql is a
+        -- NO-OP. (The round-trip contract itself is only "normalizing", as for
+        -- json/xml -- but there is nothing here for normalizing to change.)
+        local sql = exportedSQL(serialization.serializeTableNaturalJSON)
+        local pkg_dir = makePkg("SqlPkg", "data.sql", sql, "sql:json-natural")
+        local data_path = path_join(pkg_dir, "data.sql")
+
+        reformatter.processFiles({pkg_dir})
+
+        local on_disk = file_util.readFile(data_path)
+        assert.is_not_nil(on_disk)
+        -- Still SQL -- the native-TSV rewrite would have clobbered it
+        assert.matches('CREATE TABLE "data"', on_disk, 1, true)
+        assert.matches('"tabulua_schema"', on_disk, 1, true)
+        assert.equals(sql, on_disk)
+    end)
+
+    it("keeps the table named for its file, across a reformat", function()
+        -- The encode gets the file name from the pipeline for exactly this: the
+        -- table is named after the file, and an encoder without the name would
+        -- rename the user's table on every reformat.
+        local sql = exportedSQL(serialization.serializeTableNaturalJSON)
+        local pkg_dir = makePkg("SqlPkg", "data.sql", sql, "sql:json-natural")
+        reformatter.processFiles({pkg_dir})
+        local on_disk = file_util.readFile(path_join(pkg_dir, "data.sql"))
+        assert.matches('CREATE TABLE "data"', on_disk, 1, true)
+        assert.matches("DELETE FROM \"tabulua_schema\" WHERE \"table_name\" = 'data'",
+            on_disk, 1, true)
+    end)
+
+    it("re-reads to the same model after a reformat, and is stable", function()
+        local sql = exportedSQL(serialization.serializeTableNaturalJSON)
+        local pkg_dir = makePkg("SqlPkg", "data.sql", sql, "sql:json-natural")
+        local data_path = path_join(pkg_dir, "data.sql")
+
+        reformatter.processFiles({pkg_dir})
+
+        local msgs2 = {}
+        local bad2 = error_reporting.badValGen(
+            function(_s, m) msgs2[#msgs2 + 1] = m end)
+        bad2.logger = error_reporting.nullLogger
+        local result = manifest_loader.processFiles({pkg_dir}, bad2)
+        assert.is_not_nil(result)
+        assert.equals(0, bad2.errors, table.concat(msgs2, " | "))
+        assertModel(findTsv(result, "data.sql"))
+
+        -- Reformatting is stable on a second pass.
+        local before = file_util.readFile(data_path)
+        reformatter.processFiles({pkg_dir})
+        assert.equals(before, file_util.readFile(data_path))
+    end)
+
+    it("round-trips BLOB columns, whose model value is TEXT", function()
+        -- A bytes column is declared BLOB and SQL says nothing more, but the
+        -- model value behind it is TEXT -- hex digits for hexbytes, base64 for
+        -- base64bytes -- and only the embedded schema can say which. This is
+        -- the one cell kind that is not written by serializeSQL at all.
+        local spec = "{name:identifier,bitmap:hexbytes,raw:base64bytes}"
+        local body = "name:identifier\tbitmap:hexbytes\traw:base64bytes\n"
+            .. "icon\t18ff\tYWJj\n"
+
+        local src_dir = makePkg("SqlSrc", "data.tsv", body, nil, nil, spec)
+        local msgs = {}
+        local bad = error_reporting.badValGen(
+            function(_s, m) msgs[#msgs + 1] = m end)
+        bad.logger = error_reporting.nullLogger
+        local native = manifest_loader.processFiles({src_dir}, bad)
+        assert.is_not_nil(native)
+        assert.equals(0, bad.errors, table.concat(msgs, " | "))
+
+        local out_dir = path_join(temp_dir, "bout")
+        assert(lfs.mkdir(out_dir))
+        assert.is_true(exporter.exportSQL(native, {exportDir = out_dir,
+            tableSerializer = serialization.serializeTableNaturalJSON}))
+        local sql, found
+        local function walk(dir)
+            for entry in lfs.dir(dir) do
+                if entry ~= "." and entry ~= ".." then
+                    local p = path_join(dir, entry)
+                    if lfs.attributes(p, "mode") == "directory" then
+                        walk(p)
+                    elseif entry == "data.sql" then
+                        found = p
+                        sql = file_util.readFile(p)
+                    end
+                end
+            end
+        end
+        walk(out_dir)
+        assert.is_not_nil(found)
+        -- hexbytes is a bare X'…' literal (canonicalized to upper case by its
+        -- own parser); base64bytes is written as the DECODED bytes
+        assert.matches("X'18FF'", sql, 1, true)
+        assert.matches("X'616263'", sql, 1, true)
+        file_util.deleteTempDir(src_dir)
+
+        local pkg_dir = makePkg("SqlPkg", "data.sql", sql, "sql:json-natural",
+            nil, spec)
+        local result = manifest_loader.processFiles({pkg_dir}, badVal)
+        assert.is_not_nil(result)
+        assert.equals(0, badVal.errors, table.concat(log_messages, " | "))
+        local tsv = findTsv(result, "data.sql")
+        assert.is_not_nil(tsv)
+        local header = tsv[1]
+        -- The model TEXT is back, in each column's own encoding
+        assert.equals("18FF", tsv[2][header.bitmap.idx].parsed)
+        assert.equals("YWJj", tsv[2][header.raw.idx].parsed)
+
+        -- ...and writing it back reproduces the export byte for byte.
+        reformatter.processFiles({pkg_dir})
+        assert.equals(sql, file_util.readFile(path_join(pkg_dir, "data.sql")))
+    end)
+
+    it("loses comment ROWS, the one documented round-trip loss", function()
+        -- A `#` line in a native TSV is kept by the native reformatter as a
+        -- __comment placeholder row. SQL has no representation for it, so the
+        -- SQL round-trip is NORMALIZING AND MILDLY LOSSY -- a step below
+        -- json/xml, which lose only formatting. (Column DEFAULTS are not lost:
+        -- the metadata table carries them.)
+        local commented = DATA_HEADER
+            .. "# a note about swords\n"
+            .. 'sword\t100\ttrue\t9007199254740993\t"gem","coin"\n'
+        local src_dir = makePkg("SqlSrc", "data.tsv", commented, nil)
+        local msgs = {}
+        local bad = error_reporting.badValGen(
+            function(_s, m) msgs[#msgs + 1] = m end)
+        bad.logger = error_reporting.nullLogger
+        local native = manifest_loader.processFiles({src_dir}, bad)
+        assert.is_not_nil(native)
+        assert.equals(0, bad.errors, table.concat(msgs, " | "))
+        -- The native model DOES carry the comment line...
+        local nativeTsv = findTsv(native, "data.tsv")
+        assert.matches("# a note about swords", tostring(nativeTsv), 1, true)
+
+        local out_dir = path_join(temp_dir, "cout")
+        assert(lfs.mkdir(out_dir))
+        assert.is_true(exporter.exportSQL(native, {exportDir = out_dir,
+            tableSerializer = serialization.serializeTableNaturalJSON}))
+        local sql
+        local function walk(dir)
+            for entry in lfs.dir(dir) do
+                if entry ~= "." and entry ~= ".." then
+                    local p = path_join(dir, entry)
+                    if lfs.attributes(p, "mode") == "directory" then
+                        walk(p)
+                    elseif entry == "data.sql" then
+                        sql = file_util.readFile(p)
+                    end
+                end
+            end
+        end
+        walk(out_dir)
+        assert.is_not_nil(sql)
+        file_util.deleteTempDir(src_dir)
+
+        -- ...and the .sql does not, in either direction.
+        assert.is_nil(sql:match("a note about swords"))
+        local pkg_dir = makePkg("SqlPkg", "data.sql", sql, "sql:json-natural")
+        local result = manifest_loader.processFiles({pkg_dir}, badVal)
+        assert.is_not_nil(result)
+        assert.equals(0, badVal.errors, table.concat(log_messages, " | "))
+        local tsv = findTsv(result, "data.sql")
+        assert.is_not_nil(tsv)
+        assert.is_nil(tostring(tsv):match("a note about swords"))
+        -- The DATA survived; only the comment row went.
+        assert.equals(2, #tsv)
+        assert.equals("sword", tsv[2][tsv[1].name.idx].parsed)
     end)
 
     -- ------------------------------------------------------------------

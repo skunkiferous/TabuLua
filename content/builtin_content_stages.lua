@@ -333,14 +333,18 @@ content_pipeline.register(NAME, {
 -- from the file's own embedded tabulua_schema table, which is also the file's own
 -- answer to "is this SQL ours?" (SQL has no xmlns to ask with).
 --
--- FORWARD ONLY for now: `reversible` is deliberately absent until Phase 3 adds
--- the matching `encode`, so the reformatter reads a .sql without claiming it can
--- rewrite one.
+-- Reversible: the reformatter rewrites a .sql source from the reformatted wide
+-- TSV via `encode`, reached through the id-selected reversibleTranscode path. The
+-- encode re-emits through the SAME writer exporter.exportSQL uses, so reformatting
+-- an exported .sql is a no-op. NORMALIZING, not byte-preserving, like json/xml:
+-- comment ROWS have no SQL representation and are lost.
 content_pipeline.register(NAME, {
     phase = "transcode",
     id = "sql:json-typed",
     inputExtensions = {"sql"},
     outputKind = "text",
+    reversible = true,
+    encode = sql_transcoder.tsvToSqlJsonTyped,
     transform = sql_transcoder.sqlJsonTypedToTSV,
 })
 
@@ -349,6 +353,8 @@ content_pipeline.register(NAME, {
     id = "sql:json-natural",
     inputExtensions = {"sql"},
     outputKind = "text",
+    reversible = true,
+    encode = sql_transcoder.tsvToSqlJsonNatural,
     transform = sql_transcoder.sqlJsonNaturalToTSV,
 })
 
@@ -357,6 +363,8 @@ content_pipeline.register(NAME, {
     id = "sql:xml",
     inputExtensions = {"sql"},
     outputKind = "text",
+    reversible = true,
+    encode = sql_transcoder.tsvToSqlXml,
     transform = sql_transcoder.sqlXmlToTSV,
 })
 
@@ -365,6 +373,8 @@ content_pipeline.register(NAME, {
     id = "sql:mpk",
     inputExtensions = {"sql"},
     outputKind = "text",
+    reversible = true,
+    encode = sql_transcoder.tsvToSqlMpk,
     transform = sql_transcoder.sqlMpkToTSV,
 })
 

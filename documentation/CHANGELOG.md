@@ -9,11 +9,62 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- **`.sql` is now an INPUT format: the `sql:*` transcoders.** An exported `.sql` can be
+  listed in `Files.tsv` with `transcoder=sql:json-typed` / `sql:json-natural` / `sql:xml` /
+  `sql:mpk` and read straight back as a wide, typed table, and the reformatter then
+  rewrites it in place. There are four ids for the same reason `tsv:*` has three: the
+  container is always `CREATE TABLE` + `INSERT`, but the *cell* encoding is whatever
+  `--data` produced it and is **not** detectable from the SQL, so the id names it. This
+  works on **every** runtime — Lua 5.3/5.4/5.5 and LuaJIT — because it uses the pure-Lua
+  text parser; `lsqlite3` is never involved, so a dataset loads identically whether or not
+  that rock is installed. This reverses the earlier "SQL won't be an input" ruling, which
+  rested on `BIGINT` being unreadable on LuaJIT — the reader now takes the digits as text
+  and rebuilds the `int64` box exactly.
+- **Every exported `.sql` now carries its own schema, in an embedded `tabulua_schema`
+  table.** SQL alone cannot describe a TabuLua table: column names are sanitized on export
+  (`stats.attack` → `stats_attack`), and SQL types are coarser than ours (`BIGINT` is both
+  `integer` and `int64`; `BLOB` cannot say whether the model value was hex or base64 text).
+  The schema therefore rides in the file as **a real table the database keeps and
+  re-dumps** — not a `--` comment, which every engine discards on load. It stores both
+  names per column (so a value is located by its recorded physical name, and a later change
+  to the sanitizer cannot mis-read an older file), an explicit `position` (dumped rows come
+  back unordered), the `type_spec`, the column's **default** (previously lost), and a
+  namespaced, size-capped JSON `attributes` bag for descriptive metadata. Each file is
+  self-contained *and* safe to concatenate: `CREATE TABLE IF NOT EXISTS` plus a portable
+  per-table `DELETE`-then-`INSERT`, all of which works on SQLite, MySQL and PostgreSQL.
+
 ### Changed
+
+- **`.sql` files are collected from data directories, and an undeclared one is now an
+  error.** Because `.sql` is an input format, the loader collects `.sql` files and treats an
+  undeclared one the way it treats an undeclared `.tsv` / `.json` / `.xml`: declare it in
+  `Files.tsv`, mark it an asset (`typeName=asset_file`), or exclude it with an
+  `ignored_files` glob. **If you export SQL into a directory the loader scans**, point
+  `--export-dir` elsewhere or add an `ignored_files` glob.
+- A content-pipeline transcode `encode` now receives the file name as a 4th argument. The
+  forward `transform` always had it; an encoder that must reproduce anything derived from
+  the name otherwise cannot (a `.sql` names its table after its file). Additive — existing
+  encoders ignore it.
+- The SQL exporter's DDL half moved into a new leaf module `serde/sql_schema.lua`, which
+  both the exporter and the new transcoder use, so the format has one writer rather than
+  two that can drift. Export output is byte-identical across the move.
 
 ### Removed
 
+- **The `-- tabulua-types:` comment the SQL exporter used to write, with no fallback.** The
+  embedded `tabulua_schema` table replaces it and is strictly better: a comment survives a
+  file round-trip but is discarded the moment the file is loaded into a database, it
+  carried no default and no physical-name mapping, and because it walked the whole header
+  rather than the exported columns it listed comment columns the `CREATE TABLE` had already
+  dropped. A `.sql` exported by an older version must be re-exported before it can be read
+  back.
+
 ### Fixed
+
+- A `BLOB` or `BIGINT` in an **exploded** column (`stats.attack`) was read without its
+  declared type, because the retired type comment was keyed by model name while the
+  `CREATE TABLE` uses the sanitized one, and the two never matched. The metadata table
+  records both names, so the declared type now reaches the right physical column.
 
 ## [0.33.0] - 2026-07-21
 

@@ -46,13 +46,16 @@ local unionTypes = parsers.unionTypes
 -- rows, so a name or a type_spec containing a quote is escaped identically.
 local serialization = require("serde.serialization")
 local serializeSQL = serialization.serializeSQL
+local serializeSQLBlob = serialization.serializeSQLBlob
 local serializeTableNaturalJSON = serialization.serializeTableNaturalJSON
+
+local base64 = require("util.base64")
 
 -- Lua base types
 local BASE_TYPES = {"boolean", "integer", "number", "string", "table"}
 
--- Compound extension the model treats as ONE extension (see modelDatasetName).
-local TRANSPOSED_EXT = ".transposed.tsv"
+-- Infix the model treats as part of the extension, not the name (modelDatasetName).
+local TRANSPOSED_INFIX = ".transposed"
 
 --- The embedded metadata table: name, sentinel, and version marker.
 ---
@@ -271,6 +274,12 @@ end
 --- loader/files_desc.lua applies when it checks a typeName against its file
 --- name -- so the two names legitimately diverge, and the reader cannot
 --- recompute one from the other. Hence it rides in the file, on row 0.
+---
+--- The `.transposed` infix is peeled whatever the final extension is, so the
+--- exported `Manifest.transposed.sql` reports the same model name as the
+--- `Manifest.transposed.tsv` it came from -- which matters once a .sql is
+--- itself reformatted (Phase 3) and has to reproduce that name from its own
+--- file name alone.
 --- @param header table The header, whose __source is preferred
 --- @param fileInfo table|nil {hasDataRows, sourceName} from the export loop
 --- @return string The model dataset name
@@ -278,10 +287,57 @@ local function modelDatasetName(header, fileInfo)
     local source_path = splitPath(
         header.__source or (fileInfo and fileInfo.sourceName) or "")
     local file = source_path[#source_path] or "unknown"
-    if file:sub(-#TRANSPOSED_EXT) == TRANSPOSED_EXT then
-        return file:sub(1, -#TRANSPOSED_EXT - 1)
+    local base = file:match("^(.*)%.[^%.]+$") or file
+    if base:sub(-#TRANSPOSED_INFIX) == TRANSPOSED_INFIX then
+        return base:sub(1, -#TRANSPOSED_INFIX - 1)
     end
-    return file:match("^(.*)%.[^%.]+$") or file
+    return base
+end
+
+-- Returns true if a column is of type hexbytes (or extending it), stripping |nil suffix.
+--
+-- The bytes predicates live HERE because they answer an SQL question -- is this
+-- column a BLOB? -- and both writers of the format need the same answer: the
+-- exporter and the reversible `encode` the sql:* transcoders use. (The
+-- MessagePack exporter asks the same question, for the same hex-vs-base64
+-- reason, and imports them from here rather than keeping a second copy.)
+local function isHexBytesColumn(col)
+    local colType = col.type
+    local baseType = colType:match("^(.+)|nil$") or colType
+    return baseType == "hexbytes" or extendsOrRestrict(baseType, "hexbytes")
+end
+
+-- Returns true if a column is of type base64bytes (or extending it), stripping |nil suffix.
+local function isBase64BytesColumn(col)
+    local colType = col.type
+    local baseType = colType:match("^(.+)|nil$") or colType
+    return baseType == "base64bytes" or extendsOrRestrict(baseType, "base64bytes")
+end
+
+-- Returns true if a column is a bytes type (hexbytes or base64bytes).
+local function isBytesColumn(col)
+    return isHexBytesColumn(col) or isBase64BytesColumn(col)
+end
+
+--- One data cell as an SQL literal.
+---
+--- A bytes column is a BLOB, and which TEXT the model holds behind it depends
+--- on the declared type -- hex digits for hexbytes, base64 for base64bytes --
+--- so the two are written differently and the embedded schema is what tells the
+--- reader them apart again. Everything else goes through serializeSQL with the
+--- caller's table serializer, which is the `--data` cell encoding.
+--- @param col table|nil The model column (nil for a synthesized column)
+--- @param value any The parsed value
+--- @param tableSerializer function|nil Composite-cell serializer
+--- @return string The SQL literal
+local function cellSQL(col, value, tableSerializer)
+    if value ~= nil and col ~= nil and isBytesColumn(col) then
+        if isHexBytesColumn(col) then
+            return "X'" .. value .. "'"
+        end
+        return serializeSQLBlob(base64.decode(value))
+    end
+    return serializeSQL(value, tableSerializer)
 end
 
 --- The columns this file's data table actually has, described once.
@@ -479,6 +535,49 @@ local function createTableInsertSQL(sql_types, header, export_cols, fileInfo)
     return result
 end
 
+--- A complete .sql file for one table, from a model header and its rows.
+---
+--- This is the whole-file form of what exportSQL assembles piecewise through
+--- the generic export loop, and it must produce the SAME BYTES: reformatting an
+--- exported .sql has to be a no-op, not a reshuffle. (`sql_schema_spec` asserts
+--- that against exportSQL's own output; the odd-looking `") VALUES --"` tail on
+--- the column-list line is the export loop's, reproduced deliberately -- it
+--- comments out the `),` that the row machinery emits after it.)
+--- @param header table The model header (columns with name/type/type_spec/idx)
+--- @param rows table Sequence of rows; each a sequence of parsed cell values
+--- @param sourceName string The file this represents (names the SQL table)
+--- @param tableSerializer function|nil Composite-cell serializer (the --data one)
+--- @return string The file text
+local function tableSQL(header, rows, sourceName, tableSerializer)
+    local fileInfo = {hasDataRows = #rows > 0, sourceName = sourceName}
+    local entries = exportedColumns(header, nil)
+    local out = {createTableInsertSQL(newTypeCache(), header, nil, fileInfo)}
+
+    local names = {}
+    for i, e in ipairs(entries) do
+        names[i] = '"' .. e.sqlName .. '"'
+    end
+
+    if #rows == 0 then
+        -- Header-only: the INSERT was commented out above, and the column list
+        -- goes with it -- so what follows is the export loop's empty row.
+        out[#out + 1] = "(" .. string.rep(",", #entries - 1) .. ")"
+    else
+        out[#out + 1] = "(" .. table.concat(names, ",") .. ") VALUES --),"
+        local tuples = {}
+        for r, row in ipairs(rows) do
+            local vals = {}
+            for i, e in ipairs(entries) do
+                vals[i] = cellSQL(e.col, row[i], tableSerializer)
+            end
+            tuples[r] = "(" .. table.concat(vals, ",") .. ")"
+        end
+        out[#out + 1] = "\n" .. table.concat(tuples, ",\n")
+    end
+    out[#out + 1] = "\n;\n"
+    return table.concat(out)
+end
+
 -- ============================================================
 -- Module API
 -- ============================================================
@@ -499,6 +598,11 @@ local API = {
     exportedColumns = exportedColumns,
     metadataSQL = metadataSQL,
     createTableInsertSQL = createTableInsertSQL,
+    tableSQL = tableSQL,
+    cellSQL = cellSQL,
+    isHexBytesColumn = isHexBytesColumn,
+    isBase64BytesColumn = isBase64BytesColumn,
+    isBytesColumn = isBytesColumn,
     -- Shared with the READER (serde/importer.lua), which must spell the table
     -- name, the row-0 sentinel and the version marker exactly as the writer did
     METADATA_TABLE = METADATA_TABLE,

@@ -2,7 +2,9 @@
 
 ## Status
 
-**IN PROGRESS (2026-07-24; retrimmed 2026-07-27).**
+**DONE — all 5 phases shipped (2026-07-24; retrimmed 2026-07-27; implemented 2026-07-28/29).
+Pending user review and commit.** The only deferred item is the optional `lsqlite3` engine
+at the bottom of this doc, which was never in scope.
 
 - **Phase 0 — DONE (2026-07-28), pending user review/commit.** `serde/sql_schema.lua`
   extracted; verified a pure move by exporting the tutorial with the HEAD exporter and with
@@ -35,6 +37,32 @@
   asset, so an undeclared one now asks to be declared/marked/ignored instead of being
   silently copied into every export. **Document in Phase 4** — anyone exporting SQL *into*
   their data directory will meet this.
+
+- **Phase 3 — DONE (2026-07-29), pending user review/commit.** All four `sql:*` stages are
+  `reversible` with a matching `encode`. The round-trip is **stronger than the plan asked
+  for**: the encode re-emits through `sql_schema.tableSQL`, the same writer `exportSQL`
+  assembles, so reformatting an exported `.sql` is **byte-identical**, not merely
+  equivalent. Asserted directly, along with re-read equality, second-pass stability, BLOB
+  columns, and the documented comment-row loss. 3409/3409 on Lua 5.4 and LuaJIT;
+  `pre_commit_check` green; the tutorial's SQL export is byte-unchanged by the refactor.
+- **Phase 3 needed one contract change: `encode` now receives the file name** as a 4th
+  argument, bound in by `content_pipeline.reversibleTranscode`. A `.sql` names its table
+  after its file, and an encoder without the name would rename the user's table on every
+  reformat. Additive — `xml`/`eav`/`tsv:*` encoders ignore it.
+- **Two writers of one format became one.** `cellSQL` (the bytes-vs-`serializeSQL` cell
+  rule) and the bytes-column predicates moved into `sql_schema`, and `exportSQL` now calls
+  them — verified byte-neutral against the tutorial export. Without that the reversible
+  `encode` would have been a second, drifting implementation of the same format.
+
+- **Phase 4 — DONE (2026-07-29).** `DATA_FORMAT_README.md` (the `sql:*` family, the
+  `tabulua_schema` layout, the `attributes` bag and version marker, the comment-row loss,
+  every refusal, and the new `.sql`-is-collected-as-data behaviour), `REFORMATTER.md`,
+  `MODULES.md` (new `sql_transcoder` entry; `sql_schema` / `importer` / `content_pipeline` /
+  `manifest_loader` entries updated), `CHANGELOG.md`.
+  [export_format_reimport.md](export_format_reimport.md)'s Scope now records that its SQL
+  ruling was reversed (the `mpk` half stands), [improved-sql.txt](improved-sql.txt)'s note
+  is updated to say our own readers are fixed and the engine work is deferred to it, and
+  [README.md](README.md) moves this doc to Done.
 
 ### What Phase 1 settled, that later phases must not re-decide
 

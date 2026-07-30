@@ -22,8 +22,10 @@ native-rewrite branch (which would otherwise overwrite it with plain TSV). Tests
 `spec/lua_transcoder_spec.lua` (unit; incl. the quota-abort and non-table cases) +
 `spec/lua_transcode_integration_spec.lua` (load-as-data routing, fn2Transcoder
 threading, reformatter round-trip). Docs: CHANGELOG, DATA_FORMAT_README, MODULES.
-Full suite green (2894). **Nothing left in scope** (`sql`/`mpk` are explicitly
-out-of-scope, see Scope).
+Full suite green (2894). **Nothing left in scope** (`sql`/`mpk` were explicitly
+out-of-scope, see Scope -- the `sql` half was later reversed by
+[sql_input_round_trip.md](sql_input_round_trip.md), which added `sql:*` as a separate
+piece of work; `mpk` stands).
 
 ---
 
@@ -68,7 +70,7 @@ each export, as an *input*:
 | `tsv` / `json-typed` | ✅ via `tsv:json-typed` (Phase 1) |
 | `tsv` / `json-natural` | ✅ via `tsv:json-natural` (Phase 1) |
 | `lua` / `lua` | ✅ via `lua:tabulua` (Phase 2) — id-only, so a data `.lua` is opted in explicitly; without it a `.lua` stays a code library |
-| `sql` / * | ❌ **won't support** (see Scope) |
+| `sql` / `json-typed`, `json-natural`, `xml`, `mpk` | ✅ via `sql:*` — **this doc's ruling was reversed**, see [sql_input_round_trip.md](sql_input_round_trip.md) |
 | `mpk` / `mpk` | ❌ **won't support** (see Scope) |
 
 (`importer.lua` *can* read all of these, but it is wired only into
@@ -87,6 +89,15 @@ production loader. This work makes the loader itself read them.)
   [exporter.exportLua](../exporter.lua#L626).
 
 **Out of scope — `sql` and `mpk` will *not* become input formats** (user decision):
+
+> **SUPERSEDED for SQL (2026-07-29).** It *was* revisited, and the ruling below was
+> reversed: `.sql` is an input format via the `sql:*` transcoders — see
+> [sql_input_round_trip.md](sql_input_round_trip.md). The `BIGINT`-on-LuaJIT trap
+> described here is what blocked it, and it is now solved on both sides: the reader
+> takes the literal's digits as text, and each exported file carries an embedded
+> `tabulua_schema` table saying which columns are `int64` (replacing the
+> `-- tabulua-types:` comment referenced below, which no longer exists). The `mpk`
+> ruling stands. Everything below is kept as the record of the original decision.
 
 - **SQL** — nobody ships data as `.sql`; DB-to-DB transfer goes through CSV/TSV
   precisely so the source's DB vendor and schema don't gate reading the data. An
@@ -222,4 +233,5 @@ Each independently shippable and **committed separately** (user does all commits
   is only loadable if its members are in a re-importable format. Once these transcoders
   land, the archive plan gains a "loadable member formats" note enumerating the set
   (native `.tsv`/`.csv`, `.eav`, `.gz`, `json`+`json:*`, `xml`+`xml:tabulua`, and now
-  `tsv:*` / `lua:tabulua`; **not** `sql` / `mpk`).
+  `tsv:*` / `lua:tabulua`, plus `sql:*` since
+  [sql_input_round_trip.md](sql_input_round_trip.md); **not** `mpk`).
