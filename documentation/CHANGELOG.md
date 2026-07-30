@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+### Changed
+
+### Removed
+
+### Fixed
+
+## [0.34.0] - 2026-07-30
+
+### Added
+
 - **`.sql` is now an INPUT format: the `sql:*` transcoders.** An exported `.sql` can be
   listed in `Files.tsv` with `transcoder=sql:json-typed` / `sql:json-natural` / `sql:xml` /
   `sql:mpk` and read straight back as a wide, typed table, and the reformatter then
