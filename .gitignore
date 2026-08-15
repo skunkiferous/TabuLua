@@ -40,3 +40,6 @@ data
 .antlr/TypeSpecLexer.tokens
 .antlr/TypeSpecListener.java
 .antlr/TypeSpecParser.java
+
+# Current issues
+TODO/todo_todo.md
