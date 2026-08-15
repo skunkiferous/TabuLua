@@ -25,8 +25,14 @@ for _, a in ipairs(arg or {}) do
     end
 end
 
+-- The read stays in text mode, which is forgiving: on Windows it normalizes the
+-- CRLF the reformatter's redirected stdout produces. The write is BINARY on
+-- purpose, so the "\n" below stays one byte on every platform and the generated
+-- expected_output.txt files are byte-identical whichever OS ran --update. Text
+-- mode ("w") makes them CRLF on Windows and LF on Linux, so the goldens could
+-- never match on both.
 local input_h = input_file and assert(io.open(input_file, "r")) or io.stdin
-local output_h = output_file and assert(io.open(output_file, "w")) or io.stdout
+local output_h = output_file and assert(io.open(output_file, "wb")) or io.stdout
 
 -- Pre-compute the escaped temp_dir pattern once
 local escaped_temp_dir = nil

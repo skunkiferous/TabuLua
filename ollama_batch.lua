@@ -348,8 +348,9 @@ local function appendProgress(filePath, columns, newRows)
         lines[#lines + 1] = table.concat(cells, "\t")
     end
     local content = table.concat(lines, "\n") .. "\n"
-    -- Append to file
-    local file, err = io.open(filePath, "a")
+    -- Append in BINARY mode, so the "\n" separators stay one byte on every
+    -- platform (text mode would write CRLF on Windows).
+    local file, err = io.open(filePath, "ab")
     if not file then
         return nil, "failed to open progress file: " .. tostring(err)
     end

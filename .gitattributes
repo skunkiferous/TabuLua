@@ -1,0 +1,14 @@
+# LF everywhere. No OS-specific end-of-line mapping, on any platform.
+#
+# Every text file is stored LF in the repo AND checked out LF, whatever each
+# machine's core.autocrlf happens to be, so Windows and WSL/Linux git agree on
+# the state of the work tree.
+#
+# This matches the policy the code already enforces: infra/file_util.lua
+# writeFile opens in binary mode so "\n" stays one byte on every platform, and
+# serde/exporter.lua rejects a CR in any exported text file outright. Reading
+# CRLF stays tolerated everywhere; only writing and storing it is refused.
+* text=auto eol=lf
+
+# Compressed payload: never EOL-translate.
+*.gz binary
