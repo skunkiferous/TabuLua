@@ -1,0 +1,74 @@
+# .draugr/kit/spec.yaml - what this project needs INSIDE the mound. Commit it.
+#
+# This is a standard sbx kit, not a Draugr invention. It works with plain
+#   sbx run claude --kit .draugr/kit
+# and can be packed and pushed to a registry to share across repositories:
+#   sbx kit pack .draugr/kit && sbx kit push ...
+#
+# Full schema: https://docs.docker.com/ai/sandboxes/customize/kits/
+# Worked examples: https://github.com/docker/sbx-kits-contrib
+#
+# Check it before you find out the hard way:  dr-kit validate
+# See what is actually in force, defaults included:  dr-policy
+# Applying a changed kit recreates the container, so dr-up reports drift rather
+# than doing it behind your back.
+
+# v2 spellings throughout. v1 still validates, but every field below has moved
+# and v1 now emits a deprecation warning on each check - and a warning you are
+# trained to ignore is worse than no warning. Verified against sbx 0.37.1.
+schemaVersion: "2"
+kind: mixin
+# `name` is the one constrained field: sbx requires lowercase alphanumeric with
+# hyphens, so it is a slug of the project name rather than the name itself.
+# displayName and description below are free text and keep the original spelling.
+name: tabulua
+displayName: TabuLua development environment
+description: Network rules and setup for the TabuLua project.
+
+requires:
+  agent: claude
+
+caps:
+  network:
+    # ADDED TO the machine-wide defaults, not instead of them. sbx ships a local
+    # policy of ~190 allow rules covering package managers, OS packages, the
+    # common code hosts and the AI service endpoints - so npm, pip and github.com
+    # already work without listing anything here.
+    #
+    # Default-deny is still real: anything matching no rule anywhere is refused.
+    # Check a specific host with:  dr-policy --check <host>
+    allow: []
+      # - internal-registry.example.com
+      # - files.example.org
+
+    # deny wins over allow, which is how you carve a hole in a wildcard or shut
+    # off something the machine-wide defaults let through.
+    #deny:
+    #  - telemetry.example.com
+
+# Ports this project always serves. Top-level in v2, NOT under network:.
+# For one-off ports use dr-ports instead - editing the kit recreates the container.
+#publishedPorts:
+#  - container: 5173
+#    protocol: tcp
+#    name: dev-server
+
+#environment:
+#  variables:
+#    NODE_ENV: development
+
+commands:
+  # Runs once, when the sandbox is created. This is where npm ci, uv sync and
+  # apt-get install go - the difference between a teammate cloning your repo and
+  # being productive in one command, versus half an hour of guessing.
+  install: []
+    # - command: "npm ci"
+    #   user: "1000"
+    #   description: Install dependencies
+
+  # Runs on every start, so it must be idempotent.
+  #startup:
+  #  - command: ["sh", "-c", "nohup npm run dev >/tmp/dev.log 2>&1 &"]
+  #    user: "1000"
+  #    background: true
+  #    description: Start the dev server

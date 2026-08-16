@@ -43,3 +43,8 @@ data
 
 # Current issues
 TODO/todo_todo.md
+
+# Draugr: describes this checkout, not the project.
+.draugr.local.conf
+.draugr/kit.applied
+.draugr/tmp/
