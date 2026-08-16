@@ -37,7 +37,21 @@ caps:
     #
     # Default-deny is still real: anything matching no rule anywhere is refused.
     # Check a specific host with:  dr-policy --check <host>
-    allow: []
+    allow:
+      # The one host TabuLua needs that the machine-wide defaults do NOT cover.
+      # Everything else the Lua setup below touches is already allowed by them:
+      # archive.ubuntu.com / security.ubuntu.com (apt), github.com and
+      # raw.githubusercontent.com (rockspecs, and the source clones for semver
+      # and lua-sandbox), and gitlab.com (ltcn) — all verified reachable from
+      # inside this sandbox.
+      #
+      # luarocks.org is not, and it fails SOFTLY, which is why it is easy to
+      # miss: luarocks warns "Failed downloading .../manifest-5.4" and then
+      # falls back to the moonrocks mirror on raw.githubusercontent.com. Stable
+      # rocks still install that way, so nothing looks broken — but the mirror
+      # does not carry everything, and every luarocks call pays for a doomed
+      # manifest fetch first.
+      - luarocks.org
       # - internal-registry.example.com
       # - files.example.org
 
@@ -61,10 +75,134 @@ commands:
   # Runs once, when the sandbox is created. This is where npm ci, uv sync and
   # apt-get install go - the difference between a teammate cloning your repo and
   # being productive in one command, versus half an hour of guessing.
-  install: []
-    # - command: "npm ci"
-    #   user: "1000"
-    #   description: Install dependencies
+  #
+  # The stock sandbox image has NO Lua at all — no lua, no luarocks, no busted.
+  # These five steps are Docker/Dockerfile.lua54 translated from Alpine to the
+  # Ubuntu sandbox image, plus the rocks the test suite uses that the Dockerfile
+  # never needed. Verified end-to-end: run_tests.sh 3409/3409 and
+  # pre_commit_check.sh all six steps green. See README.md next to this file.
+  install:
+    # ----------------------------------------------------------------
+    # 1. System packages
+    # ----------------------------------------------------------------
+    # libsqlite3-dev is not optional weight: it is what lets lsqlite3 build, and
+    # lsqlite3 is what makes serde/importer.lua's importSQLFileWithSQLite path
+    # execute at all. Without the rock that function falls back to the text SQL
+    # parser and logs "SQLite3 not available", so spec/exporter_spec.lua:24
+    # selects `pending` over `it` and two tests report as passing without ever
+    # having run.
+    - command: |
+        set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends \
+          lua5.4 liblua5.4-dev luarocks \
+          build-essential libreadline-dev libsqlite3-dev \
+          unzip git curl
+        rm -rf /var/lib/apt/lists/*
+      user: "0"
+      description: Install Lua 5.4, LuaRocks, build toolchain and SQLite headers
+
+    # ----------------------------------------------------------------
+    # 2. Point `lua` and `luarocks` at 5.4
+    # ----------------------------------------------------------------
+    # Two Lua-5.1 traps ship with Ubuntu's packaging, both of which fail quietly:
+    #
+    #  (a) The luarocks package depends on liblua5.1, and /usr/bin/luarocks is a
+    #      `#!/usr/bin/env lua-any` script whose "-- Lua-Versions: 5.1 5.3 5.4"
+    #      comment makes lua-any pick the FIRST installed version — 5.1. So a
+    #      plain `luarocks install lpeg` compiles against /usr/include/lua5.1 and
+    #      installs into /usr/local/{share,lib}/lua/5.1/, where lua5.4 never
+    #      looks. The install SUCCEEDS; only the later require() fails.
+    #      Reordering that list is the mechanism Debian's lua-any is built
+    #      around, so `luarocks` now means 5.4 and `luarocks-5.1` still works.
+    #
+    #  (b) /usr/bin/lua is an alternatives symlink that also resolves to 5.1.
+    #      pre_commit_check.sh probes lua54 -> lua5.4 -> lua and lands on lua5.4,
+    #      but run_tests.sh calls bare `lua extract_test_errors.lua`, which would
+    #      parse the TAP output under 5.1.
+    - command: |
+        set -euo pipefail
+        sed -i 's/^-- Lua-Versions:.*/-- Lua-Versions: 5.4 5.3 5.1/' /usr/bin/luarocks
+        update-alternatives --set lua-interpreter /usr/bin/lua5.4
+        update-alternatives --set lua-compiler   /usr/bin/luac5.4
+        [ "$(lua -v 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)" = "5.4" ] \
+          || { echo "lua is not 5.4: $(lua -v 2>&1)" >&2; exit 1; }
+        [ "$(luarocks config lua_version)" = "5.4" ] \
+          || { echo "luarocks targets $(luarocks config lua_version), not 5.4" >&2; exit 1; }
+      user: "0"
+      description: Make `lua` and `luarocks` resolve to 5.4, not Ubuntu's 5.1 default
+
+    # ----------------------------------------------------------------
+    # 3. Rocks from the LuaRocks registry
+    # ----------------------------------------------------------------
+    # Unpinned, matching Docker/Dockerfile.lua54. Beyond that Dockerfile's list:
+    #   luafilesystem — `lfs`, used by loader/ and infra/file_util.lua
+    #   dkjson        — the JSON transcoders
+    #   luasocket     — `socket` / `ltn12`, used by ollama_batch.lua
+    #   luacov        — run_tests.sh passes --coverage; busted aborts without it
+    #   luassert      — arrives with busted; listed so a busted change can't drop it
+    - command: |
+        set -euo pipefail
+        for rock in \
+          lpeg luafilesystem lualogging dkjson lua-messagepack tableshape \
+          semver libdeflate luasocket lsqlite3 busted luassert luacov
+        do
+          echo "==> luarocks install $rock"
+          luarocks-5.4 install "$rock"
+        done
+      user: "0"
+      description: Install TabuLua's LuaRocks dependencies for Lua 5.4
+
+    # ----------------------------------------------------------------
+    # 4. Rocks installed straight from their source repositories
+    # ----------------------------------------------------------------
+    # lua-sandbox is not in the registry at all; upstream's own instructions point
+    # at this rockspec URL, which is what Docker/Dockerfile.lua54 uses.
+    #
+    # ltcn is registry-hosted ONLY on the dev server (luarocks.org/dev, as scm-1),
+    # which the moonrocks mirror does not carry. Installing the identical rockspec
+    # from the git repo its source.url points at anyway makes ltcn resolve the same
+    # way whether or not luarocks.org is allowed — so this step keeps working if
+    # the allow rule above is ever dropped. `luarocks install <rockspec-path>`
+    # still honours source.url, so this is upstream master, not a vendored copy.
+    - command: |
+        set -euo pipefail
+        luarocks-5.4 install \
+          https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
+
+        tmp="$(mktemp -d)"
+        git clone --depth 1 https://gitlab.com/craigbarnes/ltcn.git "$tmp/ltcn"
+        ( cd "$tmp/ltcn" && luarocks-5.4 install ltcn-scm-1.rockspec )
+        rm -rf "$tmp"
+      user: "0"
+      description: Install lua-sandbox and ltcn from their upstream repositories
+
+    # ----------------------------------------------------------------
+    # 5. Verify
+    # ----------------------------------------------------------------
+    # A rock that installed into the wrong Lua tree still exits 0, so assert on
+    # require() rather than on exit codes. Fails sandbox creation instead of
+    # handing over an environment whose test run is quietly short a module.
+    - command: |
+        set -euo pipefail
+        lua5.4 -e '
+          local missing = {}
+          for _, m in ipairs{
+            "lpeg", "lfs", "logging", "dkjson", "MessagePack", "tableshape",
+            "semver", "LibDeflate", "ltcn", "sandbox", "socket", "ltn12",
+            "lsqlite3", "busted", "luassert", "luacov",
+          } do
+            if not pcall(require, m) then missing[#missing + 1] = m end
+          end
+          if #missing > 0 then
+            error("modules not loadable under Lua 5.4: " .. table.concat(missing, ", "), 0)
+          end
+          print("all TabuLua Lua dependencies load under " .. _VERSION)
+        '
+        command -v busted >/dev/null || { echo "busted not on PATH" >&2; exit 1; }
+      user: "0"
+      description: Assert every dependency loads under Lua 5.4
 
   # Runs on every start, so it must be idempotent.
   #startup:
