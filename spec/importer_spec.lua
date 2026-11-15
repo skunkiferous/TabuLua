@@ -94,6 +94,18 @@ describe("importer", function()
             assert.is_nil(result)
             assert.is_not_nil(err)
         end)
+
+        -- Needs the instruction quota, which LuaJIT cannot enforce (the
+        -- file would genuinely hang there).
+        local it_quota = require("sandbox").quota_supported and it or busted.pending
+        it_quota("should abort a Lua file that loops", function()
+            local file_path = path_join(temp_dir, "loop.lua")
+            file_util.writeFile(file_path, "while true do end")
+
+            local result, err = importer.importLuaFile(file_path)
+            assert.is_nil(result)
+            assert.matches("Failed to execute Lua: .*Quota exceeded", err)
+        end)
     end)
 
     describe("importTypedJSONFile", function()

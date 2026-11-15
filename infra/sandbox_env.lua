@@ -168,6 +168,61 @@ local function cogGlobals()
     return new()
 end
 
+-- ============================================================
+-- Quota hardening
+--
+-- kikito's quota is a `debug.sethook` count hook that, when it fires, REMOVES
+-- itself (restoring `string.rep` too) and raises 'Quota exceeded: <n>'. Two
+-- stock-sandbox globals let user code survive that:
+--   * `pcall` / `xpcall` catch the quota error, after which the code runs on
+--     with no hook at all (and with `string.rep` back);
+--   * `coroutine`: hooks are per-thread, so a body run via coroutine.wrap /
+--     resume is never counted (and resume also catches the quota error).
+-- So every sandbox gets quota-rethrowing pcall/xpcall and no coroutines.
+-- ============================================================
+
+-- Marker of the error kikito's quota hook raises ('Quota exceeded: ' .. quota).
+local QUOTA_MARKER = "Quota exceeded: "
+
+local function isQuotaError(e)
+    return type(e) == "string" and e:find(QUOTA_MARKER, 1, true) ~= nil
+end
+
+-- Passes pcall/xpcall results through, but re-raises a quota error.
+local function rethrowQuota(ok, ...)
+    if not ok and isQuotaError((...)) then
+        error((...), 0)
+    end
+    return ok, ...
+end
+
+local function safePcall(f, ...)
+    return rethrowQuota(pcall(f, ...))
+end
+
+-- The handler runs AFTER the quota hook removed itself, so it must never see
+-- a quota error: it could otherwise loop unbounded.
+local function safeXpcall(f, handler, ...)
+    local function guarded(e)
+        if isQuotaError(e) then
+            return e
+        end
+        return handler(e)
+    end
+    return rethrowQuota(xpcall(f, guarded, ...))
+end
+
+-- Stands in for the sandbox library's `coroutine`; any use fails clearly.
+local NO_COROUTINE = setmetatable({}, {
+    __index = function(_, k)
+        error("coroutine." .. tostring(k) .. " is not available in the sandbox", 2)
+    end,
+    __newindex = function()
+        error("coroutine is not available in the sandbox", 2)
+    end,
+    __metatable = false,
+})
+
 --- Builds the options table for `sandbox.protect`, applying the instruction
 --- quota only where the sandbox library can enforce one. kikito's sandbox
 --- implements quotas with `debug.sethook` count hooks, which LuaJIT does not
@@ -175,15 +230,95 @@ end
 --- call site that hard-codes `{quota = n, env = e}` is broken on LuaJIT.
 --- This is the single place allowed to know that; on LuaJIT the code runs
 --- sandboxed but without an operation limit.
+---
+--- `env` is layered under a thin table that overrides `pcall`, `xpcall` and
+--- `coroutine` (see "Quota hardening"). The sandbox copies its own base
+--- globals from the passed env only where that env has a non-nil value, so
+--- this layer is the only way to replace them; other keys fall through to
+--- `env`, including ones the caller adds after this call.
 --- @param quota number Maximum operations allowed (ignored where unsupported)
 --- @param env table|nil The sandbox environment
 --- @return table Options for sandbox.protect
 local function protectOptions(quota, env)
-    local opt = {env = env}
+    local layered = setmetatable({
+        coroutine = NO_COROUTINE,
+        pcall = safePcall,
+        xpcall = safeXpcall,
+    }, {__index = env})
+    local opt = {env = layered}
     if sandbox.quota_supported then
         opt.quota = quota
     end
     return opt
+end
+
+-- Instruction-quota floor for a data chunk. A literal costs roughly one VM op
+-- per element, so the quota scales with the source size, with this floor.
+local DATA_QUOTA_FLOOR = 1000000
+
+--- Returns the instruction quota for a data chunk of the given source.
+--- @param code string The chunk source
+--- @return number The quota
+local function dataQuota(code)
+    return math.max(DATA_QUOTA_FLOOR, #code * 16)
+end
+
+--- Compiles and runs a DATA chunk: Lua source that should only build a value
+--- (a `.lua` import, a serialized cell), not compute. It is compiled
+--- text-only (never bytecode) in `env` alone, and runs under an instruction
+--- quota where the runtime supports one (not LuaJIT). String methods are
+--- switched off while it runs, so e.g. `("x"):rep(1e9)` cannot be reached
+--- through the string metatable. Neither the quota nor the string
+--- metatable can be escaped: `env` holds no pcall or coroutine. A hook
+--- already installed (e.g. by an enclosing sandbox run) is restored after.
+---
+--- The count hook also counts runData's OWN instructions, around the
+--- protected call: it raises only when the running function is not runData
+--- itself. Raising there would escape the pcall, leaving string methods off
+--- and the hook installed for whatever runs next.
+--- @param code string The chunk source
+--- @param chunkname string The chunk name used in error messages
+--- @param env table The chunk's entire global environment
+--- @param quota number|nil Maximum operations (default: dataQuota(code))
+--- @return boolean ok True on success
+--- @return any The chunk's first result, or the error message
+--- @return string|nil On failure, "compile" or "run"
+local function runData(code, chunkname, env, quota)
+    local fn, err = load(code, chunkname, "t", env)
+    if not fn then
+        return false, err, "compile"
+    end
+    quota = quota or dataQuota(code)
+    local useHook = sandbox.quota_supported and type(debug) == "table"
+        and type(debug.sethook) == "function"
+    local oldHook, oldMask, oldCount
+    if useHook then
+        oldHook, oldMask, oldCount = debug.gethook()
+        debug.sethook(function()
+            -- Level 2: the function that was running when the hook fired
+            if debug.getinfo(2, "f").func ~= runData then
+                error(QUOTA_MARKER .. tostring(quota), 2)
+            end
+        end, "", quota)
+    end
+    local stringMeta = getmetatable("")
+    local stringIndex = stringMeta.__index
+    stringMeta.__index = nil
+    local ok, result = pcall(fn)
+    stringMeta.__index = stringIndex
+    if useHook then
+        -- A hook set from C reads back as the string "external hook", and
+        -- cannot be reinstalled from Lua
+        if type(oldHook) == "function" then
+            debug.sethook(oldHook, oldMask, oldCount)
+        else
+            debug.sethook()
+        end
+    end
+    if not ok then
+        return false, result, "run"
+    end
+    return true, result
 end
 
 -- Provides a tostring() function for the API
@@ -197,6 +332,8 @@ local API = {
     new = new,
     cogGlobals = cogGlobals,
     protectOptions = protectOptions,
+    dataQuota = dataQuota,
+    runData = runData,
 }
 
 -- Enables the module to be called as a function

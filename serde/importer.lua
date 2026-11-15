@@ -24,6 +24,9 @@ local deserializeMessagePack = deserialization.deserializeMessagePack
 local base64 = require("util.base64")
 local int64 = require("util.int64")
 
+-- runData: text-only, quota-bounded execution of a `.lua` data file
+local runData = require("infra.sandbox_env").runData
+
 -- The reader's half of the SQL format. sql_schema is a LEAF (it requires
 -- neither the exporter nor the content pipeline), and sharing it is the point:
 -- the metadata table's name, its row-0 sentinel and the version marker have to
@@ -75,13 +78,12 @@ local function importLuaFile(filePath)
         math = { huge = math.huge }
     }
 
-    local fn, loadErr = load(content, filePath, "t", sandbox)
-    if not fn then
-        return nil, "Failed to parse Lua: " .. tostring(loadErr)
-    end
-
-    local ok, result = pcall(fn)
+    -- (quota-bounded: a hostile file may loop instead of returning a table)
+    local ok, result, phase = runData(content, filePath, sandbox)
     if not ok then
+        if phase == "compile" then
+            return nil, "Failed to parse Lua: " .. tostring(result)
+        end
         return nil, "Failed to execute Lua: " .. tostring(result)
     end
 

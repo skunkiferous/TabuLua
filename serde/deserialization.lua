@@ -17,6 +17,9 @@ local mpk = require("serde.serialization").messagePack
 
 local int64 = require("util.int64")
 
+-- runData: text-only, quota-bounded execution of a Lua literal
+local runData = require("infra.sandbox_env").runData
+
 --- Returns the module version as a string.
 --- @return string The semantic version string (e.g., "0.1.0")
 local function getVersion()
@@ -50,14 +53,13 @@ local function deserialize(s)
     }
 
     -- Wrap the string in a return statement so we can get the value
+    -- (quota-bounded: a hostile "literal" may loop instead of building a value)
     local code = "return " .. s
-    local fn, err = load(code, "deserialize", "t", sandbox)
-    if not fn then
-        return nil, "Failed to parse Lua: " .. tostring(err)
-    end
-
-    local ok, result = pcall(fn)
+    local ok, result, phase = runData(code, "deserialize", sandbox)
     if not ok then
+        if phase == "compile" then
+            return nil, "Failed to parse Lua: " .. tostring(result)
+        end
         return nil, "Failed to execute Lua: " .. tostring(result)
     end
 

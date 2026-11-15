@@ -15,6 +15,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- **Sandboxed code could escape its instruction quota.** The sandbox library's quota is
+  a `debug.sethook` count hook that *removes itself* when it fires (also giving
+  `string.rep` back) and then raises. Two globals the sandbox exposes let user code
+  survive that: `pcall` / `xpcall` caught the quota error, after which the code ran on
+  with no limit at all; and `coroutine` bodies were never counted (hooks are
+  per-thread) while `resume` caught the error too. `sandbox_env.protectOptions` now
+  layers a quota-rethrowing `pcall` / `xpcall` and a `coroutine` that fails on any use
+  over every environment it builds, so all ten sandboxed call sites are covered at
+  once. `pcall` / `xpcall` still catch ordinary errors, and an `xpcall` handler never
+  runs for a quota error, since it would run unhooked.
+- **A `.lua` data file or Lua-literal cell had no instruction quota at all.**
+  `importer.importLuaFile` and `deserialization.deserialize` (the latter behind the
+  `tsv:lua` transcoder) did a bare `load` + `pcall`, so `while true do end` in either
+  hung the load. Both now go through the new `sandbox_env.runData(code, chunkname,
+  env, quota)`: compiled text-only (never bytecode), run under a quota scaled to the
+  source size (`sandbox_env.dataQuota`: 16 operations per byte, floor 1,000,000), with
+  string methods switched off for the duration so `("x"):rep(1e9)` is unreachable
+  through the string metatable, and any hook already installed restored afterwards.
+  As with every quota, LuaJIT cannot enforce it (no count hooks there).
+
 ## [0.34.0] - 2026-07-30
 
 ### Added
