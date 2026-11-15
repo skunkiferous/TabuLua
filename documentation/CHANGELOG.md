@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+## [0.35.0] - 2026-11-15
+
+### Changed
+
+Draugr kit schema updated, to match new SBX version.
+
+### Fixed
+
 - **Sandboxed code could escape its instruction quota.** The sandbox library's quota is
   a `debug.sethook` count hook that *removes itself* when it fires (also giving
   `string.rep` back) and then raises. Two globals the sandbox exposes let user code
