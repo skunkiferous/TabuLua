@@ -1,3 +1,5 @@
+# syntax=docker/sandbox-kit:3
+#
 # .draugr/kit/spec.yaml - what this project needs INSIDE the mound. Commit it.
 #
 # This is a standard sbx kit, not a Draugr invention. It works with plain
@@ -5,208 +7,257 @@
 # and can be packed and pushed to a registry to share across repositories:
 #   sbx kit pack .draugr/kit && sbx kit push ...
 #
-# Full schema: https://docs.docker.com/ai/sandboxes/customize/kits/
-# Worked examples: https://github.com/docker/sbx-kits-contrib
+# Full schema: https://docs.docker.com/ai/sandboxes/customize/
+# The v3 specification: https://github.com/docker/sandbox-kit-spec
 #
 # Check it before you find out the hard way:  dr-kit validate
 # See what is actually in force, defaults included:  dr-policy
 # Applying a changed kit recreates the container, so dr-up reports drift rather
 # than doing it behind your back.
-
-# v2 spellings throughout. v1 still validates, but every field below has moved
-# and v1 now emits a deprecation warning on each check - and a warning you are
-# trained to ignore is worse than no warning. Verified against sbx 0.37.1.
-schemaVersion: "2"
+#
+# V3 SPELLINGS THROUGHOUT. This file was v2 until sbx 0.53, and v2 did not
+# become deprecated there: it became an ERROR. The fields it used are no longer
+# part of the type that sbx parses, so the whole kit was refused with
+#
+#   invalid spec.yaml: field caps not found in type spec.specFileV2
+#
+# and the mound could not be created at all. Each field moved:
+#
+#   caps.network.allow  ->  network-policy@1, config.runtime.allow. One list,
+#                           measured: a runtime allow covers the creation
+#                           commands too. See the note on the capability
+#   commands.install    ->  lifecycle@1, config.install
+#   name:               ->  gone. v3 has no slug field
+#   requires: agent:    ->  gone, and nothing replaces it. See the note below
+schemaVersion: "3"
 kind: mixin
-# `name` is the one constrained field: sbx requires lowercase alphanumeric with
-# hyphens, so it is a slug of the project name rather than the name itself.
-# displayName and description below are free text and keep the original spelling.
-name: tabulua
+
+# Free text, and it keeps the original spelling of the project name. The v2
+# `name: tabulua` slug is gone with the format.
 displayName: TabuLua development environment
 description: Network rules and setup for the TabuLua project.
 
-requires:
-  agent: claude
-
-caps:
-  network:
-    # ADDED TO the machine-wide defaults, not instead of them. sbx ships a local
-    # policy of ~190 allow rules covering package managers, OS packages, the
-    # common code hosts and the AI service endpoints - so npm, pip and github.com
-    # already work without listing anything here.
-    #
-    # Default-deny is still real: anything matching no rule anywhere is refused.
-    # Check a specific host with:  dr-policy --check <host>
-    allow:
-      # The one host TabuLua needs that the machine-wide defaults do NOT cover.
-      # Everything else the Lua setup below touches is already allowed by them:
-      # archive.ubuntu.com / security.ubuntu.com (apt), github.com and
-      # raw.githubusercontent.com (rockspecs, and the source clones for semver
-      # and lua-sandbox), and gitlab.com (ltcn) — all verified reachable from
-      # inside this sandbox.
-      #
-      # luarocks.org is not, and it fails SOFTLY, which is why it is easy to
-      # miss: luarocks warns "Failed downloading .../manifest-5.4" and then
-      # falls back to the moonrocks mirror on raw.githubusercontent.com. Stable
-      # rocks still install that way, so nothing looks broken — but the mirror
-      # does not carry everything, and every luarocks call pays for a doomed
-      # manifest fetch first.
-      - luarocks.org
-      # - internal-registry.example.com
-      # - files.example.org
-
-    # deny wins over allow, which is how you carve a hole in a wildcard or shut
-    # off something the machine-wide defaults let through.
-    #deny:
-    #  - telemetry.example.com
-
-# Ports this project always serves. Top-level in v2, NOT under network:.
-# For one-off ports use dr-ports instead - editing the kit recreates the container.
-#publishedPorts:
-#  - container: 5173
-#    protocol: tcp
-#    name: dev-server
-
-#environment:
-#  variables:
-#    NODE_ENV: development
-
-commands:
-  # Runs once, when the sandbox is created. This is where npm ci, uv sync and
-  # apt-get install go - the difference between a teammate cloning your repo and
-  # being productive in one command, versus half an hour of guessing.
+# THE v2 `requires: agent: claude` IS GONE, and v3 offers nothing in its place.
+# That line made sbx refuse to compose this kit with any other agent. In v3,
+# `requires:` is a list of CAPABILITY constraints and cannot name an agent, so
+# the refusal does not exist any more: sbx will compose this kit with codex, or
+# with the bare shell image, and say nothing.
+#
+# Nothing below is agent-specific - a Lua toolchain is a property of the project,
+# not of the agent reading it - so the line guarded nothing that matters here.
+# What it did do was state the expectation, which this note now does instead. If
+# this project ever needs something only one agent can use, put that in
+# .draugr/kit.claude/, which Draugr prefers over this directory when that agent
+# is configured.
+capabilities:
+  # --- network ---------------------------------------------------------------
   #
-  # The stock sandbox image has NO Lua at all — no lua, no luarocks, no busted.
+  # ADDED TO the machine-wide defaults, not instead of them. sbx ships a local
+  # policy of ~190 allow rules covering package managers, OS packages, the
+  # common code hosts and the AI service endpoints - so npm, pip and github.com
+  # already work without listing anything here.
+  #
+  # Default-deny is still real: anything matching no rule anywhere is refused.
+  # Check a specific host with:  dr-policy --check <host>
+  #
+  # ONE ALLOW LIST, AND THAT IS MEASURED RATHER THAN ASSUMED. v3 separates
+  # `install:`, the creation commands below, from `runtime:`, the session of the
+  # agent. The first version of this migration therefore listed luarocks.org in
+  # BOTH, on the belief that a runtime allow does not reach a creation command.
+  # Four one-command probe kits on sbx 0.53 measured it:
+  #
+  #   no rule at all                 install 403
+  #   runtime allow only             install 200, session 200
+  #   install allow only             install 200, session 403
+  #   install allow + runtime deny   install 403
+  #
+  # So a runtime allow covers BOTH phases, an install allow covers only the
+  # install, and a deny closes both whatever the other half says. This kit wants
+  # the host in both - step 3 during the create, and an agent running luarocks by
+  # hand later - so the single entry below is the whole requirement, exactly as
+  # it was in v2.
+  #
+  # If a later sbx stops letting a runtime allow reach the install, put
+  # `install: { allow: [luarocks.org] }` back here. The symptom would be quiet:
+  # step 3 falls back to the moonrocks mirror, which carries the stable rocks, so
+  # the create still succeeds and only pays for a doomed manifest fetch each
+  # time.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          # The one host TabuLua needs that the machine-wide defaults do NOT
+          # cover. Everything else the Lua setup below touches is already
+          # allowed by them: the apt archive of the image, github.com and
+          # raw.githubusercontent.com (rockspecs, and the source clones for
+          # semver and lua-sandbox), and gitlab.com (ltcn) - all verified
+          # reachable from inside this sandbox.
+          #
+          # luarocks.org is not, and it fails SOFTLY, which is why it is easy to
+          # miss: luarocks warns "Failed downloading .../manifest-5.4" and then
+          # falls back to the moonrocks mirror on raw.githubusercontent.com.
+          # Stable rocks still install that way, so nothing looks broken - but
+          # the mirror does not carry everything, and every luarocks call pays
+          # for a doomed manifest fetch first.
+          - luarocks.org
+          # - internal-registry.example.com
+          # - files.example.org
+
+        # deny wins over allow, which is how you carve a hole in a wildcard or
+        # shut off something the machine-wide defaults let through. A deny
+        # carries no port, so it closes every port of that host, and on sbx 0.53
+        # it applies to the install phase as well.
+        #deny:
+        #  - telemetry.example.com
+
+  # --- setup -----------------------------------------------------------------
+  #
+  # install runs once, when the sandbox is created. This is where npm ci, uv sync
+  # and apt-get install go - the difference between a teammate cloning your repo
+  # and being productive in one command, versus half an hour of guessing.
+  #
+  # The stock sandbox image has NO Lua at all - no lua, no luarocks, no busted.
   # These five steps are Docker/Dockerfile.lua54 translated from Alpine to the
-  # Ubuntu sandbox image, plus the rocks the test suite uses that the Dockerfile
-  # never needed. Verified end-to-end: run_tests.sh 3409/3409 and
-  # pre_commit_check.sh all six steps green. See README.md next to this file.
-  install:
-    # ----------------------------------------------------------------
-    # 1. System packages
-    # ----------------------------------------------------------------
-    # libsqlite3-dev is not optional weight: it is what lets lsqlite3 build, and
-    # lsqlite3 is what makes serde/importer.lua's importSQLFileWithSQLite path
-    # execute at all. Without the rock that function falls back to the text SQL
-    # parser and logs "SQLite3 not available", so spec/exporter_spec.lua:24
-    # selects `pending` over `it` and two tests report as passing without ever
-    # having run.
-    - command: |
-        set -euo pipefail
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends \
-          lua5.4 liblua5.4-dev luarocks \
-          build-essential libreadline-dev libsqlite3-dev \
-          unzip git curl
-        rm -rf /var/lib/apt/lists/*
-      user: "0"
-      description: Install Lua 5.4, LuaRocks, build toolchain and SQLite headers
+  # sandbox image, plus the rocks the test suite uses that the Dockerfile never
+  # needed. Verified end-to-end: run_tests.sh 3409/3409 and pre_commit_check.sh
+  # all six steps green. See README.md next to this file.
+  #
+  # MAKE EACH COMMAND IDEMPOTENT. `sbx kit add`, and so `dr-kit apply`, recreates
+  # the container and replays the install commands of EVERY kit in the
+  # composition, not only of the kit being added. apt-get, luarocks and the
+  # alternatives calls below are all safe to repeat.
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        # ----------------------------------------------------------------
+        # 1. System packages
+        # ----------------------------------------------------------------
+        # libsqlite3-dev is not optional weight: it is what lets lsqlite3 build,
+        # and lsqlite3 is what makes serde/importer.lua's
+        # importSQLFileWithSQLite path execute at all. Without the rock that
+        # function falls back to the text SQL parser and logs "SQLite3 not
+        # available", so spec/exporter_spec.lua:24 selects `pending` over `it`
+        # and two tests report as passing without ever having run.
+        - command: |
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends \
+              lua5.4 liblua5.4-dev luarocks \
+              build-essential libreadline-dev libsqlite3-dev \
+              unzip git curl
+            rm -rf /var/lib/apt/lists/*
+          user: "0"
+          description: Install Lua 5.4, LuaRocks, build toolchain and SQLite headers
 
-    # ----------------------------------------------------------------
-    # 2. Point `lua` and `luarocks` at 5.4
-    # ----------------------------------------------------------------
-    # Two Lua-5.1 traps ship with Ubuntu's packaging, both of which fail quietly:
-    #
-    #  (a) The luarocks package depends on liblua5.1, and /usr/bin/luarocks is a
-    #      `#!/usr/bin/env lua-any` script whose "-- Lua-Versions: 5.1 5.3 5.4"
-    #      comment makes lua-any pick the FIRST installed version — 5.1. So a
-    #      plain `luarocks install lpeg` compiles against /usr/include/lua5.1 and
-    #      installs into /usr/local/{share,lib}/lua/5.1/, where lua5.4 never
-    #      looks. The install SUCCEEDS; only the later require() fails.
-    #      Reordering that list is the mechanism Debian's lua-any is built
-    #      around, so `luarocks` now means 5.4 and `luarocks-5.1` still works.
-    #
-    #  (b) /usr/bin/lua is an alternatives symlink that also resolves to 5.1.
-    #      pre_commit_check.sh probes lua54 -> lua5.4 -> lua and lands on lua5.4,
-    #      but run_tests.sh calls bare `lua extract_test_errors.lua`, which would
-    #      parse the TAP output under 5.1.
-    - command: |
-        set -euo pipefail
-        sed -i 's/^-- Lua-Versions:.*/-- Lua-Versions: 5.4 5.3 5.1/' /usr/bin/luarocks
-        update-alternatives --set lua-interpreter /usr/bin/lua5.4
-        update-alternatives --set lua-compiler   /usr/bin/luac5.4
-        [ "$(lua -v 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)" = "5.4" ] \
-          || { echo "lua is not 5.4: $(lua -v 2>&1)" >&2; exit 1; }
-        [ "$(luarocks config lua_version)" = "5.4" ] \
-          || { echo "luarocks targets $(luarocks config lua_version), not 5.4" >&2; exit 1; }
-      user: "0"
-      description: Make `lua` and `luarocks` resolve to 5.4, not Ubuntu's 5.1 default
+        # ----------------------------------------------------------------
+        # 2. Point `lua` and `luarocks` at 5.4
+        # ----------------------------------------------------------------
+        # Two Lua-5.1 traps ship with the distribution packaging, both of which
+        # fail quietly:
+        #
+        #  (a) The luarocks package depends on liblua5.1, and /usr/bin/luarocks
+        #      is a `#!/usr/bin/env lua-any` script whose
+        #      "-- Lua-Versions: 5.1 5.3 5.4" comment makes lua-any pick the
+        #      FIRST installed version - 5.1. So a plain `luarocks install lpeg`
+        #      compiles against /usr/include/lua5.1 and installs into
+        #      /usr/local/{share,lib}/lua/5.1/, where lua5.4 never looks. The
+        #      install SUCCEEDS; only the later require() fails. Reordering that
+        #      list is the mechanism Debian's lua-any is built around, so
+        #      `luarocks` now means 5.4 and `luarocks-5.1` still works.
+        #
+        #  (b) /usr/bin/lua is an alternatives symlink that also resolves to 5.1.
+        #      pre_commit_check.sh probes lua54 -> lua5.4 -> lua and lands on
+        #      lua5.4, but run_tests.sh calls bare `lua extract_test_errors.lua`,
+        #      which would parse the TAP output under 5.1.
+        - command: |
+            set -euo pipefail
+            sed -i 's/^-- Lua-Versions:.*/-- Lua-Versions: 5.4 5.3 5.1/' /usr/bin/luarocks
+            update-alternatives --set lua-interpreter /usr/bin/lua5.4
+            update-alternatives --set lua-compiler   /usr/bin/luac5.4
+            [ "$(lua -v 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)" = "5.4" ] \
+              || { echo "lua is not 5.4: $(lua -v 2>&1)" >&2; exit 1; }
+            [ "$(luarocks config lua_version)" = "5.4" ] \
+              || { echo "luarocks targets $(luarocks config lua_version), not 5.4" >&2; exit 1; }
+          user: "0"
+          description: Make `lua` and `luarocks` resolve to 5.4, not the distribution's 5.1 default
 
-    # ----------------------------------------------------------------
-    # 3. Rocks from the LuaRocks registry
-    # ----------------------------------------------------------------
-    # Unpinned, matching Docker/Dockerfile.lua54. Beyond that Dockerfile's list:
-    #   luafilesystem — `lfs`, used by loader/ and infra/file_util.lua
-    #   dkjson        — the JSON transcoders
-    #   luasocket     — `socket` / `ltn12`, used by ollama_batch.lua
-    #   luacov        — run_tests.sh passes --coverage; busted aborts without it
-    #   luassert      — arrives with busted; listed so a busted change can't drop it
-    - command: |
-        set -euo pipefail
-        for rock in \
-          lpeg luafilesystem lualogging dkjson lua-messagepack tableshape \
-          semver libdeflate luasocket lsqlite3 busted luassert luacov
-        do
-          echo "==> luarocks install $rock"
-          luarocks-5.4 install "$rock"
-        done
-      user: "0"
-      description: Install TabuLua's LuaRocks dependencies for Lua 5.4
+        # ----------------------------------------------------------------
+        # 3. Rocks from the LuaRocks registry
+        # ----------------------------------------------------------------
+        # Unpinned, matching Docker/Dockerfile.lua54. Beyond that Dockerfile's
+        # list:
+        #   luafilesystem - `lfs`, used by loader/ and infra/file_util.lua
+        #   dkjson        - the JSON transcoders
+        #   luasocket     - `socket` / `ltn12`, used by ollama_batch.lua
+        #   luacov        - run_tests.sh passes --coverage; busted aborts without it
+        #   luassert      - arrives with busted; listed so a busted change can't drop it
+        - command: |
+            set -euo pipefail
+            for rock in \
+              lpeg luafilesystem lualogging dkjson lua-messagepack tableshape \
+              semver libdeflate luasocket lsqlite3 busted luassert luacov
+            do
+              echo "==> luarocks install $rock"
+              luarocks-5.4 install "$rock"
+            done
+          user: "0"
+          description: Install TabuLua's LuaRocks dependencies for Lua 5.4
 
-    # ----------------------------------------------------------------
-    # 4. Rocks installed straight from their source repositories
-    # ----------------------------------------------------------------
-    # lua-sandbox is not in the registry at all; upstream's own instructions point
-    # at this rockspec URL, which is what Docker/Dockerfile.lua54 uses.
-    #
-    # ltcn is registry-hosted ONLY on the dev server (luarocks.org/dev, as scm-1),
-    # which the moonrocks mirror does not carry. Installing the identical rockspec
-    # from the git repo its source.url points at anyway makes ltcn resolve the same
-    # way whether or not luarocks.org is allowed — so this step keeps working if
-    # the allow rule above is ever dropped. `luarocks install <rockspec-path>`
-    # still honours source.url, so this is upstream master, not a vendored copy.
-    - command: |
-        set -euo pipefail
-        luarocks-5.4 install \
-          https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
+        # ----------------------------------------------------------------
+        # 4. Rocks installed straight from their source repositories
+        # ----------------------------------------------------------------
+        # lua-sandbox is not in the registry at all; upstream's own instructions
+        # point at this rockspec URL, which is what Docker/Dockerfile.lua54 uses.
+        #
+        # ltcn is registry-hosted ONLY on the dev server (luarocks.org/dev, as
+        # scm-1), which the moonrocks mirror does not carry. Installing the
+        # identical rockspec from the git repo its source.url points at anyway
+        # makes ltcn resolve the same way whether or not luarocks.org is allowed
+        # - so this step keeps working if the allow rules above are ever dropped.
+        # `luarocks install <rockspec-path>` still honours source.url, so this is
+        # upstream master, not a vendored copy.
+        - command: |
+            set -euo pipefail
+            luarocks-5.4 install \
+              https://raw.githubusercontent.com/kikito/lua-sandbox/master/sandbox-1.0.1-4.rockspec
 
-        tmp="$(mktemp -d)"
-        git clone --depth 1 https://gitlab.com/craigbarnes/ltcn.git "$tmp/ltcn"
-        ( cd "$tmp/ltcn" && luarocks-5.4 install ltcn-scm-1.rockspec )
-        rm -rf "$tmp"
-      user: "0"
-      description: Install lua-sandbox and ltcn from their upstream repositories
+            tmp="$(mktemp -d)"
+            git clone --depth 1 https://gitlab.com/craigbarnes/ltcn.git "$tmp/ltcn"
+            ( cd "$tmp/ltcn" && luarocks-5.4 install ltcn-scm-1.rockspec )
+            rm -rf "$tmp"
+          user: "0"
+          description: Install lua-sandbox and ltcn from their upstream repositories
 
-    # ----------------------------------------------------------------
-    # 5. Verify
-    # ----------------------------------------------------------------
-    # A rock that installed into the wrong Lua tree still exits 0, so assert on
-    # require() rather than on exit codes. Fails sandbox creation instead of
-    # handing over an environment whose test run is quietly short a module.
-    - command: |
-        set -euo pipefail
-        lua5.4 -e '
-          local missing = {}
-          for _, m in ipairs{
-            "lpeg", "lfs", "logging", "dkjson", "MessagePack", "tableshape",
-            "semver", "LibDeflate", "ltcn", "sandbox", "socket", "ltn12",
-            "lsqlite3", "busted", "luassert", "luacov",
-          } do
-            if not pcall(require, m) then missing[#missing + 1] = m end
-          end
-          if #missing > 0 then
-            error("modules not loadable under Lua 5.4: " .. table.concat(missing, ", "), 0)
-          end
-          print("all TabuLua Lua dependencies load under " .. _VERSION)
-        '
-        command -v busted >/dev/null || { echo "busted not on PATH" >&2; exit 1; }
-      user: "0"
-      description: Assert every dependency loads under Lua 5.4
+        # ----------------------------------------------------------------
+        # 5. Verify
+        # ----------------------------------------------------------------
+        # A rock that installed into the wrong Lua tree still exits 0, so assert
+        # on require() rather than on exit codes. Fails sandbox creation instead
+        # of handing over an environment whose test run is quietly short a
+        # module.
+        - command: |
+            set -euo pipefail
+            lua5.4 -e '
+              local missing = {}
+              for _, m in ipairs{
+                "lpeg", "lfs", "logging", "dkjson", "MessagePack", "tableshape",
+                "semver", "LibDeflate", "ltcn", "sandbox", "socket", "ltn12",
+                "lsqlite3", "busted", "luassert", "luacov",
+              } do
+                if not pcall(require, m) then missing[#missing + 1] = m end
+              end
+              if #missing > 0 then
+                error("modules not loadable under Lua 5.4: " .. table.concat(missing, ", "), 0)
+              end
+              print("all TabuLua Lua dependencies load under " .. _VERSION)
+            '
+            command -v busted >/dev/null || { echo "busted not on PATH" >&2; exit 1; }
+          user: "0"
+          description: Assert every dependency loads under Lua 5.4
 
-  # Runs on every start, so it must be idempotent.
-  #startup:
-  #  - command: ["sh", "-c", "nohup npm run dev >/tmp/dev.log 2>&1 &"]
-  #    user: "1000"
-  #    background: true
-  #    description: Start the dev server
+      # No startup commands. A v3 lifecycle capability that declares no hooks at
+      # all is REFUSED ("lifecycle declares no hooks ... drop the entry
+      # instead"), so an empty `startup:` cannot stand in for the commented-out
+      # v2 block that was here. There is nothing to run at each start: every step
+      # above writes to the image, not to the workspace.

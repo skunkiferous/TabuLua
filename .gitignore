@@ -48,3 +48,6 @@ TODO/todo_todo.md
 .draugr.local.conf
 .draugr/kit.applied
 .draugr/tmp/
+
+# Draugr: files of this checkout, not of the project.
+.draugr/create.applied
